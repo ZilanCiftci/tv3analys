@@ -9,9 +9,10 @@ kartan; darefter sparas lagret som .lyr med arcpy.mapping. Lagg .lyr-filen i
 arcmap-mappen som bedomda_ledningar.lyr sa anvander verktyget "Skapa
 ledningslager" den automatiskt.
 
-Forberedelse (en gang): installera comtypes i ArcMaps Python, t.ex.
+Forberedelse (en gang): installera comtypes i ArcMaps Python. Verktyget skriver
+ut exakt kommando med ratt sokvag om comtypes saknas, i stil med
     "C:\Python27\ArcGIS10.8\Scripts\pip.exe" install "comtypes<1.2"
-(comtypes 1.2 och senare stoder inte Python 2.7.)
+(lagg till --user utan adminrattigheter; comtypes 1.2+ stoder inte Python 2.7).
 
 Kors i ArcMaps Python-fonster med ledningslagret i kartan:
     execfile(r'H:\PY\tv3analys\arcmap\skapa_lyr.py')
@@ -87,10 +88,15 @@ def _arcobjects():
     try:
         import comtypes.client
     except ImportError:
+        pip = os.path.join(sys.prefix, 'Scripts', 'pip.exe')
         raise RuntimeError(
-            'comtypes saknas i ArcMaps Python. Installera en gang, t.ex.:\n'
-            '  "C:\\Python27\\ArcGIS10.8\\Scripts\\pip.exe" install "comtypes<1.2"\n'
-            'och starta om ArcMap.')
+            'comtypes saknas i ArcMaps Python (%s).\n'
+            'Installera en gang i Kommandotolken:\n'
+            '  "%s" install "comtypes<1.2"\n'
+            'Saknar du adminrattigheter, lagg till --user:\n'
+            '  "%s" install --user "comtypes<1.2"\n'
+            'Starta sedan om ArcMap och kor verktyget igen.'
+            % (sys.prefix, pip, pip))
     com = os.path.join(arcpy.GetInstallInfo()['InstallDir'], 'com')
     moduler = {}
     for namn in ('esriSystem', 'esriGeometry', 'esriDisplay', 'esriGeoDatabase',
