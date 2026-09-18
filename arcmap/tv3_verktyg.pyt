@@ -220,8 +220,17 @@ class SkapaLedningslager(object):
         _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
         _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
 
+        rapportmapp = arcpy.Parameter(
+            displayName='Mapp med PDF-rapporterna, som den h\u00e4r datorn ser den (valfritt)',
+            name='rapportmapp', datatype='DEFolder', parameterType='Optional', direction='Input',
+            category='Hyperl\u00e4nkar (n\u00e4r ArcMap k\u00f6rs p\u00e5 en annan dator, t.ex. Citrix)')
+        filmmapp = arcpy.Parameter(
+            displayName='Mapp med filmerna, som den h\u00e4r datorn ser den (valfritt)',
+            name='filmmapp', datatype='DEFolder', parameterType='Optional', direction='Input',
+            category='Hyperl\u00e4nkar (n\u00e4r ArcMap k\u00f6rs p\u00e5 en annan dator, t.ex. Citrix)')
+
         return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
-                tolerans, max_hopp, marginal, kopiera]
+                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp]
 
     def isLicensed(self):
         return True
@@ -263,6 +272,8 @@ class SkapaLedningslager(object):
             max_hopp=int(parameters[9].value),
             kopiera_falt=_lagerlista(parameters[11]),
             lagg_till_i_kartan=False,     # ArcMap lagger sjalv till utdata-parametern i kartan
+            rapportmapp=parameters[12].valueAsText or None,
+            filmmapp=parameters[13].valueAsText or None,
         )
         parameters[4].value = ut
         if parameters[6].valueAsText and os.path.isfile(parameters[6].valueAsText):

@@ -87,7 +87,10 @@ Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `M
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`), samt `RAPPORT`/`VIDEO`
 (absoluta sökvägar, PDF:en löses från JSON-filens mapp) för ArcMaps fältbaserade hyperlänkar
-(Display > Support Hyperlinks using field, sparas i `.lyr`). Symbologin
+(Display > Support Hyperlinks using field, sparas i `.lyr`). Användaren kör analysen lokalt men
+ArcMap i Citrix: verktygets kategori "Hyperlänkar" har `rapportmapp`/`filmmapp` (KONFIG:
+`RAPPORTMAPP`/`FILMMAPP`) som bygger sökvägarna av filnamnet i en mapp som Citrix-klienten ser;
+utdatamappen läggs på nätverket så JSON + `rapporter/` nås därifrån. Symbologin
 (Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
 **heldragen** = manuell) sätts **manuellt en gång i ArcMap** och sparas som
 `arcmap/bedomda_ledningar.lyr`, som verktyget använder som standard (handledningen 7.2).
