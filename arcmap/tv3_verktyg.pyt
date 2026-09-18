@@ -25,6 +25,37 @@ if HAR not in sys.path:
 # .lyr-fil med symbologi som anvands om ingen annan anges (skapas av "Skapa symbologi")
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 
+# Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
+STANDARD_LEDNING = ['A Ledning']
+STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar']
+STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
+
+
+def _lager_i_kartan(namnlista):
+    """Namnen i namnlista som finns som lager i den oppna kartan (aven i grupplager)."""
+    try:
+        mxd = arcpy.mapping.MapDocument('CURRENT')
+        finns = {}
+        for l in arcpy.mapping.ListLayers(mxd):
+            try:
+                if l.isFeatureLayer:
+                    finns[l.name.strip().lower()] = l.name
+            except Exception:
+                pass
+        return [finns[n.strip().lower()] for n in namnlista if n.strip().lower() in finns]
+    except Exception:
+        return []
+
+
+def _satt_lager(param, namn):
+    """Fyller i en (multivalue-)lagerparameter med lagernamn."""
+    if not namn:
+        return
+    try:
+        param.values = list(namn)
+    except Exception:
+        param.value = ';'.join(namn)
+
 
 def _ladda_modul(namn='skapa_ledningslager'):
     """Importerar (och laddar om) en modul i arcmap-mappen sa att andringar slar igenom."""
@@ -152,6 +183,9 @@ class SkapaLedningslager(object):
             datatype='GPString', parameterType='Optional', direction='Input',
             multiValue=True, category='Matchning')
 
+        _satt_lager(ledning, _lager_i_kartan(STANDARD_LEDNING))
+        _satt_lager(brunn, _lager_i_kartan(STANDARD_BRUNN))
+
         return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
                 tolerans, max_hopp, marginal, kopiera]
 
@@ -159,10 +193,13 @@ class SkapaLedningslager(object):
         return True
 
     def updateParameters(self, parameters):
-        # Foresla utdatanamn bredvid JSON-filen
-        if parameters[0].altered and not parameters[4].altered and parameters[0].valueAsText:
+        # Foresla utdata och CSV-rapport bredvid JSON-filen
+        if parameters[0].altered and parameters[0].valueAsText:
             mapp = os.path.dirname(parameters[0].valueAsText)
-            parameters[4].value = os.path.join(mapp, 'bedomda_ledningar.shp')
+            if not parameters[4].altered:
+                parameters[4].value = os.path.join(mapp, 'bedomda_ledningar.shp')
+            if not parameters[7].altered:
+                parameters[7].value = os.path.join(mapp, STANDARD_CSV)
         return
 
     def updateMessages(self, parameters):
