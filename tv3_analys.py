@@ -120,6 +120,12 @@ TROSKEL_A = 80.0   # konstruktionsindex p/100 m
 TROSKEL_B = 25.0
 MINLANGD = 20.0    # m – nämnare vid normering av korta sträckor
 
+# Relinade (infodrade) sträckor redovisas som ett eget material i fliken Material och i
+# diagrammet "Prioritetsklass per material", i stället för som rörets ursprungsmaterial.
+# Sätt RELINAD_SOM_MATERIAL = False för att räkna dem som betong/plast som tidigare.
+RELINAD_SOM_MATERIAL = True
+RELINAD_MATERIAL_NAMN = "Relinad"
+
 
 # ----------------------------------------------------------------------------
 # Datamodell
@@ -258,6 +264,13 @@ class Stracka:
     def relinad(self) -> bool:
         return bool(self.foder.strip()) or any(
             "relin" in o.kommentar.lower() for o in self.observationer)
+
+    @property
+    def material_grupp(self) -> str:
+        """Material som det redovisas i statistiken – relinade rör får en egen grupp."""
+        if RELINAD_SOM_MATERIAL and self.relinad:
+            return RELINAD_MATERIAL_NAMN
+        return self.material
 
     @property
     def klass(self) -> str:
@@ -784,20 +797,29 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
 
     # ---- Material & dimension ----
     ws = wb.create_sheet("Material")
-    grp = defaultdict(lambda: {"n": 0, "m": 0.0, "p": 0.0, "A": 0, "B": 0})
+    grp = defaultdict(lambda: {"n": 0, "m": 0.0, "p": 0.0, "A": 0, "B": 0, "urspr": Counter()})
     for s in strackor:
-        g = grp[(s.material, s.ledningstyp.capitalize())]
+        g = grp[(s.material_grupp, s.ledningstyp.capitalize())]
         g["n"] += 1
         g["m"] += s.langd
         g["p"] += s.poang()
+        g["urspr"][s.material or "Okänt"] += 1
         if s.klass in "AB":
             g[s.klass] += 1
-    kol = ["Material", "Ledningstyp", "Sträckor", "Längd (m)", "Index (p/100 m)", "Klass A", "Klass B", "Andel A+B"]
-    rader = [[m, t, g["n"], round(g["m"]), round(g["p"] / g["m"] * 100, 1) if g["m"] else 0,
+
+    def ursprung(mat, g):
+        """Ursprungsmaterial för relinade rör, t.ex. 'Betong (16)'. Tomt för övriga."""
+        if not RELINAD_SOM_MATERIAL or mat != RELINAD_MATERIAL_NAMN:
+            return ""
+        return ", ".join(f"{m} ({n})" for m, n in g["urspr"].most_common())
+
+    kol = ["Material", "Ursprungsmaterial", "Ledningstyp", "Sträckor", "Längd (m)",
+           "Index (p/100 m)", "Klass A", "Klass B", "Andel A+B"]
+    rader = [[m, ursprung(m, g), t, g["n"], round(g["m"]), round(g["p"] / g["m"] * 100, 1) if g["m"] else 0,
               g["A"], g["B"], (g["A"] + g["B"]) / g["n"]] for (m, t), g in sorted(grp.items())]
     tabell(ws, kol, rader)
     for r in range(2, ws.max_row + 1):
-        ws.cell(r, 8).number_format = "0%"
+        ws.cell(r, 9).number_format = "0%"
 
     wb.save(path)
 
@@ -905,7 +927,7 @@ def rita_diagram(strackor: list[Stracka], katalog: str, topp: int) -> dict[str, 
     # 4. Klassfördelning per material (andel längd)
     grp = defaultdict(lambda: defaultdict(float))
     for s in strackor:
-        grp[s.material or "Okänt"][s.klass] += s.langd
+        grp[s.material_grupp or "Okänt"][s.klass] += s.langd
     mats = sorted(grp, key=lambda m: -sum(grp[m].values()))
     fig, ax = plt.subplots(figsize=(8, 0.6 * len(mats) + 1.8))
     left = [0.0] * len(mats)
