@@ -11,6 +11,7 @@ observationernas grad (1–4) och tar fram ett presentationsunderlag:
   * <utdata>/diagram/*.png        – bara med --diagram; diagrammen bäddas annars
                                     enbart in i Excel-filen
   * <utdata>/rapporter/*.pdf      – inspektionsprotokoll per sträcka (kräver reportlab)
+  * <utdata>/kartunderlag.json    – underlag för ArcMap-skriptet i arcmap/
 
 Videofiler och bilder: TV3-filen innehåller bara filnamnen. Skriptet söker
 igenom TV3-filens katalog (och undermappar) samt eventuella extra kataloger
@@ -131,6 +132,11 @@ RELINAD_MATERIAL_NAMN = "Relinad"
 # (eller kör med --diagram) om du dessutom vill ha dem som PNG-filer i <utdata>/diagram
 # för t.ex. PowerPoint.
 SPARA_DIAGRAM = False
+
+# Kartunderlag: en JSON-fil per körning med en post per sträcka (brunnspar, klass, index,
+# material m.m.) som ArcMap-skriptet i arcmap/ läser för att skapa ett ledningslager.
+SKRIV_KARTUNDERLAG = True
+KARTUNDERLAG_FIL = "kartunderlag.json"
 
 
 # ----------------------------------------------------------------------------
@@ -830,6 +836,69 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     wb.save(path)
 
 
+def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
+    """Skriver en JSON-fil med en post per sträcka, avsedd för kartframställning.
+
+    Varje post identifierar sträckan med brunnsparet (startbrunn/slutbrunn) så att
+    ArcMap-skriptet kan leta upp ledningen mellan brunnarna. Maskinell bedömning =
+    prioritetsklassen från poängmodellen; den manuella bedömningen fylls i i kartan."""
+    import json
+
+    poster = []
+    for rang, s in enumerate(sorterade_strackor(strackor), 1):
+        pa = s.profil_analys
+        lut = s.lutning_promille
+        poster.append({
+            "rang": rang,
+            "fil": s.fil,
+            "nr": s.nr,
+            "startbrunn": s.startbrunn,          # uppströms
+            "slutbrunn": s.slutbrunn,            # nedströms
+            "utgangsbrunn": s.fran_brunn,        # där kameran startade
+            "omrade": s.omrade,
+            "datum": s.datum,
+            "maskinell_bedomning": s.klass,
+            "klasstext": KLASS_TEXT[s.klass],
+            "totalindex": round(s.index(), 1),
+            "konstruktionsindex": round(s.index("K"), 1),
+            "driftindex": round(s.index("D"), 1),
+            "maxgrad_konstruktion": s.maxgrad("K"),
+            "maxgrad_drift": s.maxgrad("D"),
+            "antal_skador": len(s.skador()),
+            "antal_anslutningar": s.antal_anslutningar,
+            "skador": s.sammanfattning_skador(),
+            "driftatgard": s.driftatgard,
+            "langd_m": round(s.langd, 1),
+            "material": s.material,
+            "material_grupp": s.material_grupp,
+            "dimension": s.dimension,
+            "ledningstyp": s.ledningstyp.capitalize(),
+            "relinad": s.relinad,
+            "avbruten": s.avbruten,
+            "flerinspekterad": s.flerinspekterad,
+            "svackdjup_m": round(pa["svackdjup"], 2) if pa else None,
+            "svacklangd_m": round(pa["svacklangd"], 1) if pa else None,
+            "bakfall_m": round(pa["bakfall"], 1) if pa else None,
+            "lutning_promille": round(lut, 1) if lut is not None else None,
+            "profil_osaker": bool(pa["osaker"]) if pa else None,
+            "tv3_fil": s.tv3_sokvag,
+            "rapport": s.rapport_fil.replace("\\", "/") if s.rapport_fil else None,
+            "videofil": s.videofil,
+            "video_sokvag": s.video_sokvag,
+        })
+
+    data = {
+        "version": 1,
+        "kalla": "tv3_analys.py",
+        "genererad": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "klasser": KLASS_TEXT,
+        "strackor": poster,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    return len(poster)
+
+
 def sorterade_strackor(strackor):
     ordn = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
     return sorted(strackor, key=lambda s: (ordn[s.klass], -s.index(), -s.maxgrad("K"), s.fil, s.nr))
@@ -1462,6 +1531,8 @@ def main(argv=None):
     ap.add_argument("--topp", type=int, default=15, help="antal sträckor i topplistan (standard: 15)")
     ap.add_argument("--rapporter", choices=["alla", "AB", "A", "inga"], default="alla",
                     help="PDF-rapport per sträcka: alla (standard), bara klass A och B, bara A, eller inga")
+    ap.add_argument("--karta", choices=["ja", "nej"], default="ja" if SKRIV_KARTUNDERLAG else "nej",
+                    help=f"skriv {KARTUNDERLAG_FIL} för ArcMap-skriptet i arcmap/ (standard: ja)")
     ap.add_argument("--diagram", action="store_true", default=SPARA_DIAGRAM,
                     help="spara diagrammen som PNG i <utdata>/diagram; de bäddas alltid in i Excel")
     ap.add_argument("--media", action="append", default=[], metavar="KATALOG",
@@ -1525,6 +1596,10 @@ def main(argv=None):
         n = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter)
         print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}")
     skriv_excel(strackor, os.path.join(a.utdata, "prioritering.xlsx"), diagram, a.topp)
+    if a.karta == "ja":
+        kartfil = os.path.join(a.utdata, KARTUNDERLAG_FIL)
+        n_poster = skriv_kartunderlag(strackor, kartfil)
+        print(f"\n{n_poster} sträckor skrivna till {kartfil} (underlag för ArcMap)")
     if not a.diagram:
         shutil.rmtree(diagramkatalog, ignore_errors=True)
     if fel:

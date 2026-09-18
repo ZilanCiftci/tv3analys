@@ -52,8 +52,23 @@ Utdata i `tv3_resultat/` (eller `-o`):
   `4_klass_per_material.png` (200 dpi, för PowerPoint) – **bara med `--diagram`**; annars ritas de
   i en temporär katalog och bäddas enbart in i fliken Sammanfattning (KONFIG: `SPARA_DIAGRAM`).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.
+- `kartunderlag.json` – en post per sträcka (brunnspar, maskinell bedömning, index, material,
+  flaggor) för ArcMap-skriptet. Stängs av med `--karta nej` (KONFIG: `SKRIV_KARTUNDERLAG`).
 - `fel.txt` – bara om TV3-filer eller mediamappar saknades.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).
+
+Kartframställning: `arcmap/skapa_ledningslager.py` (Python 2.7 + arcpy, körs i ArcMaps
+Python-fönster med `execfile`). Läser `kartunderlag.json`, letar upp varje brunnspar i
+brunnslagret (`A Nedstign och övriga brunnar`, fält `EntityID`) och klipper ut ledningen
+mellan brunnarna ur `A Ledning` – vertex för vertex, närmaste brunn inom 2 m, `MAX_HOPP`
+styr hur många brunnar en sträcka får passera (samma metod som användarens eget steg2-skript).
+Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `MAN_BED`
+("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
+annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
+sätts en gång på `STIL` (Unique values, tio kategorier) och sparas som `.lyr`: färg efter
+klass, **streckad** linje = maskinell, **heldragen** = manuell. `BARA_UPPDATERA = True`
+räknar bara om de härledda fälten efter manuell ifyllnad; vid full omkörning bevaras
+manuella bedömningar per brunnspar. Omatchade par listas i `omatchade_par.csv`.
 
 ## 3. TV3-formatet (Svenskt Vatten TV-fil v3.0, P93-koder) – det vi lärt oss
 
@@ -146,7 +161,8 @@ Utdata i `tv3_resultat/` (eller `-o`):
 
 ## 7. Idéer som nämnts men inte byggts
 
-- Kartvy (brunnskoordinater från extern fil, färg efter klass).
+- Kartvy: grundversionen finns (`arcmap/skapa_ledningslager.py`). Kvar: koppla rapport-PDF och
+  film som hyperlänk i kartan, och färdig `.lyr` att leverera i stället för manuell symbologi.
 - Jämförelse mellan två inspektioner av samma sträcka.
 - Stöd för P111-koder som alternativ kodtabell.
 - Kostnadsuppskattning per sträcka (kr/m per metod).
