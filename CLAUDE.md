@@ -57,8 +57,12 @@ Utdata i `tv3_resultat/` (eller `-o`):
 - `fel.txt` – bara om TV3-filer eller mediamappar saknades.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).
 
-Kartframställning: `arcmap/skapa_ledningslager.py` (Python 2.7 + arcpy, körs i ArcMaps
-Python-fönster med `execfile`). Läser `kartunderlag.json`, letar upp varje brunnspar i
+Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
+**Skapa ledningslager** (dialog: JSON-fil, lager, brunnsfält, utdata, valfritt område/.lyr/CSV,
+tolerans, max hopp, extra fält) och **Uppdatera bedömning**. Logiken ligger i
+`arcmap/skapa_ledningslager.py` (Python 2.7 + arcpy; funktionerna `skapa()` och `uppdatera()`,
+modulen laddas om vid varje verktygskörning). Samma fil kan köras med `execfile` i Python-fönstret
+med KONFIG-blocket. Verktyget läser `kartunderlag.json`, letar upp varje brunnspar i
 brunnslagret (`A Nedstign och övriga brunnar`, fält `EntityID`) och klipper ut ledningen
 mellan brunnarna ur `A Ledning` – vertex för vertex, närmaste brunn inom 2 m, `MAX_HOPP`
 styr hur många brunnar en sträcka får passera (samma metod som användarens eget steg2-skript).
@@ -66,9 +70,10 @@ Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `M
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
 sätts en gång på `STIL` (Unique values, tio kategorier) och sparas som `.lyr`: färg efter
-klass, **streckad** linje = maskinell, **heldragen** = manuell. `BARA_UPPDATERA = True`
-räknar bara om de härledda fälten efter manuell ifyllnad; vid full omkörning bevaras
-manuella bedömningar per brunnspar. Omatchade par listas i `omatchade_par.csv`.
+klass, **streckad** linje = maskinell, **heldragen** = manuell. "Uppdatera bedömning"
+(eller `BARA_UPPDATERA = True`) räknar bara om de härledda fälten efter manuell ifyllnad; vid
+full omkörning bevaras manuella bedömningar per brunnspar. Omatchade par listas i CSV.
+Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 
 ## 3. TV3-formatet (Svenskt Vatten TV-fil v3.0, P93-koder) – det vi lärt oss
 
