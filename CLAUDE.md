@@ -28,7 +28,7 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 
 Körning:
 ```
-python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--media KATALOG]
+python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--diagram] [--media KATALOG]
 python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
 ```
 
@@ -49,7 +49,8 @@ Utdata i `tv3_resultat/` (eller `-o`):
   `Relinad` med ursprungsmaterialet i egen kolumn – styrs av `RELINAD_SOM_MATERIAL` i KONFIG;
   samma indelning i diagram 4, medan fliken Prioritering visar ursprungsmaterial + flaggan Relinad).
 - `diagram/1_prioritetsklasser.png`, `2_topplista.png`, `3_observationer_per_kod.png`,
-  `4_klass_per_material.png` (200 dpi, för PowerPoint).
+  `4_klass_per_material.png` (200 dpi, för PowerPoint) – **bara med `--diagram`**; annars ritas de
+  i en temporär katalog och bäddas enbart in i fliken Sammanfattning (KONFIG: `SPARA_DIAGRAM`).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.
 - `fel.txt` – bara om TV3-filer eller mediamappar saknades.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).

@@ -100,7 +100,7 @@ function doc(title, subtitle, children) {
 // ---------------------------------------------------------------------------
 const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-inspektioner av avloppsledningar från TV3-filer", [
   h1("1. Vad skriptet gör"),
-  p("`tv3_analys.py` läser en eller flera TV3-filer (Svenskt Vatten TV-fil version 3.0 med P93-koder), poängsätter varje ledningssträcka utifrån de registrerade observationerna och tar fram ett underlag för prioritering av renovering: en Excel-arbetsbok med klickbara länkar till film och bilder, fyra diagram för presentationer och ett inspektionsprotokoll i PDF per sträcka (i stil med WinCan-rapporter) med sträckdata, schematisk översikt, observationslista, inklinometerprofil och fotografier. All bearbetning sker lokalt på din dator – inga filer skickas någonstans."),
+  p("`tv3_analys.py` läser en eller flera TV3-filer (Svenskt Vatten TV-fil version 3.0 med P93-koder), poängsätter varje ledningssträcka utifrån de registrerade observationerna och tar fram ett underlag för prioritering av renovering: en Excel-arbetsbok med klickbara länkar till film och bilder, diagram för presentationer och ett inspektionsprotokoll i PDF per sträcka (i stil med WinCan-rapporter) med sträckdata, schematisk översikt, observationslista, inklinometerprofil och fotografier. All bearbetning sker lokalt på din dator – inga filer skickas någonstans."),
   p("Poängmodellen och hur prioritetsklasserna sätts beskrivs i det separata dokumentet **Metodbeskrivning – prioritering av avloppsledningar**."),
 
   h1("2. Installation"),
@@ -148,6 +148,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["`-o MAPP`, `--utdata`", "Mapp där resultatet skrivs.", "`tv3_resultat`"],
     ["`--topp N`", "Antal sträckor i topplistan (diagram och Sammanfattning-fliken).", "15"],
     ["`--rapporter alla|AB|A|inga`", "Vilka sträckor som får PDF-rapport. `alla` är standard; `AB` bara klass A och B; `inga` hoppar över (snabbare).", "`alla`"],
+    ["`--diagram`", "Sparar diagrammen som PNG-filer i `diagram`-mappen, t.ex. för PowerPoint. Utan flaggan bäddas de bara in i Excel-filen.", "av"],
     ["`--media KATALOG`", "Extra mapp att söka video- och bildfiler i (kan anges flera gånger). TV3-filens egen mapp söks alltid, inklusive undermappar.", "–"],
   ], [2600, 5000, 1760]),
   spacer(),
@@ -157,15 +158,12 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   p("Allt hamnar i utdatamappen (`tv3_resultat` om inget annat anges):"),
   table(["Fil", "Innehåll"], [
     ["`prioritering.xlsx`", "Excel-arbetsbok med flikarna Sammanfattning, Prioritering, Observationer, Kodstatistik, Per fil och Material (se avsnitt 5)."],
-    ["`diagram/1_prioritetsklasser.png`", "Inspekterad ledningslängd per prioritetsklass."],
-    ["`diagram/2_topplista.png`", "De N mest kritiska sträckorna, uppdelat på konstruktions- och driftskador."],
-    ["`diagram/3_observationer_per_kod.png`", "Antal skadeobservationer per kod och grad."],
-    ["`diagram/4_klass_per_material.png`", "Prioritetsklass per material, andel av inspekterad längd."],
+    ["`diagram/*.png`", "Skrivs bara om du kör med `--diagram`: 1_prioritetsklasser (inspekterad ledningslängd per prioritetsklass), 2_topplista (de N mest kritiska sträckorna, uppdelat på konstruktions- och driftskador), 3_observationer_per_kod (antal skadeobservationer per kod och grad) och 4_klass_per_material (prioritetsklass per material, andel av inspekterad längd)."],
     ["`rapporter/*.pdf`", "Ett inspektionsprotokoll per sträcka, namngivet `<tv3-fil>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf`. Innehåller sträckdata (material, dimension, längd, antal anslutningar, prioritetsklass, index m.m.), schematisk översikt med skador och anslutningar, observationstabell färgad efter grad, inklinometerprofil med lutning och svacka, samt de fotografier som hittats i mediamapparna."],
     ["`fel.txt`", "Skrivs bara om någon TV3-fil eller mediamapp saknades eller inte kunde läsas."],
   ], [3600, 5760]),
   spacer(),
-  p("Diagrammen är sparade i 200 dpi och kan läggas direkt i PowerPoint. Klassfärgerna är desamma i diagram och Excel: rött A, orange B, gult C, grönt D, grått E."),
+  p("De två första diagrammen bäddas alltid in i fliken Sammanfattning. Med `--diagram` sparas alla fyra dessutom som PNG i 200 dpi och kan läggas direkt i PowerPoint. Klassfärgerna är desamma i diagram och Excel: rött A, orange B, gult C, grönt D, grått E."),
 
   h1("5. Flikarna i Excel"),
   table(["Flik", "Innehåll och användning"], [

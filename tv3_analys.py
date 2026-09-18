@@ -8,7 +8,8 @@ observationernas grad (1–4) och tar fram ett presentationsunderlag:
 
   * <utdata>/prioritering.xlsx   – Excel med sammanfattning, prioriteringslista,
                                     alla observationer, kodstatistik
-  * <utdata>/diagram/*.png        – diagram för presentationer
+  * <utdata>/diagram/*.png        – bara med --diagram; diagrammen bäddas annars
+                                    enbart in i Excel-filen
   * <utdata>/rapporter/*.pdf      – inspektionsprotokoll per sträcka (kräver reportlab)
 
 Videofiler och bilder: TV3-filen innehåller bara filnamnen. Skriptet söker
@@ -125,6 +126,11 @@ MINLANGD = 20.0    # m – nämnare vid normering av korta sträckor
 # Sätt RELINAD_SOM_MATERIAL = False för att räkna dem som betong/plast som tidigare.
 RELINAD_SOM_MATERIAL = True
 RELINAD_MATERIAL_NAMN = "Relinad"
+
+# Diagrammen bäddas alltid in i Excel-fliken Sammanfattning. Sätt SPARA_DIAGRAM = True
+# (eller kör med --diagram) om du dessutom vill ha dem som PNG-filer i <utdata>/diagram
+# för t.ex. PowerPoint.
+SPARA_DIAGRAM = False
 
 
 # ----------------------------------------------------------------------------
@@ -1456,6 +1462,8 @@ def main(argv=None):
     ap.add_argument("--topp", type=int, default=15, help="antal sträckor i topplistan (standard: 15)")
     ap.add_argument("--rapporter", choices=["alla", "AB", "A", "inga"], default="alla",
                     help="PDF-rapport per sträcka: alla (standard), bara klass A och B, bara A, eller inga")
+    ap.add_argument("--diagram", action="store_true", default=SPARA_DIAGRAM,
+                    help="spara diagrammen som PNG i <utdata>/diagram; de bäddas alltid in i Excel")
     ap.add_argument("--media", action="append", default=[], metavar="KATALOG",
                     help="extra katalog att söka video-/bildfiler i (kan anges flera gånger); "
                          "TV3-filens egen katalog söks alltid")
@@ -1506,12 +1514,19 @@ def main(argv=None):
               "   eller med --media KATALOG för att få klickbara länkar i Excel)")
 
     os.makedirs(a.utdata, exist_ok=True)
-    diagram = rita_diagram(strackor, os.path.join(a.utdata, "diagram"), a.topp)
+    # Diagrammen behövs som filer för att kunna bäddas in i Excel. Ska de inte sparas
+    # ritas de i en temporär katalog som städas bort efteråt.
+    import shutil
+    import tempfile
+    diagramkatalog = os.path.join(a.utdata, "diagram") if a.diagram else tempfile.mkdtemp(prefix="tv3_diagram_")
+    diagram = rita_diagram(strackor, diagramkatalog, a.topp)
     if a.rapporter != "inga":
         print(f"\nSkriver PDF-rapporter ({a.rapporter}) ...")
         n = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter)
         print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}")
     skriv_excel(strackor, os.path.join(a.utdata, "prioritering.xlsx"), diagram, a.topp)
+    if not a.diagram:
+        shutil.rmtree(diagramkatalog, ignore_errors=True)
     if fel:
         with open(os.path.join(a.utdata, "fel.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(fel) + "\n")
