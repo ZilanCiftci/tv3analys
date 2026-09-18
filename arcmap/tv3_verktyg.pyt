@@ -31,7 +31,8 @@ STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 
 # Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
 STANDARD_LEDNING = ['A Ledning']
-STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbrunn']
+STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbrunn',
+                  'A Platsgjuten brunnspunkt']
 STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
 
 
