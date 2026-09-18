@@ -80,7 +80,8 @@ Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `M
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
 (Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
 **heldragen** = manuell) byggs av `arcmap/skapa_lyr.py` / verktyget **Skapa symbologi (.lyr)**
-via ArcObjects (comtypes < 1.2 i ArcMaps Python) och sparas som `arcmap/bedomda_ledningar.lyr`,
+via ArcObjects (comtypes 1.1.14 ligger vendorerat i `arcmap/lib/`, MIT – användaren kunde inte
+pip-installera; `gen/` är gitignorerad) och sparas som `arcmap/bedomda_ledningar.lyr`,
 som verktyget använder som standard. Manuell väg (Unique values + Save As Layer File) finns
 kvar i handledningen. `.lyr` är binär och kan inte skapas utanför ArcMap. "Uppdatera bedömning"
 (eller `BARA_UPPDATERA = True`) räknar bara om de härledda fälten efter manuell ifyllnad; vid

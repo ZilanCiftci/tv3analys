@@ -9,10 +9,8 @@ kartan; darefter sparas lagret som .lyr med arcpy.mapping. Lagg .lyr-filen i
 arcmap-mappen som bedomda_ledningar.lyr sa anvander verktyget "Skapa
 ledningslager" den automatiskt.
 
-Forberedelse (en gang): installera comtypes i ArcMaps Python. Verktyget skriver
-ut exakt kommando med ratt sokvag om comtypes saknas, i stil med
-    "C:\Python27\ArcGIS10.8\Scripts\pip.exe" install "comtypes<1.2"
-(lagg till --user utan adminrattigheter; comtypes 1.2+ stoder inte Python 2.7).
+comtypes (ren Python, MIT-licens) foljer med i arcmap/lib och laddas darifran om det
+inte redan finns i ArcMaps Python - ingen installation behovs.
 
 Kors i ArcMaps Python-fonster med ledningslagret i kartan:
     execfile(r'H:\PY\tv3analys\arcmap\skapa_lyr.py')
@@ -85,12 +83,22 @@ def logg(*args):
 
 def _arcobjects():
     """Laddar ArcObjects-biblioteken via comtypes. Returnerar (comtypes.client, moduler)."""
+    comtypes = None
     try:
         import comtypes.client
     except ImportError:
+        # comtypes foljer med i arcmap/lib sa att ingen installation behovs
+        lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib')
+        if lib not in sys.path:
+            sys.path.insert(0, lib)
+        try:
+            import comtypes.client
+        except ImportError:
+            comtypes = None
+    if comtypes is None or not hasattr(comtypes, 'client'):
         pip = os.path.join(sys.prefix, 'Scripts', 'pip.exe')
         raise RuntimeError(
-            'comtypes saknas i ArcMaps Python (%s).\n'
+            'comtypes saknas i ArcMaps Python (%s) och gick inte att ladda fran arcmap/lib.\n'
             'Installera en gang i Kommandotolken:\n'
             '  "%s" install "comtypes<1.2"\n'
             'Saknar du adminrattigheter, lagg till --user:\n'
