@@ -437,7 +437,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             prefix[pfx] = prefix.get(pfx, 0) + 1
         topp = sorted(prefix.items(), key=lambda kv: -kv[1])[:8]
         logg('  saknade brunnar per typ: %s' % ', '.join('%s %d' % kv for kv in topp))
-        logg('  (saknas en hel brunnstyp - lagg till lagret den ligger i under Brunnslager)')
+        # Manga saknade av samma typ tyder pa att ett helt lager fattas; enstaka
+        # saknade ar normalt (nytt littera, brunn utanfor kartan, anslutning "AG").
+        if topp[0][1] >= 10:
+            logg('  (saknas en hel brunnstyp - lagg till lagret den ligger i under Brunnslager)')
+        elif len(saknade) <= 20:
+            logg('  saknade: %s' % ', '.join(saknade))
 
     # ---------------------------------------------------- 4. Utdata
     d0 = arcpy.Describe(kalla(led_lager[0])[0])
