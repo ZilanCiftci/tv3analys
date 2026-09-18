@@ -75,6 +75,9 @@ KOPIERA_FALT = []          # t.ex. ['DIMENSION', 'MATERIAL', 'ANLAGGNINGSAR']
 RAPPORTMAPP = None         # t.ex. r'\\server\share\tv3_resultat\rapporter'
 FILMMAPP = None            # t.ex. r'\\server\share\Inspektioner\Filmer'
 
+# Valfri GeoJSON-export (WGS84, 2D) for webb-GIS. None = ingen.
+GEOJSON_UT = None          # t.ex. r'H:\PY\tv3analys\Karta\bedomda_ledningar.geojson'
+
 # True = bygg inte om geometrin, rakna bara om BEDOMNING/BED_TYP/STIL i UT_FC
 # efter att manuella bedomningar fyllts i.
 BARA_UPPDATERA = False
@@ -519,6 +522,48 @@ def las_kartunderlag(json_in):
     return data, bedomda, antal_per_par
 
 
+def skriv_geojson(fc, falt, geojson_ut, decimaler=7):
+    """Skriver featureklassen som GeoJSON enligt RFC 7946: WGS84 (EPSG:4326), 2D, utan
+    crs-medlem. Det ar vad webb-GIS forvantar sig; ArcMaps egen export behaller kartans
+    koordinatsystem och Z/M, vilket manga webbkartor inte laser."""
+    wgs84 = arcpy.SpatialReference(4326)
+    poster = []
+    with arcpy.da.SearchCursor(fc, ['SHAPE@'] + list(falt)) as mark:
+        for rad in mark:
+            geom = rad[0]
+            if geom is None:
+                continue
+            try:
+                geom = geom.projectAs(wgs84)
+            except Exception as e:
+                raise RuntimeError('Kunde inte projicera till WGS84: %s' % txt(e))
+            delar = []
+            for del_ in geom:
+                pts = [[round(p.X, decimaler), round(p.Y, decimaler)] for p in del_ if p is not None]
+                if len(pts) >= 2:
+                    delar.append(pts)
+            if not delar:
+                continue
+            if len(delar) == 1:
+                geometri = {'type': 'LineString', 'coordinates': delar[0]}
+            else:
+                geometri = {'type': 'MultiLineString', 'coordinates': delar}
+            egenskaper = {}
+            for namn, v in zip(falt, rad[1:]):
+                if isinstance(v, bytes):
+                    v = txt(v)
+                if isinstance(v, TEXTTYP):
+                    v = v.strip()
+                elif isinstance(v, float) and v != v:      # NaN -> null
+                    v = None
+                egenskaper[namn] = v
+            poster.append({'type': 'Feature', 'geometry': geometri, 'properties': egenskaper})
+    text = json.dumps({'type': 'FeatureCollection', 'features': poster}, ensure_ascii=False)
+    with io.open(geojson_ut, 'w', encoding='utf-8') as f:
+        f.write(txt(text))
+    return len(poster)
+
+
 # =====================================================================
 # Huvudfunktioner
 # =====================================================================
@@ -549,7 +594,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           omradeslager=None, csv_ut=None, lyr_fil=None,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
           kopiera_falt=None, lagg_till_i_kartan=True,
-          rapportmapp=None, filmmapp=None):
+          rapportmapp=None, filmmapp=None, geojson_ut=None):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen."""
     kopiera_falt = kopiera_falt or []
     if isinstance(ledningslager, (TEXTTYP, bytes)):
@@ -632,7 +677,9 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # ---------------------------------------------------- 4. Utdata
     d0 = arcpy.Describe(kalla(led_lager[0])[0])
     sr = d0.spatialReference
-    har_z = bool(getattr(d0, 'hasZ', False))
+    # Utdata skrivs alltid i 2D: Z i ledningsnatverket ar odefinierat (-9999) och
+    # 3D-shapefiler/GeoJSON med fyra koordinater stoppar de flesta webb-GIS.
+    har_z = False
 
     ut_ws = os.path.dirname(ut_fc)
     ut_namn = os.path.basename(ut_fc)
@@ -915,7 +962,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     for r in bada_brunnar[:12]:
         logg('    %s - %s (klass %s): %s' % (r[0], r[1], r[7], r[9]))
 
-    # ---------------------------------------------------- 8. Karta
+    # ---------------------------------------------------- 8. GeoJSON for webb-GIS
+    if geojson_ut:
+        n_geo = skriv_geojson(ut_fil, [f for f in ut_falt if f != 'SHAPE@'], geojson_ut)
+        logg('  %d objekt skrivna till %s (GeoJSON, WGS84, 2D)' % (n_geo, geojson_ut))
+
+    # ---------------------------------------------------- 9. Karta
     if lagg_till_i_kartan:
         mxd = _mxd()
         if mxd is not None:
@@ -955,4 +1007,5 @@ if __name__ == '__main__':
         skapa(JSON_IN, LEDNINGSLAGER, BRUNNSLAGER, BRUNN_ID, UT_FC,
               omradeslager=OMRADESLAGER, csv_ut=CSV_UT, lyr_fil=LYR_FIL,
               tolerans=TOLERANS, marginal=MARGINAL, max_hopp=MAX_HOPP, urval=URVAL,
-              kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP)
+              kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP,
+              geojson_ut=GEOJSON_UT)

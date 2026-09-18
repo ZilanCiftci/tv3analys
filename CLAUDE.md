@@ -92,7 +92,10 @@ annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`), s
 (Display > Support Hyperlinks using field, sparas i `.lyr`). Användaren kör analysen lokalt men
 ArcMap i Citrix: verktygets kategori "Hyperlänkar" har `rapportmapp`/`filmmapp` (KONFIG:
 `RAPPORTMAPP`/`FILMMAPP`) som bygger sökvägarna av filnamnet i en mapp som Citrix-klienten ser;
-utdatamappen läggs på nätverket så JSON + `rapporter/` nås därifrån. Symbologin
+utdatamappen läggs på nätverket så JSON + `rapporter/` nås därifrån. Utdata skrivs i **2D**
+(Z i SVOA:s nätverk är −9999) och verktyget kan skriva **GeoJSON enligt RFC 7946** (WGS84 via
+`projectAs(4326)`, 2D, ingen `crs`, UTF-8) för webb-GIS – ArcMaps Features To JSON gav EPSG:3011
++ 4 koordinater per punkt som webb-GIS:et inte läste; shapefil-zippen saknade dessutom `.shx`. Symbologin
 (Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
 **heldragen** = manuell) sätts **manuellt en gång i ArcMap** och sparas som
 `arcmap/bedomda_ledningar.lyr`, som verktyget använder som standard (handledningen 7.2).
