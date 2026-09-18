@@ -464,9 +464,26 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         kopiera.append(f.name)
 
     ut_falt = ['SHAPE@'] + [n for n, t, l, a in EGNA_FALT] + kopiera
+    ut_typer = ['SHAPE@'] + [t for n, t, l, a in EGNA_FALT] + \
+               [typkarta.get(kallfalt[k.upper()].type, 'TEXT') for k in kopiera]
 
     def klipp(v, langd):
         return txt(v)[:min(langd, max_text)] if v is not None else ''
+
+    def utan_null(rad):
+        """Shapefiler kan inte lagra NULL i tal- och textfalt: tomma varden blir
+        0 respektive '' (samma sak ArcGIS gor vid export till shapefil)."""
+        if not ar_shapefil:
+            return rad
+        ut = []
+        for v, typ in zip(rad, ut_typer):
+            if v is None:
+                v = '' if typ == 'TEXT' else 0
+            ut.append(v)
+        return ut
+
+    if ar_shapefil:
+        logg('  tomma tal (t.ex. lutning utan profil) skrivs som 0 i shapefil')
 
     # ---------------------------------------------------- 5. Matcha och skriv
     traffade = set()
@@ -515,7 +532,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                             man = tidigare_manuella.get(par, '')
                             bed, bed_typ, stil = galler(mask, man)
 
-                            insert.insertRow([
+                            insert.insertRow(utan_null([
                                 ny, mask, man, bed, bed_typ, stil,
                                 klipp(s.get('startbrunn'), 50), klipp(s.get('slutbrunn'), 50),
                                 klipp(s.get('klasstext'), 40),
@@ -531,7 +548,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
                                 antal_per_par.get(par, 1),
                                 namn[:100], oid,
-                            ] + extra)
+                            ] + extra))
                             traffade.add(par)
                             n_skrivna += 1
 
