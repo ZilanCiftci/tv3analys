@@ -15,7 +15,7 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 - Beslut som togs tidigt: **Python-skript** (inte webbapp – en Vite/TypeScript-plan skrevs men
   lades ned), **viktad poäng per sträcka** som kritikalitetsmodell, och att **flera TV3-filer
   ska kunna analyseras tillsammans** eftersom fler uppdrag kommer.
-- Exempelfil: `DUF 701.TV3` – SVOA, Alvik/Äppelviken, inspekterad maj–juni 2021, 185 sträckor,
+- Exempelfil: `testdata/DUF 701.TV3` – SVOA, Alvik/Äppelviken, inspekterad maj–juni 2021, 185 sträckor,
   7 385 m, 1 998 observationsrader, entreprenör Foria Miljö (WinCan-exporter). Använd den som
   testfixtur/facit.
 
@@ -29,7 +29,7 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 Körning:
 ```
 python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--media KATALOG]
-python tv3_analys.py "DUF 701.TV3"            # enstaka fil, jokertecken eller katalog fungerar också
+python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
 ```
 
 Listfilens format (relativa sökvägar tolkas relativt listfilen, `#` = kommentar):
