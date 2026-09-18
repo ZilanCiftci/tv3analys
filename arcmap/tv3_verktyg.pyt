@@ -8,8 +8,8 @@ unicode-koder: u00e5, u00e4 och u00f6 efter ett omvant snedstreck. Tack vare
 unicode_literals blir de riktiga tecken i dialogen.
 
 Lagg till i ArcToolbox: hogerklicka > Add Toolbox > valj denna .pyt-fil.
-Logiken ligger i skapa_ledningslager.py och skapa_lyr.py i samma mapp; den har
-filen ar bara dialogerna. Modulerna laddas om vid varje korning.
+Logiken ligger i skapa_ledningslager.py i samma mapp; den har filen ar bara
+dialogerna. Modulen laddas om vid varje korning.
 
 Lagervalen ar rullistor med kartans lagernamn (inte lagerparametrar): ArcMap
 tolkar '/' i ett lagernamn som sokvag nar namnet skickas som text, vilket gor
@@ -26,7 +26,7 @@ HAR = os.path.dirname(os.path.abspath(__file__))
 if HAR not in sys.path:
     sys.path.insert(0, HAR)
 
-# .lyr-fil med symbologi som anvands om ingen annan anges (skapas av "Skapa symbologi")
+# .lyr-fil med symbologi som anvands om ingen annan anges (sparas fran ArcMap, se handledningen 7.2)
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 
 # Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
@@ -145,7 +145,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning, SkapaSymbologi]
+        self.tools = [SkapaLedningslager, UppdateraBedomning]
 
 
 class SkapaLedningslager(object):
@@ -305,48 +305,4 @@ class UppdateraBedomning(object):
             arcpy.RefreshActiveView()
         except Exception:
             pass
-        return
-
-
-class SkapaSymbologi(object):
-    def __init__(self):
-        self.label = 'Skapa symbologi (.lyr)'
-        self.description = (
-            'Bygger symbologin f\u00f6r ledningslagret - f\u00e4rg efter prioritetsklass, '
-            'heldragen linje f\u00f6r manuell bed\u00f6mning och streckad f\u00f6r maskinell - '
-            's\u00e4tter den p\u00e5 lagret i kartan och sparar den som .lyr-fil. '
-            'Kr\u00e4ver att comtypes finns i ArcMaps Python (pip install "comtypes<1.2").')
-        self.canRunInBackground = False
-
-    def getParameterInfo(self):
-        lager = _lagerparam('Ledningslager i kartan (fr\u00e5n "Skapa ledningslager")', 'lager',
-                            False, _kartlager())
-        lyr_ut = arcpy.Parameter(
-            displayName='Spara som (.lyr)', name='lyr_ut',
-            datatype='DELayer', parameterType='Required', direction='Output')
-        lyr_ut.value = STANDARD_LYR
-        return [lager, lyr_ut]
-
-    def isLicensed(self):
-        return True
-
-    def updateMessages(self, parameters):
-        _kolla_geometri(parameters[0], ('Polyline',), 'Lagret')
-        if parameters[0].valueAsText:
-            l = _lagerobjekt(parameters[0].valueAsText)
-            try:
-                namn = [f.name.upper() for f in arcpy.ListFields(l.dataSource if l else parameters[0].valueAsText)]
-                if 'STIL' not in namn:
-                    parameters[0].setErrorMessage(
-                        'Lagret saknar faltet STIL - valj lagret fran "Skapa ledningslager".')
-            except Exception:
-                pass
-        return
-
-    def execute(self, parameters, messages):
-        m = _ladda_modul('skapa_lyr')
-        l = _lagerobjekt(parameters[0].valueAsText)
-        namn = l.name if l is not None else parameters[0].valueAsText.strip("'")
-        ut = m.skapa_lyr(namn, parameters[1].valueAsText)
-        parameters[1].value = ut
         return
