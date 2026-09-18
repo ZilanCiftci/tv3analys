@@ -623,7 +623,9 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
 # Media (video + bilder)
 # ----------------------------------------------------------------------------
 
-MEDIA_ANDELSER = {".mp4", ".mpg", ".mpeg", ".avi", ".wmv", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp"}
+VIDEO_ANDELSER = {".mp4", ".mp2", ".mpg", ".mpeg", ".avi", ".wmv", ".mov", ".mkv", ".m4v", ".asf", ".ts",
+                  ".mts", ".webm", ".vob", ".divx", ".flv", ".3gp"}
+MEDIA_ANDELSER = VIDEO_ANDELSER | {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff"}
 _media_cache: dict[str, dict[str, str]] = {}
 
 
@@ -636,8 +638,11 @@ def indexera_katalog(katalog: str) -> dict[str, str]:
     if os.path.isdir(katalog):
         for rot, _, namn in os.walk(katalog):
             for n in namn:
-                if os.path.splitext(n)[1].lower() in MEDIA_ANDELSER:
-                    idx.setdefault(n.lower(), os.path.join(rot, n))   # första träffen vinner
+                stam, and_ = os.path.splitext(n)
+                if and_.lower() in MEDIA_ANDELSER:
+                    idx.setdefault(n.lower(), os.path.join(rot, n))          # första träffen vinner
+                    if and_.lower() in VIDEO_ANDELSER:
+                        idx.setdefault("\x00" + stam.lower(), os.path.join(rot, n))   # video utan ändelse
     _media_cache[katalog] = idx
     return idx
 
@@ -647,23 +652,33 @@ def koppla_media(strackor: list[Stracka], extra_kataloger: list[str]) -> tuple[i
     mediakataloger (från listfilen) och sist i de globala (media: i listfilen eller --media).
     Returnerar (videor hittade, videor totalt, bilder hittade, bilder totalt)."""
     vh = vt = bh = bt = 0
+    saknade_video: dict[str, list[str]] = {}
+    kataloger_per_fil: dict[str, list[str]] = {}
     for s in strackor:
         kataloger = [os.path.dirname(s.tv3_sokvag)] + list(s.media_kataloger) + list(extra_kataloger)
+        kataloger_per_fil.setdefault(s.fil, kataloger)
         index = [indexera_katalog(k) for k in kataloger]
 
-        def hitta(namn: str) -> str | None:
-            n = namn.strip().lower()
+        def hitta(namn: str, video: bool = False) -> str | None:
+            n = os.path.basename(namn.strip().replace("\\", "/")).lower()   # TV3 kan ha sökväg i namnet
             if not n:
                 return None
             for idx in index:
                 if n in idx:
                     return idx[n]
+            if video:                                 # annan filändelse på disk (.mpg vs .mp4)
+                stam = "\x00" + os.path.splitext(n)[0]
+                for idx in index:
+                    if stam in idx:
+                        return idx[stam]
             return None
 
         if s.videofil:
             vt += 1
-            s.video_sokvag = hitta(s.videofil)
+            s.video_sokvag = hitta(s.videofil, video=True)
             vh += s.video_sokvag is not None
+            if s.video_sokvag is None:
+                saknade_video.setdefault(s.fil, []).append(s.videofil)
         for o in s.observationer:
             if o.bild:
                 bt += 1
@@ -673,6 +688,20 @@ def koppla_media(strackor: list[Stracka], extra_kataloger: list[str]) -> tuple[i
                 bt += 1
                 o.bild_b_sokvag = hitta(o.bild_b)
                 bh += o.bild_b_sokvag is not None
+
+    # Diagnostik: vilka filmnamn saknas, och vad heter filmerna som faktiskt finns i mapparna?
+    for fil, namn in saknade_video.items():
+        print(f"  {fil}: {len(namn)} videofiler saknas, t.ex. {', '.join(namn[:3])}")
+        exempel: list[str] = []
+        for k in kataloger_per_fil.get(fil, []):
+            exempel += [os.path.basename(p) for nyckel, p in indexera_katalog(k).items()
+                        if not nyckel.startswith("\x00") and os.path.splitext(nyckel)[1] in VIDEO_ANDELSER]
+        exempel = sorted(dict.fromkeys(exempel))
+        if exempel:
+            print(f"    filmer i mapparna heter t.ex. {', '.join(exempel[:3])} ({len(exempel)} st)")
+        else:
+            print("    inga videofiler alls i de sökta mapparna: "
+                  + ", ".join(kataloger_per_fil.get(fil, [])))
     return vh, vt, bh, bt
 
 
