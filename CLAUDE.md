@@ -45,7 +45,9 @@ Utdata i `tv3_resultat/` (eller `-o`):
   inbäddade diagram), **Prioritering** (en rad per sträcka, rankad; klassceller färgade;
   hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut `file:///`-länk)),
   **Observationer** (alla observationer i klartext, länk till bild och video),
-  **Kodstatistik**, **Per fil**, **Material**.
+  **Kodstatistik**, **Per fil**, **Material** (relinade sträckor redovisas som eget material
+  `Relinad` med ursprungsmaterialet i egen kolumn – styrs av `RELINAD_SOM_MATERIAL` i KONFIG;
+  samma indelning i diagram 4, medan fliken Prioritering visar ursprungsmaterial + flaggan Relinad).
 - `diagram/1_prioritetsklasser.png`, `2_topplista.png`, `3_observationer_per_kod.png`,
   `4_klass_per_material.png` (200 dpi, för PowerPoint).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.

@@ -174,7 +174,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["Observationer", "Varje observation i klartext med läge (m), tid i filmen, kod, grad, poäng, klockposition, vattennivå, bild och kommentar. Bild och Videofil är klickbara länkar när filerna hittats. Sorterad i samma ordning som prioriteringslistan så att man snabbt hittar detaljerna för en kritisk sträcka."],
     ["Kodstatistik", "Antal observationer per skadekod fördelat på grad 1–4, samt hur många sträckor som berörs."],
     ["Per fil", "Nyckeltal per TV3-fil: projekt, område, period, sträckor, längd, index, klassfördelning och avbrutna inspektioner. Praktiskt när flera uppdrag analyseras samtidigt."],
-    ["Material", "Sträckor, längd, index och andel klass A+B per material och ledningstyp."],
+    ["Material", "Sträckor, längd, index och andel klass A+B per material och ledningstyp. Relinade (infodrade) sträckor redovisas som ett eget material \"Relinad\" med ursprungsmaterialet i egen kolumn, så att de inte räknas in i betong- eller plaststatistiken. Samma indelning används i diagrammet Prioritetsklass per material."],
   ], [2400, 6960]),
 
   h1("6. Anpassa poängmodellen"),
