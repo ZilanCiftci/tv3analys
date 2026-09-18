@@ -229,8 +229,13 @@ class SkapaLedningslager(object):
             name='filmmapp', datatype='DEFolder', parameterType='Optional', direction='Input',
             category='Hyperl\u00e4nkar (n\u00e4r ArcMap k\u00f6rs p\u00e5 en annan dator, t.ex. Citrix)')
 
+        geojson_ut = arcpy.Parameter(
+            displayName='GeoJSON f\u00f6r webb-GIS (WGS84, 2D; valfritt)', name='geojson_ut',
+            datatype='DEFile', parameterType='Optional', direction='Output')
+        _filter(geojson_ut, ['geojson', 'json'])
+
         return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
-                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp]
+                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut]
 
     def isLicensed(self):
         return True
@@ -274,6 +279,7 @@ class SkapaLedningslager(object):
             lagg_till_i_kartan=False,     # ArcMap lagger sjalv till utdata-parametern i kartan
             rapportmapp=parameters[12].valueAsText or None,
             filmmapp=parameters[13].valueAsText or None,
+            geojson_ut=parameters[14].valueAsText or None,
         )
         parameters[4].value = ut
         if parameters[6].valueAsText and os.path.isfile(parameters[6].valueAsText):
