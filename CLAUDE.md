@@ -71,8 +71,10 @@ inom toleransen slås ihop. Vägen brunn→brunn söks med BFS (färst bitar, h�
 andra sökta brunnar emellan, högst 8 bitar) – så hittas sträckor uppdelade i flera
 ledningsobjekt (fältet `ANT_DELAR`) och brunnar utan egen vertex. Geometrin orienteras
 startbrunn→slutbrunn. Första körningen med gamla vertex-metoden (steg2-skriptets) gav 136/180;
-CSV:n över omatchade har kolumner med avstånd brunn→närmaste ledning och loggen föreslår högre
-tolerans när en brunn ligger 1–3× toleransen från ledningen.
+CSV:n över omatchade har kolumner med avstånd brunn→närmaste ledning samt `diagnos`
+(`Natverk.diagnos`: "hoj max hopp till N", "glapp X m vid (x, y)", "annat lager", "brunnen … finns
+inte i brunnslagren"). Grafmetoden gav 159/180 på DUF 701; resten är 13 littera som saknas i kartan
+(`AG`/`STBEXTRA` är platshållare) och 3 par utan väg.
 Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `MAN_BED`
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin

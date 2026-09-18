@@ -249,6 +249,7 @@ class Natverk(object):
         self.kanter = {}       # nod -> [(annan nod, punkter fran nod till annan, lager, oid)]
         self.andar = {}        # rutnat over fria andar: cell -> [(nyckel, x, y)]
         self.n_andar = 0
+        self.koord = dict((('B', bid), (x, y)) for bid, (x, y) in sokta.items())
         if sokta:
             xs = [p[0] for p in sokta.values()]
             ys = [p[1] for p in sokta.values()]
@@ -285,6 +286,7 @@ class Natverk(object):
         self.n_andar += 1
         nyckel = ('P', self.n_andar)
         self.andar.setdefault((cx, cy), []).append((nyckel, x, y))
+        self.koord[nyckel] = (x, y)
         return nyckel
 
     def _kant(self, n1, n2, pts, lager, oid):
@@ -357,6 +359,57 @@ class Natverk(object):
                 sedda.add(annan)
                 ko.append((annan, vagen + [(annan, pts, lager, oid)], h))
         return None
+
+
+    def komponent(self, start):
+        """Alla noder som gar att na fran start."""
+        sedda = set([start])
+        ko = [start]
+        while ko:
+            nod = ko.pop()
+            for annan, pts, lager, oid in self.kanter.get(nod, ()):
+                if annan not in sedda:
+                    sedda.add(annan)
+                    ko.append(annan)
+        return sedda
+
+    def diagnos(self, a, b, max_hopp):
+        """Varfor hittades ingen vag mellan a och b? Returnerar en forklaring."""
+        start, mal = ('B', a), ('B', b)
+        if start not in self.kanter or mal not in self.kanter:
+            return 'brunnen ligger inte pa nagon ledning'
+        v = self.vag(a, b, 999, 200)
+        if v:
+            n_br = sum(1 for nod, pts, lager, oid in v[:-1] if nod[0] == 'B')
+            return ('vag finns via %d bitar och %d andra brunnar - hoj max hopp till %d'
+                    % (len(v), n_br, n_br + 1))
+        ka = self.komponent(start)
+        kb = self.komponent(mal)
+        if ka == kb:
+            return 'samma natverk men vagen ar orimligt lang'
+        # Narmaste avstand mellan de tva natverksdelarna (rutnat over den mindre delen)
+        if len(kb) < len(ka):
+            ka, kb = kb, ka
+        c = self.cell
+        rn = {}
+        for nod in kb:
+            x, y = self.koord[nod]
+            rn.setdefault((int(x // c), int(y // c)), []).append((x, y))
+        bast, var = None, None
+        for nod in ka:
+            x, y = self.koord[nod]
+            cx, cy = int(x // c), int(y // c)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for bx, by in rn.get((cx + dx, cy + dy), ()):
+                        d = ((bx - x) ** 2 + (by - y) ** 2) ** 0.5
+                        if bast is None or d < bast:
+                            bast, var = d, ((x + bx) / 2.0, (y + by) / 2.0)
+        if bast is None:
+            return ('ledningen ar bruten med mer an %.0f m glapp, eller ligger i ett annat lager'
+                    % self.sokradie)
+        return ('glapp %.1f m i ledningen vid (%.0f, %.0f) - hoj toleransen till %.0f m'
+                ' eller kontrollera ledningen dar' % (bast, var[0], var[1], bast + 0.5))
 
 
 def sla_ihop(vagen):
@@ -775,19 +828,25 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         if par in traffade:
             continue
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
+        if a in brunns_id and b in brunns_id:
+            diagnos = nat.diagnos(a, b, max_hopp)
+        elif a in brunns_id or b in brunns_id:
+            diagnos = 'brunnen %s finns inte i brunnslagren' % (b if a in brunns_id else a)
+        else:
+            diagnos = 'ingen av brunnarna finns i brunnslagren'
         omatchade.append([a, b,
                           'JA' if a in brunns_id else 'NEJ',
                           'JA' if b in brunns_id else 'NEJ',
                           'JA' if (a in brunns_id or b in brunns_id) else 'NEJ',
                           avst(a), avst(b),
                           txt(s.get('maskinell_bedomning')),
-                          txt(s.get('fil'))])
+                          txt(s.get('fil')), diagnos])
     omatchade.sort(key=lambda r: (r[4] != 'JA', KLASSORDNING.get(r[7], 9), r[0]))
 
     if csv_ut:
         with io.open(csv_ut, 'w', encoding='cp1252', errors='replace') as f:
             f.write('fran;till;fran_finns;till_finns;nagon_finns;'
-                    'fran_avstand_m;till_avstand_m;maskinell_bedomning;kallfil\n')
+                    'fran_avstand_m;till_avstand_m;maskinell_bedomning;kallfil;diagnos\n')
             for r in omatchade:
                 f.write(';'.join(txt(v).replace(';', ',') for v in r) + '\n')
         logg('  %d omatchade par -> %s' % (len(omatchade), csv_ut))
@@ -818,7 +877,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         logg('    %d dar en brunn ligger %.0f-%.0f m fran ledningen - prova tolerans %.0f m'
              % (len(nara), tolerans, 3 * tolerans, 3 * tolerans))
     for r in bada_brunnar[:12]:
-        logg('    %s - %s (klass %s): %s m / %s m till ledning' % (r[0], r[1], r[7], r[5], r[6]))
+        logg('    %s - %s (klass %s): %s' % (r[0], r[1], r[7], r[9]))
 
     # ---------------------------------------------------- 8. Karta
     if lagg_till_i_kartan:
