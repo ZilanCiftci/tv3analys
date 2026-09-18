@@ -99,7 +99,8 @@ skickas som text → "does not exist". Namnen slås upp till lagerobjekt via `ar
 (`hitta_lager`, matchar kort eller långt namn `Grupp\Lager`) och `kalla()` ger lagrets
 `dataSource` + definitionsfråga till `MakeFeatureLayer`, så namnet aldrig går som text till GP.
 Brunnar i SVOA-kartan: nedstigningsbrunnar (xNB/xNBL) i `A Nedstign och övriga brunnar`,
-rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn` – båda behövs (standard).
+rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn`, plus `A Platsgjuten brunnspunkt` –
+alla tre är standard.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 
 ## 3. TV3-formatet (Svenskt Vatten TV-fil v3.0, P93-koder) – det vi lärt oss

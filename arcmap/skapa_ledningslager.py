@@ -47,7 +47,8 @@ import arcpy
 LEDNINGSLAGER = ['A Ledning']
 # Nedstigningsbrunnar (xNB/xNBL) och rens-/tillsynsbrunnar (xRB/xTB) ligger i olika lager -
 # ta med alla lager dar brunnar i TV3-filerna kan finnas.
-BRUNNSLAGER   = ['A Nedstign och övriga brunnar', 'A Rensbrunn/tillsynsbrunn']
+BRUNNSLAGER   = ['A Nedstign och övriga brunnar', 'A Rensbrunn/tillsynsbrunn',
+                 'A Platsgjuten brunnspunkt']
 
 BRUNN_ID = 'EntityID'        # faltet med brunnsbeteckning i brunnslagren
 
