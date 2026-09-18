@@ -1,0 +1,17 @@
+# Utdata från körningar (standardkatalog)
+tv3_resultat/
+fel.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node (make_docs.js)
+node_modules/
+package-lock.json
+
+# Operativsystem
+.DS_Store
+Thumbs.db
