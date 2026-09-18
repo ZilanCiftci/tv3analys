@@ -1,5 +1,5 @@
 # Exempel på listfil för tv3_analys
 # media: D:\Inspektioner\Filmer          <- mapp med filmer/bilder för alla filer
 
-DUF 701.TV3
+testdata/DUF 701.TV3
 # DUF 702.TV3 ; D:\Filmer\DUF702        <- egen mediamapp för just den filen
