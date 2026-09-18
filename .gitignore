@@ -15,6 +15,3 @@ package-lock.json
 # Operativsystem
 .DS_Store
 Thumbs.db
-
-# Genererad kod fran comtypes (ArcObjects-omslag), skapas vid forsta korningen
-arcmap/lib/comtypes/gen/

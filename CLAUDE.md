@@ -79,11 +79,10 @@ Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `M
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
 (Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
-**heldragen** = manuell) byggs av `arcmap/skapa_lyr.py` / verktyget **Skapa symbologi (.lyr)**
-via ArcObjects (comtypes 1.1.14 ligger vendorerat i `arcmap/lib/`, MIT – användaren kunde inte
-pip-installera; `gen/` är gitignorerad) och sparas som `arcmap/bedomda_ledningar.lyr`,
-som verktyget använder som standard. Manuell väg (Unique values + Save As Layer File) finns
-kvar i handledningen. `.lyr` är binär och kan inte skapas utanför ArcMap. "Uppdatera bedömning"
+**heldragen** = manuell) sätts **manuellt en gång i ArcMap** och sparas som
+`arcmap/bedomda_ledningar.lyr`, som verktyget använder som standard (handledningen 7.2).
+En ArcObjects-generator (`skapa_lyr.py` + vendorerad comtypes) byggdes men togs bort på
+användarens begäran – oprövad och onödig; `.lyr` är binär och kan inte skapas utanför ArcMap. "Uppdatera bedömning"
 (eller `BARA_UPPDATERA = True`) räknar bara om de härledda fälten efter manuell ifyllnad; vid
 full omkörning bevaras manuella bedömningar per brunnspar. Omatchade par listas i CSV.
 Lagervalen i verktyget är **rullistor med kartans lagernamn (GPString)**, inte
@@ -187,7 +186,7 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 ## 7. Idéer som nämnts men inte byggts
 
 - Kartvy: grundversionen finns (`arcmap/`). Kvar: koppla rapport-PDF och film som hyperlänk i
-  kartan; lägga den genererade `.lyr`-filen i repot när den skapats på användarens dator.
+  kartan; lägga `.lyr`-filen i repot när användaren sparat den från ArcMap.
 - Jämförelse mellan två inspektioner av samma sträcka.
 - Stöd för P111-koder som alternativ kodtabell.
 - Kostnadsuppskattning per sträcka (kr/m per metod).
