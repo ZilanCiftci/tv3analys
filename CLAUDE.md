@@ -69,8 +69,11 @@ styr hur många brunnar en sträcka får passera (samma metod som användarens e
 Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `MAN_BED`
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
-sätts en gång på `STIL` (Unique values, tio kategorier) och sparas som `.lyr`: färg efter
-klass, **streckad** linje = maskinell, **heldragen** = manuell. "Uppdatera bedömning"
+(Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
+**heldragen** = manuell) byggs av `arcmap/skapa_lyr.py` / verktyget **Skapa symbologi (.lyr)**
+via ArcObjects (comtypes < 1.2 i ArcMaps Python) och sparas som `arcmap/bedomda_ledningar.lyr`,
+som verktyget använder som standard. Manuell väg (Unique values + Save As Layer File) finns
+kvar i handledningen. `.lyr` är binär och kan inte skapas utanför ArcMap. "Uppdatera bedömning"
 (eller `BARA_UPPDATERA = True`) räknar bara om de härledda fälten efter manuell ifyllnad; vid
 full omkörning bevaras manuella bedömningar per brunnspar. Omatchade par listas i CSV.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
@@ -166,8 +169,8 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 
 ## 7. Idéer som nämnts men inte byggts
 
-- Kartvy: grundversionen finns (`arcmap/skapa_ledningslager.py`). Kvar: koppla rapport-PDF och
-  film som hyperlänk i kartan, och färdig `.lyr` att leverera i stället för manuell symbologi.
+- Kartvy: grundversionen finns (`arcmap/`). Kvar: koppla rapport-PDF och film som hyperlänk i
+  kartan; lägga den genererade `.lyr`-filen i repot när den skapats på användarens dator.
 - Jämförelse mellan två inspektioner av samma sträcka.
 - Stöd för P111-koder som alternativ kodtabell.
 - Kostnadsuppskattning per sträcka (kr/m per metod).

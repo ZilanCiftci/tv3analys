@@ -55,7 +55,8 @@ OMRADESLAGER = None          # t.ex. 'paverkansomrade_grovt'
 JSON_IN = r'H:\PY\tv3analys\tv3_resultat\kartunderlag.json'
 UT_FC   = r'H:\PY\tv3analys\Karta\bedomda_ledningar'       # .gdb-vag eller mapp (= shapefil)
 CSV_UT  = r'H:\PY\tv3analys\Karta\omatchade_par.csv'
-LYR_FIL = r'H:\PY\tv3analys\Karta\bedomda_ledningar.lyr'   # symbologi, se slutet av skriptet
+# Symbologi. Skapas med skapa_lyr.py / verktyget "Skapa symbologi" och ligger i arcmap-mappen.
+LYR_FIL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bedomda_ledningar.lyr')
 
 TOLERANS = 2.0     # meter mellan ledningens vertex och brunnen
 MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLAGER anges)
