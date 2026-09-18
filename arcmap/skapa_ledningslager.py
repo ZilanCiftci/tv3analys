@@ -69,6 +69,12 @@ URVAL    = 'INTERSECT'     # 'WITHIN' om ledningen maste ligga helt inom omradet
 # Falt fran ledningslagret som ska folja med till resultatet.
 KOPIERA_FALT = []          # t.ex. ['DIMENSION', 'MATERIAL', 'ANLAGGNINGSAR']
 
+# Var PDF-rapporterna och filmerna ligger SETT FRAN DEN HAR DATORN (t.ex. Citrix), for
+# hyperlankfalten RAPPORT och VIDEO. None = rapporter i mappen "rapporter" bredvid JSON-filen,
+# filmer pa sokvagen som tv3_analys hittade dem (bara ratt om det ar samma dator).
+RAPPORTMAPP = None         # t.ex. r'\\server\share\tv3_resultat\rapporter'
+FILMMAPP = None            # t.ex. r'\\server\share\Inspektioner\Filmer'
+
 # True = bygg inte om geometrin, rakna bara om BEDOMNING/BED_TYP/STIL i UT_FC
 # efter att manuella bedomningar fyllts i.
 BARA_UPPDATERA = False
@@ -542,7 +548,8 @@ def uppdatera(ut_fc):
 def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           omradeslager=None, csv_ut=None, lyr_fil=None,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
-          kopiera_falt=None, lagg_till_i_kartan=True):
+          kopiera_falt=None, lagg_till_i_kartan=True,
+          rapportmapp=None, filmmapp=None):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen."""
     kopiera_falt = kopiera_falt or []
     if isinstance(ledningslager, (TEXTTYP, bytes)):
@@ -765,14 +772,27 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     # ---------------------------------------------------- 6. Sok vag per brunnspar och skriv
     utdata_mapp = os.path.dirname(os.path.abspath(json_in))
+    if rapportmapp:
+        logg('  rapporter hamtas fran %s' % rapportmapp)
+    if filmmapp:
+        logg('  filmer hamtas fran %s' % filmmapp)
 
     def rapport_sokvag(post):
-        """Absolut sokvag till strackans PDF (relativ till utdatamappen i JSON-filen)."""
+        """Sokvag till strackans PDF: i rapportmapp om angiven, annars relativt JSON-filen."""
         r = post.get('rapport')
         if not r:
             return ''
         r = txt(r).replace('/', os.sep)
+        if rapportmapp:
+            return os.path.join(txt(rapportmapp), os.path.basename(r))
         return r if os.path.isabs(r) else os.path.join(utdata_mapp, r)
+
+    def video_sokvag(post):
+        """Sokvag till filmen: filnamnet i filmmapp om angiven, annars som tv3_analys fann den."""
+        namn = txt(post.get('videofil') or '') or os.path.basename(txt(post.get('video_sokvag') or ''))
+        if filmmapp:
+            return os.path.join(txt(filmmapp), namn) if namn else ''
+        return txt(post.get('video_sokvag') or '')
 
     traffade = set()
     n_skrivna = n_flerdelade = 0
@@ -813,7 +833,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 s.get('svackdjup_m'), s.get('lutning_promille'),
                 klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
-                klipp(rapport_sokvag(s), 254), klipp(s.get('video_sokvag') or '', 254),
+                klipp(rapport_sokvag(s), 254), klipp(video_sokvag(s), 254),
                 antal_per_par.get(par, 1), len(vagen),
                 lager0[:100], oid0,
             ] + extra))
@@ -935,4 +955,4 @@ if __name__ == '__main__':
         skapa(JSON_IN, LEDNINGSLAGER, BRUNNSLAGER, BRUNN_ID, UT_FC,
               omradeslager=OMRADESLAGER, csv_ut=CSV_UT, lyr_fil=LYR_FIL,
               tolerans=TOLERANS, marginal=MARGINAL, max_hopp=MAX_HOPP, urval=URVAL,
-              kopiera_falt=KOPIERA_FALT)
+              kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP)
