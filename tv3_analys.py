@@ -22,6 +22,7 @@ Användning:
     python tv3_analys.py -l filer.txt              # textfil med en TV3-sökväg per rad
     python tv3_analys.py katalog/                  # alla .TV3-filer i katalogen (rekursivt)
     python tv3_analys.py -l filer.txt --media D:/Filmer   # extra katalog att söka videofiler i
+    python tv3_analys.py -l filer.txt --behall-rapporter  # skriv inte om PDF-rapporter som finns
 
 Listfilen (-l/--lista) är en vanlig textfil. Tomma rader och rader som börjar
 med # hoppas över. Relativa sökvägar tolkas relativt listfilens katalog.
@@ -138,6 +139,11 @@ SPARA_DIAGRAM = False
 # material m.m.) som ArcMap-skriptet i arcmap/ läser för att skapa ett ledningslager.
 SKRIV_KARTUNDERLAG = True
 KARTUNDERLAG_FIL = "kartunderlag.json"
+
+# Hoppa över PDF-rapporter som redan finns i utdatakatalogen (spar tid när bara Excel eller
+# kartunderlaget ska uppdateras). Motsvarar --behall-rapporter. Ta bort rapporter/ eller kör
+# utan flaggan när layouten ändrats.
+BEHALL_RAPPORTER = False
 
 
 # ----------------------------------------------------------------------------
@@ -1543,22 +1549,30 @@ def rapport_filnamn(s: Stracka) -> str:
     return _saker_filnamn(f"{os.path.splitext(s.fil)[0]}_{s.nr:03d}_{s.klass}_{s.startbrunn}-{s.slutbrunn}") + ".pdf"
 
 
-def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str) -> int:
-    """Skriver en PDF per sträcka i <katalog>. urval: alla | AB | A."""
+def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
+                    behall: bool = False) -> tuple[int, int]:
+    """Skriver en PDF per sträcka i <katalog>. urval: alla | AB | A.
+    behall=True hoppar över sträckor vars PDF redan finns (länken sätts ändå).
+    Returnerar (antal skrivna, antal befintliga som behölls)."""
     import tempfile
     try:
         import reportlab  # noqa: F401
     except ImportError:
         print("  reportlab saknas – inga PDF-rapporter skapas (pip install reportlab)")
-        return 0
+        return 0, 0
     os.makedirs(katalog, exist_ok=True)
     valda = [s for s in strackor if urval == "alla" or s.klass in urval]
-    n = 0
+    n = behallna = 0
     with tempfile.TemporaryDirectory() as tmp:
         for i, s in enumerate(valda, 1):
             namn = rapport_filnamn(s)
+            sokvag = os.path.join(katalog, namn)
+            if behall and os.path.isfile(sokvag):
+                s.rapport_fil = os.path.join(os.path.basename(katalog), namn)
+                behallna += 1
+                continue
             try:
-                skriv_rapport(s, os.path.join(katalog, namn), tmp)
+                skriv_rapport(s, sokvag, tmp)
                 s.rapport_fil = os.path.join(os.path.basename(katalog), namn)
                 n += 1
             except Exception as e:
@@ -1566,7 +1580,7 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str) -> int:
             if i % 25 == 0 or i == len(valda):
                 print(f"  rapporter: {i}/{len(valda)}", end="\r")
     print()
-    return n
+    return n, behallna
 
 # ----------------------------------------------------------------------------
 # main
@@ -1670,6 +1684,8 @@ def main(argv=None):
     ap.add_argument("--topp", type=int, default=15, help="antal sträckor i topplistan (standard: 15)")
     ap.add_argument("--rapporter", choices=["alla", "AB", "A", "inga"], default="alla",
                     help="PDF-rapport per sträcka: alla (standard), bara klass A och B, bara A, eller inga")
+    ap.add_argument("--behall-rapporter", action="store_true", default=BEHALL_RAPPORTER,
+                    help="hoppa över PDF-rapporter som redan finns i utdatakatalogen (snabbare omkörning)")
     ap.add_argument("--karta", choices=["ja", "nej"], default="ja" if SKRIV_KARTUNDERLAG else "nej",
                     help=f"skriv {KARTUNDERLAG_FIL} för ArcMap-skriptet i arcmap/ (standard: ja)")
     ap.add_argument("--diagram", action="store_true", default=SPARA_DIAGRAM,
@@ -1750,8 +1766,10 @@ def main(argv=None):
     diagram = rita_diagram(strackor, diagramkatalog, a.topp)
     if a.rapporter != "inga":
         print(f"\nSkriver PDF-rapporter ({a.rapporter}) ...")
-        n = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter)
-        print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}")
+        n, behallna = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter,
+                                      behall=a.behall_rapporter)
+        print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}"
+              + (f", {behallna} befintliga behållna" if behallna else ""))
     excel_fil = os.path.join(a.utdata, "prioritering.xlsx")
     try:
         skriv_excel(strackor, excel_fil, diagram, a.topp)

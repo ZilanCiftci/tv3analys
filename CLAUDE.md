@@ -35,7 +35,7 @@ specifika raden vinner; rubrikraden styr kolumnordningen, tab/;/, som avgränsar
 
 Körning:
 ```
-python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--diagram] [--media KATALOG] [--littera FIL.CSV]
+python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--behall-rapporter] [--diagram] [--media KATALOG] [--littera FIL.CSV]
 python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
 ```
 
@@ -60,6 +60,8 @@ Utdata i `tv3_resultat/` (eller `-o`):
   `4_klass_per_material.png` (200 dpi, för PowerPoint) – **bara med `--diagram`**; annars ritas de
   i en temporär katalog och bäddas enbart in i fliken Sammanfattning (KONFIG: `SPARA_DIAGRAM`).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.
+  `--behall-rapporter` (KONFIG `BEHALL_RAPPORTER`) hoppar över PDF:er som redan finns – länken sätts
+  ändå; kör utan flaggan när layouten ändrats.
 - `kartunderlag.json` – en post per sträcka (brunnspar, maskinell bedömning, index, material,
   flaggor) för ArcMap-skriptet. Stängs av med `--karta nej` (KONFIG: `SKRIV_KARTUNDERLAG`).
 - `fel.txt` – bara om TV3-filer eller mediamappar saknades.
