@@ -82,13 +82,15 @@ KLASSORDNING = dict((k, i) for i, k in enumerate(KLASSER))   # A = varst
 LAGERNAMN = 'Bedomda ledningar'
 
 SYMBOLOGI_TIPS = [
-    'Ingen .lyr-fil an. Satt symbologin en gang:',
+    'Ingen .lyr-fil an. Satt symbologi och hyperlankar en gang:',
     '  Egenskaper > Symbology > Categories > Unique values, Value Field: STIL',
     '  Add All Values ger tio kategorier:',
     '    A/B/C/D/E - Maskinell  ->  STRECKAD linje i klassens farg',
     '    A/B/C/D/E - Manuell    ->  HELDRAGEN linje i klassens farg',
     '  Fargar: A rott, B orange, C gult, D gront, E gratt.',
-    '  Spara sedan lagret som .lyr - nasta korning applicerar det automatiskt.',
+    '  Egenskaper > Display > Support Hyperlinks using field: RAPPORT (Document)',
+    '  -> Hyperlank-verktyget (blixten) oppnar PDF-rapporten nar du klickar pa ledningen.',
+    '  Spara sedan lagret som .lyr - nasta korning applicerar allt automatiskt.',
 ]
 
 
@@ -464,6 +466,8 @@ EGNA_FALT = [
     ('OMRADE',     'TEXT',   60,  'Område'),
     ('DATUM',      'TEXT',   10,  'Inspektionsdatum'),
     ('TV3_FIL',    'TEXT',   100, 'TV3-fil'),
+    ('RAPPORT',    'TEXT',   254, 'Inspektionsprotokoll (PDF)'),
+    ('VIDEO',      'TEXT',   254, 'Videofil'),
     ('ANT_FILM',   'LONG',   None, 'Antal inspektioner av sträckan'),
     ('ANT_DELAR',  'LONG',   None, 'Antal ledningsobjekt i kartan'),
     ('SRC_LAGER',  'TEXT',   100, 'Källager'),
@@ -760,6 +764,16 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
          % (n_lednkoll, n_nara, n_bitar))
 
     # ---------------------------------------------------- 6. Sok vag per brunnspar och skriv
+    utdata_mapp = os.path.dirname(os.path.abspath(json_in))
+
+    def rapport_sokvag(post):
+        """Absolut sokvag till strackans PDF (relativ till utdatamappen i JSON-filen)."""
+        r = post.get('rapport')
+        if not r:
+            return ''
+        r = txt(r).replace('/', os.sep)
+        return r if os.path.isabs(r) else os.path.join(utdata_mapp, r)
+
     traffade = set()
     n_skrivna = n_flerdelade = 0
 
@@ -799,6 +813,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 s.get('svackdjup_m'), s.get('lutning_promille'),
                 klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
+                klipp(rapport_sokvag(s), 254), klipp(s.get('video_sokvag') or '', 254),
                 antal_per_par.get(par, 1), len(vagen),
                 lager0[:100], oid0,
             ] + extra))
