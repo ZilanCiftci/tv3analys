@@ -45,7 +45,9 @@ import arcpy
 
 # Del av lagernamnet i innehallsforteckningen. Flera lager tillatna.
 LEDNINGSLAGER = ['A Ledning']
-BRUNNSLAGER   = ['A Nedstign och övriga brunnar']
+# Nedstigningsbrunnar (xNB/xNBL) och rens-/tillsynsbrunnar (xRB/xTB) ligger i olika lager -
+# ta med alla lager dar brunnar i TV3-filerna kan finnas.
+BRUNNSLAGER   = ['A Nedstign och övriga brunnar', 'A Rensbrunn/tillsynsbrunn']
 
 BRUNN_ID = 'EntityID'        # faltet med brunnsbeteckning i brunnslagren
 
@@ -385,6 +387,24 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     rutnat = bygg_rutnat(brunnar, tolerans)
     brunns_id = set(b[0] for b in brunnar)
+
+    # Tackning: hur manga av JSON-filens brunnar finns i brunnslagren? Saknas hela
+    # brunnstyper (t.ex. alla KRB/KTB) ligger de troligen i ett annat lager.
+    json_brunnar = set()
+    for par in bedomda:
+        json_brunnar.update(par)
+    saknade = sorted(json_brunnar - brunns_id)
+    logg('  %d av %d brunnar i JSON-filen finns i brunnslagren'
+         % (len(json_brunnar) - len(saknade), len(json_brunnar)))
+    if saknade:
+        prefix = {}
+        for b in saknade:
+            pfx = re.match(r'[A-Z\u00c5\u00c4\u00d6]+', b)
+            pfx = pfx.group(0) if pfx else b
+            prefix[pfx] = prefix.get(pfx, 0) + 1
+        topp = sorted(prefix.items(), key=lambda kv: -kv[1])[:8]
+        logg('  saknade brunnar per typ: %s' % ', '.join('%s %d' % kv for kv in topp))
+        logg('  (saknas en hel brunnstyp - lagg till lagret den ligger i under Brunnslager)')
 
     # ---------------------------------------------------- 4. Utdata
     d0 = arcpy.Describe(led_lager[0])
