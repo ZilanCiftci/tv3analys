@@ -22,16 +22,19 @@ HAR = os.path.dirname(os.path.abspath(__file__))
 if HAR not in sys.path:
     sys.path.insert(0, HAR)
 
+# .lyr-fil med symbologi som anvands om ingen annan anges (skapas av "Skapa symbologi")
+STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 
-def _ladda_modul():
-    """Importerar (och laddar om) skapa_ledningslager sa att andringar slar igenom."""
-    import skapa_ledningslager
+
+def _ladda_modul(namn='skapa_ledningslager'):
+    """Importerar (och laddar om) en modul i arcmap-mappen sa att andringar slar igenom."""
+    modul = __import__(namn)
     try:
-        reload(skapa_ledningslager)                 # Python 2
+        reload(modul)                 # Python 2
     except NameError:
         import importlib
-        importlib.reload(skapa_ledningslager)       # Python 3
-    return skapa_ledningslager
+        importlib.reload(modul)       # Python 3
+    return modul
 
 
 def _filter(param, lista):
@@ -73,7 +76,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning]
+        self.tools = [SkapaLedningslager, UppdateraBedomning, SkapaSymbologi]
 
 
 class SkapaLedningslager(object):
@@ -118,6 +121,8 @@ class SkapaLedningslager(object):
         lyr_fil = arcpy.Parameter(
             displayName='Symbologi (.lyr-fil, valfritt)', name='lyr_fil',
             datatype='DELayer', parameterType='Optional', direction='Input')
+        if os.path.isfile(STANDARD_LYR):
+            lyr_fil.value = STANDARD_LYR
 
         csv_ut = arcpy.Parameter(
             displayName='Rapport \u00f6ver omatchade brunnspar (.csv, valfritt)', name='csv_ut',
@@ -237,4 +242,48 @@ class UppdateraBedomning(object):
             arcpy.RefreshActiveView()
         except Exception:
             pass
+        return
+
+
+class SkapaSymbologi(object):
+    def __init__(self):
+        self.label = 'Skapa symbologi (.lyr)'
+        self.description = (
+            'Bygger symbologin f\u00f6r ledningslagret - f\u00e4rg efter prioritetsklass, '
+            'heldragen linje f\u00f6r manuell bed\u00f6mning och streckad f\u00f6r maskinell - '
+            's\u00e4tter den p\u00e5 lagret i kartan och sparar den som .lyr-fil. '
+            'Kr\u00e4ver att comtypes finns i ArcMaps Python (pip install "comtypes<1.2").')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        lager = arcpy.Parameter(
+            displayName='Ledningslager i kartan (fr\u00e5n "Skapa ledningslager")', name='lager',
+            datatype='GPFeatureLayer', parameterType='Required', direction='Input')
+        lyr_ut = arcpy.Parameter(
+            displayName='Spara som (.lyr)', name='lyr_ut',
+            datatype='DELayer', parameterType='Required', direction='Output')
+        lyr_ut.value = STANDARD_LYR
+        return [lager, lyr_ut]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Lagret')
+        if parameters[0].valueAsText:
+            try:
+                namn = [f.name.upper() for f in arcpy.ListFields(parameters[0].valueAsText)]
+                if 'STIL' not in namn:
+                    parameters[0].setErrorMessage(
+                        'Lagret saknar faltet STIL - valj lagret fran "Skapa ledningslager".')
+            except Exception:
+                pass
+        return
+
+    def execute(self, parameters, messages):
+        m = _ladda_modul('skapa_lyr')
+        lyr = parameters[0].value
+        namn = getattr(lyr, 'name', None) or parameters[0].valueAsText
+        ut = m.skapa_lyr(namn, parameters[1].valueAsText)
+        parameters[1].value = ut
         return
