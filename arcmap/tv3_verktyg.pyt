@@ -2,6 +2,11 @@
 """
 Python Toolbox for ArcMap 10.x med verktygen fran tv3_analys.
 
+OBS: Filen ska vara ren ASCII. ArcMap laser .pyt-filer med Windows-teckentabellen
+oavsett kodningsrad, sa a-ring, a-prickar och o-prickar i etiketter skrivs som
+unicode-koder: u00e5, u00e4 och u00f6 efter ett omvant snedstreck. Tack vare
+unicode_literals blir de riktiga tecken i dialogen.
+
 Lagg till i ArcToolbox: hogerklicka > Add Toolbox > valj denna .pyt-fil.
 Logiken ligger i skapa_ledningslager.py i samma mapp; den har filen ar bara
 dialogen. Andra i skapa_ledningslager.py och kor verktyget igen - modulen
@@ -75,15 +80,15 @@ class SkapaLedningslager(object):
     def __init__(self):
         self.label = 'Skapa ledningslager'
         self.description = (
-            'Skapar ett ledningslager av kartunderlag.json från tv3_analys. '
+            'Skapar ett ledningslager av kartunderlag.json fr\u00e5n tv3_analys. '
             'Varje brunnspar i filen letas upp i brunnslagret och ledningen mellan '
-            'brunnarna klipps ut som ett eget objekt med fälten Maskinell bedömning '
-            'och Manuell bedömning. Manuella bedömningar från en tidigare körning bevaras.')
+            'brunnarna klipps ut som ett eget objekt med f\u00e4lten Maskinell bed\u00f6mning '
+            'och Manuell bed\u00f6mning. Manuella bed\u00f6mningar fr\u00e5n en tidigare k\u00f6rning bevaras.')
         self.canRunInBackground = False
 
     def getParameterInfo(self):
         json_in = arcpy.Parameter(
-            displayName='Kartunderlag (kartunderlag.json från tv3_analys)',
+            displayName='Kartunderlag (kartunderlag.json fr\u00e5n tv3_analys)',
             name='json_in', datatype='DEFile', parameterType='Required', direction='Input')
         _filter(json_in, ['json'])
 
@@ -98,7 +103,7 @@ class SkapaLedningslager(object):
             multiValue=True)
 
         brunn_id = arcpy.Parameter(
-            displayName='Fält med brunnsbeteckning i brunnslagret', name='brunn_id',
+            displayName='F\u00e4lt med brunnsbeteckning i brunnslagret', name='brunn_id',
             datatype='GPString', parameterType='Required', direction='Input')
         brunn_id.value = 'EntityID'
 
@@ -107,7 +112,7 @@ class SkapaLedningslager(object):
             datatype='DEFeatureClass', parameterType='Required', direction='Output')
 
         omrade = arcpy.Parameter(
-            displayName='Begränsa till område (polygonlager, valfritt)', name='omradeslager',
+            displayName='Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', name='omradeslager',
             datatype='GPFeatureLayer', parameterType='Optional', direction='Input')
 
         lyr_fil = arcpy.Parameter(
@@ -115,7 +120,7 @@ class SkapaLedningslager(object):
             datatype='DELayer', parameterType='Optional', direction='Input')
 
         csv_ut = arcpy.Parameter(
-            displayName='Rapport över omatchade brunnspar (.csv, valfritt)', name='csv_ut',
+            displayName='Rapport \u00f6ver omatchade brunnspar (.csv, valfritt)', name='csv_ut',
             datatype='DEFile', parameterType='Optional', direction='Output')
         _filter(csv_ut, ['csv'])
 
@@ -126,19 +131,19 @@ class SkapaLedningslager(object):
         tolerans.value = 2.0
 
         max_hopp = arcpy.Parameter(
-            displayName='Max antal brunnar en sträcka får passera', name='max_hopp',
+            displayName='Max antal brunnar en str\u00e4cka f\u00e5r passera', name='max_hopp',
             datatype='GPLong', parameterType='Required', direction='Input',
             category='Matchning')
         max_hopp.value = 2
 
         marginal = arcpy.Parameter(
-            displayName='Marginal utanför området där brunnar ändå läses in (m)', name='marginal',
+            displayName='Marginal utanf\u00f6r omr\u00e5det d\u00e4r brunnar \u00e4nd\u00e5 l\u00e4ses in (m)', name='marginal',
             datatype='GPDouble', parameterType='Required', direction='Input',
             category='Matchning')
         marginal.value = 100.0
 
         kopiera = arcpy.Parameter(
-            displayName='Fält från ledningslagret som ska följa med', name='kopiera_falt',
+            displayName='F\u00e4lt fr\u00e5n ledningslagret som ska f\u00f6lja med', name='kopiera_falt',
             datatype='GPString', parameterType='Optional', direction='Input',
             multiValue=True, category='Matchning')
 
@@ -190,15 +195,15 @@ class SkapaLedningslager(object):
 
 class UppdateraBedomning(object):
     def __init__(self):
-        self.label = 'Uppdatera bedömning'
+        self.label = 'Uppdatera bed\u00f6mning'
         self.description = (
-            'Räknar om Gällande bedömning, Bedömningstyp och STIL efter att du fyllt i '
-            'Manuell bedömning. Geometrin rörs inte.')
+            'R\u00e4knar om G\u00e4llande bed\u00f6mning, Bed\u00f6mningstyp och STIL efter att du fyllt i '
+            'Manuell bed\u00f6mning. Geometrin r\u00f6rs inte.')
         self.canRunInBackground = False
 
     def getParameterInfo(self):
         lager = arcpy.Parameter(
-            displayName='Ledningslager från "Skapa ledningslager"', name='lager',
+            displayName='Ledningslager fr\u00e5n "Skapa ledningslager"', name='lager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input')
         ut = arcpy.Parameter(
             displayName='Uppdaterat lager', name='ut', datatype='GPFeatureLayer',
