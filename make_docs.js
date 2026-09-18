@@ -116,6 +116,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   ...code([
     "# Inspektioner Äppelviken 2021",
     "media: D:\\Inspektioner\\Filmer            # gäller alla filer i listan",
+    "littera: brunnslittera.csv                # ersättningslittera, se 3.3",
     "",
     "DUF 701.TV3                                # media söks i TV3-filens egen mapp",
     "DUF 702.TV3 ; D:\\Filmer\\DUF702            # egen mediamapp för denna fil",
@@ -151,9 +152,22 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["`--diagram`", "Sparar diagrammen som PNG-filer i `diagram`-mappen, t.ex. för PowerPoint. Utan flaggan bäddas de bara in i Excel-filen.", "av"],
     ["`--karta ja|nej`", "Skriver `kartunderlag.json` för kartframställning i ArcMap (se avsnitt 7).", "`ja`"],
     ["`--media KATALOG`", "Extra mapp att söka video- och bildfiler i (kan anges flera gånger). TV3-filens egen mapp söks alltid, inklusive undermappar.", "–"],
+    ["`--littera FIL.CSV`", "CSV med ersättningslittera för brunnar som märkts fel vid filmningen (se 3.3). Kan även anges i listfilen.", "–"],
   ], [2600, 5000, 1760]),
   spacer(),
   p("Skriptet skriver en kort rapport i terminalen: vilka filer som lästes, antal sträckor per prioritetsklass och topplistan."),
+
+  h2("3.3 Rätta felmärkta brunnar"),
+  p("Entreprenören skriver ibland fel littera på en brunn, och då hittar varken Excel-filen eller kartverktyget rätt sträcka. I stället för att redigera TV3-filen anger du rättningarna en gång i en CSV-fil, som används varje gång analysen körs:"),
+  ...code([
+    "fel;ratt;kommentar",
+    "BDNB1005633;BDNB1015633;DUF 701 – heter BDNB1015633 i kartan",
+  ]),
+  spacer(),
+  bullet("En rad per brunn: felaktigt littera, rätt littera och valfri kommentar, avgränsade med `;` (`,` eller tab går också). Rubrikrad och `#`-rader hoppas över."),
+  bullet("Jämförelsen tar inte hänsyn till versaler, mellanslag eller bindestreck."),
+  bullet("Filen anges i listfilen med `littera: brunnslittera.csv` (relativ sökväg tolkas från listfilens mapp) eller på kommandoraden med `--littera`. Flera filer kan anges."),
+  p("Rättningen slår igenom i start-, slut- och utgångsbrunn överallt: fliken Prioritering får kolumnen **Littera rättat** med t.ex. `BDNB1005633→BDNB1015633`, PDF-rapporten får en rad med samma text, och `kartunderlag.json` skickar det rättade litterat till kartverktyget. Rapportfilerna får namn efter det rättade litterat."),
 
   h1("4. Resultatfiler"),
   p("Allt hamnar i utdatamappen (`tv3_resultat` om inget annat anges):"),

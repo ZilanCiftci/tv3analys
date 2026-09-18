@@ -28,6 +28,7 @@ med # hoppas över. Relativa sökvägar tolkas relativt listfilens katalog.
 
     # exempel på listfil
     media: D:\\Inspektioner\\Filmer            mediakatalog som gäller alla filer
+    littera: brunnslittera.csv                 ersättningslittera för felmärkta brunnar
     DUF 701.TV3                                TV3-fil (media söks även i filens egen katalog)
     DUF 702.TV3 ; D:\\Filmer\\DUF702 ; E:\\Bilder  TV3-fil med egna mediakataloger
     C:\\Inspektioner\\2022\\                    katalog: alla TV3-filer i den
@@ -316,6 +317,7 @@ class Stracka:
         return ", ".join(vals)
 
     flerinspekterad: bool = False   # samma brunnspar förekommer flera gånger (t.ex. från båda håll)
+    littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
 
     def _profil_i_flodesriktning(self) -> list[tuple[float, float]] | None:
         """Profilen (position, höjd) ordnad i flödesriktningen uppströms → nedströms,
@@ -445,7 +447,49 @@ def las_text(path: str) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
-def las_tv3(path: str) -> list[Stracka]:
+def _normlittera(t: str) -> str:
+    return re.sub(r"[\s\-_]", "", t or "").upper()
+
+
+def las_littera(path: str) -> dict[str, str]:
+    """Läser en CSV med ersättningslittera för brunnar som märkts fel vid filmningen.
+
+    En rad per brunn: felaktigt littera ; rätt littera [; kommentar]. Avgränsare ; , eller tab.
+    Rubrikrad, tomma rader och rader som börjar med # hoppas över. Jämförelsen sker utan
+    hänsyn till versaler, mellanslag, bindestreck och understreck."""
+    karta: dict[str, str] = {}
+    for rad in las_text(path).splitlines():
+        rad = rad.strip()
+        if not rad or rad.startswith("#"):
+            continue
+        delar = [d.strip().strip('"').strip("'") for d in re.split(r"[;,\t]", rad)]
+        if len(delar) < 2 or not delar[0] or not delar[1]:
+            continue
+        if delar[0].lower() in ("fel", "felaktigt", "felaktig", "littera", "fran", "från", "gammalt", "gammal"):
+            continue                                    # rubrikrad
+        karta[_normlittera(delar[0])] = delar[1]
+    return karta
+
+
+def ratta_littera(strackor: list[Stracka], karta: dict[str, str]) -> int:
+    """Byter ut brunnslittera enligt kartan i start-, slut- och utgångsbrunn.
+    Returnerar antal sträckor som ändrats; ändringen noteras i Stracka.littera_rattat."""
+    n = 0
+    for s in strackor:
+        andringar: list[str] = []
+        for falt in ("startbrunn", "slutbrunn", "utgangsbrunn"):
+            v = getattr(s, falt)
+            ny = karta.get(_normlittera(v)) if v else None
+            if ny and ny != v:
+                andringar.append(f"{v}→{ny}")
+                setattr(s, falt, ny)
+        if andringar:
+            s.littera_rattat = ", ".join(dict.fromkeys(andringar))
+            n += 1
+    return n
+
+
+def las_tv3(path: str, littera: dict[str, str] | None = None) -> list[Stracka]:
     text = las_text(path)
     filnamn = os.path.basename(path)
     sektioner: dict[str, list[list[str]]] = defaultdict(list)
@@ -515,6 +559,9 @@ def las_tv3(path: str) -> list[Stracka]:
 
     for s in strackor.values():
         s.profil.sort(key=lambda p: p[0])
+
+    if littera:
+        ratta_littera(list(strackor.values()), littera)
 
     par = Counter(frozenset((s.startbrunn, s.slutbrunn)) for s in strackor.values())
     for s in strackor.values():
@@ -706,7 +753,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Material", "Dim (mm)", "Längd (m)", "Datum",
            "Totalindex (p/100 m)", "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)",
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
-           "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad",
+           "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (m)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
@@ -720,6 +767,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(s.index("D"), 1), s.maxgrad("K") or None, s.maxgrad("D") or None,
                       len(s.skador()), s.antal_anslutningar, s.sammanfattning_skador(), s.driftatgard,
                       "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", "Ja" if s.relinad else "",
+                      s.littera_rattat,
                       round(pa["svackdjup"], 2) if pa else None,
                       s.svacka_andel,
                       round(pa["svacklangd"], 1) if pa else None,
@@ -876,6 +924,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "relinad": s.relinad,
             "avbruten": s.avbruten,
             "flerinspekterad": s.flerinspekterad,
+            "littera_rattat": s.littera_rattat,
             "svackdjup_m": round(pa["svackdjup"], 2) if pa else None,
             "svacklangd_m": round(pa["svacklangd"], 1) if pa else None,
             "bakfall_m": round(pa["bakfall"], 1) if pa else None,
@@ -1310,6 +1359,8 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
         ("Videofil", s.videofil or "–", "TV3-fil", s.fil),
     ]
+    if s.littera_rattat:
+        info.append(("Littera rättat", s.littera_rattat, "", ""))
     rader = [[P(a, st_fet), P(b), P(c, st_fet), P(d)] for a, b, c, d in info]
     kw = 38 * mm
     t = Table(rader, colWidths=[kw, bredd / 2 - kw, kw, bredd / 2 - kw])
@@ -1443,12 +1494,13 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str) -> int:
 # main
 # ----------------------------------------------------------------------------
 
-def las_listfil(path: str) -> tuple[list[tuple[str, list[str]]], list[str]]:
+def las_listfil(path: str) -> tuple[list[tuple[str, list[str]]], list[str], list[str]]:
     """Läser en listfil. Returnerar ([(tv3-sökväg, [mediakataloger för just den filen]), ...],
-    [mediakataloger som gäller alla filer]).
+    [mediakataloger som gäller alla filer], [CSV-filer med ersättningslittera]).
 
     Format (en post per rad, tomma rader och #-kommentarer ignoreras):
         media: D:\\Inspektioner\\Filmer          gäller alla TV3-filer i listan
+        littera: brunnslittera.csv               ersättningslittera för felmärkta brunnar
         DUF 701.TV3                              TV3-fil; media söks i filens egen katalog
         DUF 702.TV3 ; D:\\Filmer\\DUF702          TV3-fil med egen mediakatalog (fler kan
                                                  anges, separerade med ;)
@@ -1462,36 +1514,45 @@ def las_listfil(path: str) -> tuple[list[tuple[str, list[str]]], list[str]]:
 
     poster: list[tuple[str, list[str]]] = []
     globala: list[str] = []
+    littera: list[str] = []
     for rad in las_text(path).splitlines():
-        rad = rad.strip()
+        rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
             continue
         m = re.match(r"^(media|film|bilder|filmer)\s*[:=]\s*(.+)$", rad, re.IGNORECASE)
         if m:
             globala += [abs_(d) for d in m.group(2).split(";") if d.strip()]
             continue
+        m = re.match(r"^(littera|brunnslittera|brunnar)\s*[:=]\s*(.+)$", rad, re.IGNORECASE)
+        if m:
+            littera += [abs_(d) for d in m.group(2).split(";") if d.strip()]
+            continue
         delar = [d for d in rad.split(";")]
         tv3 = abs_(delar[0])
         media = [abs_(d) for d in delar[1:] if d.strip()]
         poster.append((tv3, media))
-    return poster, globala
+    return poster, globala, littera
 
 
-def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[tuple[str, list[str]]], list[str]]:
+def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[tuple[str, list[str]]], list[str], list[str]]:
     """Löser upp argument (filer, kataloger, jokertecken, .txt-listor) till
-    [(tv3-fil, [mediakataloger]), ...] samt globala mediakataloger från listfiler."""
+    [(tv3-fil, [mediakataloger]), ...] samt globala mediakataloger och
+    littera-CSV:er från listfiler."""
     import glob
     kandidater: list[tuple[str, list[str]]] = []
     globala: list[str] = []
+    littera: list[str] = []
     for lf in listfiler:
-        p, g = las_listfil(lf)
+        p, g, l = las_listfil(lf)
         kandidater += p
         globala += g
+        littera += l
     for arg in argument:
         if arg.lower().endswith(".txt"):          # listfil även utan -l
-            p, g = las_listfil(arg)
+            p, g, l = las_listfil(arg)
             kandidater += p
             globala += g
+            littera += l
         elif any(ch in arg for ch in "*?["):
             kandidater += [(f, []) for f in sorted(glob.glob(arg))]
         else:
@@ -1517,7 +1578,7 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[tup
         else:
             index[key] = len(unika)
             unika.append((f, list(media)))
-    return unika, globala
+    return unika, globala, littera
 
 
 def main(argv=None):
@@ -1535,6 +1596,9 @@ def main(argv=None):
                     help=f"skriv {KARTUNDERLAG_FIL} för ArcMap-skriptet i arcmap/ (standard: ja)")
     ap.add_argument("--diagram", action="store_true", default=SPARA_DIAGRAM,
                     help="spara diagrammen som PNG i <utdata>/diagram; de bäddas alltid in i Excel")
+    ap.add_argument("--littera", action="append", default=[], metavar="FIL.CSV",
+                    help="CSV med ersättningslittera för felmärkta brunnar (fel;rätt per rad); "
+                         "kan även anges i listfilen som 'littera: FIL.CSV'")
     ap.add_argument("--media", action="append", default=[], metavar="KATALOG",
                     help="extra katalog att söka video-/bildfiler i (kan anges flera gånger); "
                          "TV3-filens egen katalog söks alltid")
@@ -1543,13 +1607,23 @@ def main(argv=None):
     if not a.filer and not a.lista:
         ap.error("ange minst en TV3-fil, katalog eller listfil (-l filer.txt)")
 
-    filer, globala_media = hitta_tv3_filer(a.filer, a.lista)
+    filer, globala_media, littera_filer = hitta_tv3_filer(a.filer, a.lista)
     if not filer:
         sys.exit("Inga TV3-filer hittades.")
     print(f"{len(filer)} fil(er) att analysera\n")
 
     strackor: list[Stracka] = []
     fel: list[str] = []
+
+    littera: dict[str, str] = {}
+    for lf in littera_filer + a.littera:
+        if not os.path.isfile(lf):
+            fel.append(f"{lf}: litterafilen finns inte")
+            print(f"  VARNING litterafil saknas: {lf}")
+            continue
+        littera.update(las_littera(lf))
+    if littera:
+        print(f"  {len(littera)} ersättningslittera lästa")
     for p, media in filer:
         for m in media:
             if not os.path.isdir(m):
@@ -1560,7 +1634,7 @@ def main(argv=None):
             print(f"  SAKNAS  {p}")
             continue
         try:
-            st = las_tv3(p)
+            st = las_tv3(p, littera)
         except Exception as e:  # trasig fil ska inte stoppa hela körningen
             fel.append(f"{p}: {e}")
             print(f"  FEL     {p}: {e}")
@@ -1568,7 +1642,9 @@ def main(argv=None):
         for st_ in st:
             st_.media_kataloger = list(media)
         print(f"  OK      {os.path.basename(p)}: {len(st)} sträckor, {sum(s.langd for s in st):.0f} m, "
-              f"{sum(len(s.skador()) for s in st)} skadeobservationer")
+              f"{sum(len(s.skador()) for s in st)} skadeobservationer"
+              + (f", {sum(1 for s in st if s.littera_rattat)} sträckor med rättat littera"
+                 if any(s.littera_rattat for s in st) else ""))
         strackor += st
     if not strackor:
         sys.exit("Inga sträckor hittades.")
