@@ -38,6 +38,24 @@ def _filter(param, lista):
         pass
 
 
+def _kolla_geometri(param, tillatna, vad):
+    """Varnar om nagot valt lager har fel geometrityp. Inget filter anvands pa
+    lagerparametrarna eftersom ArcMaps geometrifilter doljer lager i geometriska
+    natverk (complex edges/junctions)."""
+    if not param.valueAsText:
+        return
+    fel = []
+    for lyr in _lagerlista(param):
+        try:
+            typ = arcpy.Describe(lyr).shapeType
+        except Exception:
+            continue
+        if typ not in tillatna:
+            fel.append('%s (%s)' % (getattr(lyr, 'name', lyr), typ))
+    if fel:
+        param.setWarningMessage('%s bor vara %s: %s' % (vad, '/'.join(tillatna), ', '.join(fel)))
+
+
 def _lagerlista(param):
     """Multivalue-parameter -> lista med lagerobjekt eller namn."""
     if param.values:
@@ -73,13 +91,11 @@ class SkapaLedningslager(object):
             displayName='Ledningslager', name='ledningslager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input',
             multiValue=True)
-        _filter(ledning, ['Polyline'])
 
         brunn = arcpy.Parameter(
             displayName='Brunnslager', name='brunnslager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input',
             multiValue=True)
-        _filter(brunn, ['Point'])
 
         brunn_id = arcpy.Parameter(
             displayName='Fält med brunnsbeteckning i brunnslagret', name='brunn_id',
@@ -93,7 +109,6 @@ class SkapaLedningslager(object):
         omrade = arcpy.Parameter(
             displayName='Begränsa till område (polygonlager, valfritt)', name='omradeslager',
             datatype='GPFeatureLayer', parameterType='Optional', direction='Input')
-        _filter(omrade, ['Polygon'])
 
         lyr_fil = arcpy.Parameter(
             displayName='Symbologi (.lyr-fil, valfritt)', name='lyr_fil',
@@ -143,6 +158,9 @@ class SkapaLedningslager(object):
     def updateMessages(self, parameters):
         if parameters[0].valueAsText and not os.path.isfile(parameters[0].valueAsText):
             parameters[0].setErrorMessage('Filen finns inte. Kor tv3_analys.py forst.')
+        _kolla_geometri(parameters[1], ('Polyline',), 'Ledningslager')
+        _kolla_geometri(parameters[2], ('Point',), 'Brunnslager')
+        _kolla_geometri(parameters[5], ('Polygon',), 'Omradeslager')
         if parameters[9].value is not None and parameters[9].value < 1:
             parameters[9].setErrorMessage('Minst 1')
         return
@@ -182,7 +200,6 @@ class UppdateraBedomning(object):
         lager = arcpy.Parameter(
             displayName='Ledningslager från "Skapa ledningslager"', name='lager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input')
-        _filter(lager, ['Polyline'])
         ut = arcpy.Parameter(
             displayName='Uppdaterat lager', name='ut', datatype='GPFeatureLayer',
             parameterType='Derived', direction='Output')
@@ -194,6 +211,7 @@ class UppdateraBedomning(object):
         return True
 
     def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Lagret')
         if parameters[0].valueAsText:
             try:
                 namn = [f.name.upper() for f in arcpy.ListFields(parameters[0].valueAsText)]
