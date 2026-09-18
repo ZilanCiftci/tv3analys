@@ -29,6 +29,15 @@ def _ladda_modul():
     return skapa_ledningslager
 
 
+def _filter(param, lista):
+    """Satter filterlista om parametertypen har ett filter (utdata-filer saknar det)."""
+    try:
+        if param.filter is not None:
+            param.filter.list = lista
+    except Exception:
+        pass
+
+
 def _lagerlista(param):
     """Multivalue-parameter -> lista med lagerobjekt eller namn."""
     if param.values:
@@ -58,19 +67,19 @@ class SkapaLedningslager(object):
         json_in = arcpy.Parameter(
             displayName='Kartunderlag (kartunderlag.json från tv3_analys)',
             name='json_in', datatype='DEFile', parameterType='Required', direction='Input')
-        json_in.filter.list = ['json']
+        _filter(json_in, ['json'])
 
         ledning = arcpy.Parameter(
             displayName='Ledningslager', name='ledningslager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input',
             multiValue=True)
-        ledning.filter.list = ['Polyline']
+        _filter(ledning, ['Polyline'])
 
         brunn = arcpy.Parameter(
             displayName='Brunnslager', name='brunnslager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input',
             multiValue=True)
-        brunn.filter.list = ['Point']
+        _filter(brunn, ['Point'])
 
         brunn_id = arcpy.Parameter(
             displayName='Fält med brunnsbeteckning i brunnslagret', name='brunn_id',
@@ -84,7 +93,7 @@ class SkapaLedningslager(object):
         omrade = arcpy.Parameter(
             displayName='Begränsa till område (polygonlager, valfritt)', name='omradeslager',
             datatype='GPFeatureLayer', parameterType='Optional', direction='Input')
-        omrade.filter.list = ['Polygon']
+        _filter(omrade, ['Polygon'])
 
         lyr_fil = arcpy.Parameter(
             displayName='Symbologi (.lyr-fil, valfritt)', name='lyr_fil',
@@ -93,7 +102,7 @@ class SkapaLedningslager(object):
         csv_ut = arcpy.Parameter(
             displayName='Rapport över omatchade brunnspar (.csv, valfritt)', name='csv_ut',
             datatype='DEFile', parameterType='Optional', direction='Output')
-        csv_ut.filter.list = ['csv']
+        _filter(csv_ut, ['csv'])
 
         tolerans = arcpy.Parameter(
             displayName='Tolerans mellan ledningens vertex och brunnen (m)', name='tolerans',
@@ -173,7 +182,7 @@ class UppdateraBedomning(object):
         lager = arcpy.Parameter(
             displayName='Ledningslager från "Skapa ledningslager"', name='lager',
             datatype='GPFeatureLayer', parameterType='Required', direction='Input')
-        lager.filter.list = ['Polyline']
+        _filter(lager, ['Polyline'])
         ut = arcpy.Parameter(
             displayName='Uppdaterat lager', name='ut', datatype='GPFeatureLayer',
             parameterType='Derived', direction='Output')
