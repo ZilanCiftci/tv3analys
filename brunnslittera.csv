@@ -1,0 +1,5 @@
+# Ersättningslittera för brunnar som märkts fel vid filmningen.
+# En rad per brunn: felaktigt littera ; rätt littera ; kommentar (valfri)
+# Anges i listfilen som  littera: brunnslittera.csv  eller på kommandoraden med --littera
+fel;ratt;kommentar
+BDNB1005633;BDNB1015633;DUF 701 – heter BDNB1015633 i kartan

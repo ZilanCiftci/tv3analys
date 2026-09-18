@@ -22,19 +22,23 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 ## 2. Nuvarande leverans (allt i ett skript)
 
 `tv3_analys.py` (~1 200 rader, Python 3.10+, beroenden: `openpyxl`, `matplotlib`, `reportlab`).
-Övriga filer: `filer.txt` (exempel-listfil), `Anvandarhandledning tv3_analys.docx`,
+Övriga filer: `filer.txt` (exempel-listfil), `brunnslittera.csv` (exempel på ersättningslittera:
+`fel;ratt;kommentar` – felmärkta brunnar i TV3-filen byts ut vid inläsning, anges med
+`littera: FIL` i listfilen eller `--littera`; Excel-kolumn "Littera rättat", rad i PDF och fält
+`littera_rattat` i JSON), `Anvandarhandledning tv3_analys.docx`,
 `Metodbeskrivning prioritering avloppsledningar.docx` (genereras av `make_docs.js` med npm-paketet
 `docx`; filnamn hålls ASCII eftersom Windows zip-hantering förvanskar åäö).
 
 Körning:
 ```
-python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--diagram] [--media KATALOG]
+python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--diagram] [--media KATALOG] [--littera FIL.CSV]
 python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
 ```
 
 Listfilens format (relativa sökvägar tolkas relativt listfilen, `#` = kommentar):
 ```
 media: D:\Inspektioner\Filmer          # mediamapp för alla filer i listan (kan upprepas)
+littera: brunnslittera.csv             # ersättningslittera (kan upprepas)
 DUF 701.TV3                            # media söks alltid även i TV3-filens egen mapp (rekursivt)
 DUF 702.TV3 ; D:\Filmer\DUF702 ; E:\Bilder   # egna mediamappar för just den filen
 C:\Inspektioner\2022\                  # katalog: alla .TV3 i den
