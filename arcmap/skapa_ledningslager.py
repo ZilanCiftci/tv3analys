@@ -149,16 +149,23 @@ def hitta_lager(namn):
     if not isinstance(namn, (TEXTTYP, bytes)):
         return namn                       # redan ett lagerobjekt
     n = txt(namn)
-    if os.path.sep in n or n.lower().endswith('.shp') or arcpy.Exists(n):
-        return n
+    sokt = n.strip().lower()
 
     mxd = _mxd()
     if mxd is None:
+        if arcpy.Exists(n):
+            return n
         raise RuntimeError('Hittar inte "%s" och ingen karta ar oppen' % n)
     alla = [l for l in arcpy.mapping.ListLayers(mxd) if l.isFeatureLayer]
-    sokt = n.strip().lower()
 
-    exakta = [l for l in alla if txt(l.name).strip().lower() == sokt]
+    def langt(l):
+        return txt(getattr(l, 'longName', '') or '').strip().lower()
+
+    # Exakt pa namn eller langt namn (Grupp\Lager) - lagerobjektet returneras, inte namnet,
+    # eftersom namn med '/' inte gar att skicka som text till geoprocessing-verktyg
+    exakta = [l for l in alla if txt(l.name).strip().lower() == sokt or langt(l) == sokt]
+    if not exakta and (os.path.sep in n or n.lower().endswith('.shp')) and arcpy.Exists(n):
+        return n                          # sokvag till en featureklass
     if len(exakta) == 1:
         logg('  "%s" -> %s' % (n, txt(exakta[0].name)))
         return exakta[0]
@@ -175,9 +182,23 @@ def hitta_lager(namn):
     raise RuntimeError('Hittade inget lager som matchar "%s"' % n)
 
 
+def kalla(lyr):
+    """(datakalla, definitionsfraga) att ge MakeFeatureLayer. Ett lagerobjekt oversatts
+    till sin datakalla (sokvag till featureklassen) sa att lagernamn med '/' eller
+    grupplager inte tolkas som sokvagar av geoprocessing-verktygen."""
+    ds = getattr(lyr, 'dataSource', None)
+    if ds:
+        try:
+            dq = lyr.definitionQuery
+        except Exception:
+            dq = ''
+        return ds, (dq or None)
+    return lyr, None
+
+
 def hitta_falt(lyr, faltnamn):
     """Returnerar faltets riktiga namn, oberoende av versaler."""
-    falt = arcpy.ListFields(lyr)
+    falt = arcpy.ListFields(kalla(lyr)[0])
     for f in falt:
         if f.name.upper() == txt(faltnamn).upper():
             return f.name
@@ -324,8 +345,15 @@ def las_kartunderlag(json_in):
 # =====================================================================
 
 def uppdatera(ut_fc):
-    """Raknar om de harledda bedomningsfalten i ett befintligt lager."""
-    mal = ut_fc if arcpy.Exists(ut_fc) else ut_fc + '.shp'
+    """Raknar om de harledda bedomningsfalten i ett befintligt lager.
+    ut_fc: lagernamn i kartan, lagerobjekt eller sokvag till featureklassen."""
+    mal = None
+    try:
+        mal = kalla(hitta_lager(ut_fc))[0]
+    except Exception:
+        pass
+    if not mal or not arcpy.Exists(mal):
+        mal = ut_fc if arcpy.Exists(ut_fc) else txt(ut_fc) + '.shp'
     if not arcpy.Exists(mal):
         raise RuntimeError('Hittar inte %s - skapa lagret forst' % ut_fc)
     n, manuella = rakna_om_bedomning(mal)
@@ -353,7 +381,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     logg('Letar upp lager')
     led_lager = [hitta_lager(n) for n in ledningslager]
     brunn_lager = [hitta_lager(n) for n in brunnslager]
-    omrade = hitta_lager(omradeslager) if omradeslager else None
+    omrade = None
+    if omradeslager:
+        src, dq = kalla(hitta_lager(omradeslager))
+        arcpy.MakeFeatureLayer_management(src, 'lyr_omr', dq)
+        omrade = 'lyr_omr'
 
     # ---------------------------------------------------- 2. JSON
     logg('Laser %s' % json_in)
@@ -367,7 +399,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     brunnar = []
     for lyr in brunn_lager:
         idfalt = hitta_falt(lyr, brunn_id)
-        arcpy.MakeFeatureLayer_management(lyr, 'lyr_br')
+        src, dq = kalla(lyr)
+        arcpy.MakeFeatureLayer_management(src, 'lyr_br', dq)
         if omrade is not None:
             arcpy.SelectLayerByLocation_management(
                 'lyr_br', 'INTERSECT', omrade, '%s Meters' % marginal, 'NEW_SELECTION')
@@ -407,7 +440,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         logg('  (saknas en hel brunnstyp - lagg till lagret den ligger i under Brunnslager)')
 
     # ---------------------------------------------------- 4. Utdata
-    d0 = arcpy.Describe(led_lager[0])
+    d0 = arcpy.Describe(kalla(led_lager[0])[0])
     sr = d0.spatialReference
     har_z = bool(getattr(d0, 'hasZ', False))
 
@@ -467,7 +500,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 'Double': 'DOUBLE', 'Single': 'FLOAT', 'Date': 'DATE',
                 'GUID': 'GUID', 'Blob': 'BLOB'}
     kopiera = []
-    kallfalt = dict((f.name.upper(), f) for f in arcpy.ListFields(led_lager[0]))
+    kallfalt = dict((f.name.upper(), f) for f in arcpy.ListFields(kalla(led_lager[0])[0]))
     for namn in kopiera_falt:
         f = kallfalt.get(txt(namn).upper())
         if not f:
@@ -514,7 +547,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     try:
         for lyr in led_lager:
             namn = txt(getattr(lyr, 'name', lyr))
-            arcpy.MakeFeatureLayer_management(lyr, 'lyr_led')
+            src, dq = kalla(lyr)
+            arcpy.MakeFeatureLayer_management(src, 'lyr_led', dq)
             if omrade is not None:
                 arcpy.SelectLayerByLocation_management(
                     'lyr_led', urval, omrade, '', 'NEW_SELECTION')
@@ -576,6 +610,9 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             arcpy.Delete_management('lyr_led')
     finally:
         del insert
+
+    if omrade is not None:
+        arcpy.Delete_management('lyr_omr')
 
     logg('  %d ledningar genomgangna' % n_lednkoll)
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
