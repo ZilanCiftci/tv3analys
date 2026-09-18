@@ -1,4 +1,4 @@
-# Ersättningslittera för brunnar som märkts fel vid filmningen.
+﻿# Ersättningslittera för brunnar som märkts fel vid filmningen.
 # fel, ratt = felaktigt och rätt littera. fil, nr, motbrunn är valfria och begränsar
 # raden till en viss TV3-fil, ett visst sträcknummer (Nr i fliken Prioritering) eller
 # filmningar där den andra brunnen är motbrunn. Tomma = gäller överallt.
