@@ -85,7 +85,9 @@ inte i brunnslagren"). Grafmetoden gav 159/180 på DUF 701; resten är 13 litter
 (`AG`/`STBEXTRA` är platshållare) och 3 par utan väg.
 Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `MAN_BED`
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
-annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin
+annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`), samt `RAPPORT`/`VIDEO`
+(absoluta sökvägar, PDF:en löses från JSON-filens mapp) för ArcMaps fältbaserade hyperlänkar
+(Display > Support Hyperlinks using field, sparas i `.lyr`). Symbologin
 (Unique values på `STIL`, tio kategorier: färg efter klass, **streckad** = maskinell,
 **heldragen** = manuell) sätts **manuellt en gång i ArcMap** och sparas som
 `arcmap/bedomda_ledningar.lyr`, som verktyget använder som standard (handledningen 7.2).
@@ -194,8 +196,8 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 
 ## 7. Idéer som nämnts men inte byggts
 
-- Kartvy: grundversionen finns (`arcmap/`). Kvar: koppla rapport-PDF och film som hyperlänk i
-  kartan; lägga `.lyr`-filen i repot när användaren sparat den från ArcMap.
+- Kartvy: grundversionen finns (`arcmap/`), inkl. hyperlänk till PDF/film. Kvar: lägga
+  `.lyr`-filen i repot när användaren sparat den från ArcMap.
 - Jämförelse mellan två inspektioner av samma sträcka.
 - Stöd för P111-koder som alternativ kodtabell.
 - Kostnadsuppskattning per sträcka (kr/m per metod).
