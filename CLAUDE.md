@@ -64,8 +64,17 @@ tolerans, max hopp, extra fält) och **Uppdatera bedömning**. Logiken ligger i
 modulen laddas om vid varje verktygskörning). Samma fil kan köras med `execfile` i Python-fönstret
 med KONFIG-blocket. Verktyget läser `kartunderlag.json`, letar upp varje brunnspar i
 brunnslagret (`A Nedstign och övriga brunnar`, fält `EntityID`) och klipper ut ledningen
-mellan brunnarna ur `A Ledning` – vertex för vertex, närmaste brunn inom 2 m, `MAX_HOPP`
-styr hur många brunnar en sträcka får passera (samma metod som användarens eget steg2-skript).
+mellan brunnarna ur `A Ledning`. Matchningen är **grafbaserad** (`Natverk` i skriptet): bara
+JSON-filens brunnar är noder; varje ledningsdel delas där en sökt brunn ligger inom toleransen
+(2 m) från *linjen* (vertex eller mitt på ett segment), fria ledningsändar blir noder och ändar
+inom toleransen slås ihop. Vägen brunn→brunn söks med BFS (färst bitar, högst `MAX_HOPP−1`
+andra sökta brunnar emellan, högst 8 bitar) – så hittas sträckor uppdelade i flera
+ledningsobjekt (fältet `ANT_DELAR`) och brunnar utan egen vertex. Geometrin orienteras
+startbrunn→slutbrunn. Första körningen med gamla vertex-metoden (steg2-skriptets) gav 136/180;
+CSV:n över omatchade har kolumner med avstånd brunn→närmaste ledning samt `diagnos`
+(`Natverk.diagnos`: "hoj max hopp till N", "glapp X m vid (x, y)", "annat lager", "brunnen … finns
+inte i brunnslagren"). Grafmetoden gav 159/180 på DUF 701; resten är 13 littera som saknas i kartan
+(`AG`/`STBEXTRA` är platshållare) och 3 par utan väg.
 Fält: `MASK_BED` (alias "Maskinell bedömning", klass A–E från modellen), `MAN_BED`
 ("Manuell bedömning", fylls i för hand), samt de härledda `BEDOMNING` (manuell om ifylld,
 annars maskinell), `BED_TYP` (Maskinell/Manuell) och `STIL` (`A - Maskinell`). Symbologin

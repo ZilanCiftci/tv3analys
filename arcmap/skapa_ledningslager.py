@@ -210,50 +210,217 @@ def hitta_falt(lyr, faltnamn):
 
 # ------------------------------------------------ geometri
 
-def bygg_rutnat(brunnar, cell):
-    r = {}
-    for bid, x, y in brunnar:
-        r.setdefault((int(x // cell), int(y // cell)), []).append((bid, x, y))
-    return r
+def _avst(p, q):
+    return ((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2) ** 0.5
 
 
-def narmaste(rutnat, cell, x, y, tol):
-    cx, cy = int(x // cell), int(y // cell)
-    bast, bd2 = None, tol * tol
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            for bid, bx, by in rutnat.get((cx + dx, cy + dy), ()):
-                d2 = (bx - x) ** 2 + (by - y) ** 2
-                if d2 <= bd2:
-                    bast, bd2 = bid, d2
-    return bast
+def _punkt_segment(px, py, ax, ay, bx, by):
+    """Avstand fran punkt till segment a-b. Returnerar (avstand, t, (qx, qy)) dar
+    t i [0, 1] ar laget langs segmentet och q ar narmaste punkt pa det."""
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    if l2 == 0:
+        t = 0.0
+    else:
+        t = ((px - ax) * dx + (py - ay) * dy) / l2
+        t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+    qx, qy = ax + t * dx, ay + t * dy
+    return ((px - qx) ** 2 + (py - qy) ** 2) ** 0.5, t, (qx, qy)
 
 
-def traffar_langs(punkter, rutnat, cell, tol):
-    """[(vertexindex, brunns_id)] i ordning langs linjen, utan dubbletter."""
-    ut = []
-    for i, p in enumerate(punkter):
-        b = narmaste(rutnat, cell, p[0], p[1], tol)
-        if b and (not ut or ut[-1][1] != b):
-            ut.append((i, b))
-    return ut
+class Natverk(object):
+    """Graf av ledningsbitar mellan brunnar och fria ledningsandar.
 
+    Bara de brunnar som forekommer i JSON-filen ar noder. Varje ledningsdel delas
+    vid de sokta brunnar som ligger inom toleransen fran linjen - i en vertex eller
+    mitt pa ett segment - och bitarna blir kanter. Ledningsandar utan brunn blir
+    ocksa noder, och tva andar inom toleransen blir samma nod. Darmed hittas aven
+    strackor som ar uppdelade i flera ledningsobjekt (t.ex. vid materialbyte) och
+    strackor dar brunnen ligger pa linjen utan egen vertex."""
 
-def delstrackor(traffar, bedomda, max_hopp):
-    """[(fran_index, till_index, brunn_a, brunn_b)] for bedomda par."""
-    ut = []
-    for k in range(len(traffar)):
-        for h in range(1, max_hopp + 1):
-            j = k + h
-            if j >= len(traffar):
-                break
-            a, b = traffar[k][1], traffar[j][1]
-            if a == b:
+    def __init__(self, sokta, tol, sokradie=25.0):
+        self.tol = float(tol)
+        self.sokradie = max(float(sokradie), self.tol)
+        self.cell = self.sokradie
+        self.rutnat = {}
+        for bid, (x, y) in sokta.items():
+            self.rutnat.setdefault((int(x // self.cell), int(y // self.cell)), []).append((bid, x, y))
+        self.narmast = {}      # brunn -> minsta avstand till nagon ledning (diagnostik)
+        self.kanter = {}       # nod -> [(annan nod, punkter fran nod till annan, lager, oid)]
+        self.andar = {}        # rutnat over fria andar: cell -> [(nyckel, x, y)]
+        self.n_andar = 0
+        self.koord = dict((('B', bid), (x, y)) for bid, (x, y) in sokta.items())
+        if sokta:
+            xs = [p[0] for p in sokta.values()]
+            ys = [p[1] for p in sokta.values()]
+            m = self.sokradie
+            self.bbox = (min(xs) - m, min(ys) - m, max(xs) + m, max(ys) + m)
+        else:
+            self.bbox = None
+
+    def inom_bbox(self, xmin, ymin, xmax, ymax):
+        """Snabbtest: kan ledningen alls beror nagon sokt brunn?"""
+        if self.bbox is None:
+            return False
+        return not (xmax < self.bbox[0] or xmin > self.bbox[2]
+                    or ymax < self.bbox[1] or ymin > self.bbox[3])
+
+    def _brunnar_nara(self, ax, ay, bx, by):
+        r, c = self.sokradie, self.cell
+        x0, x1 = min(ax, bx) - r, max(ax, bx) + r
+        y0, y1 = min(ay, by) - r, max(ay, by) + r
+        for cx in range(int(x0 // c), int(x1 // c) + 1):
+            for cy in range(int(y0 // c), int(y1 // c) + 1):
+                for b in self.rutnat.get((cx, cy), ()):
+                    yield b
+
+    def _andnod(self, x, y):
+        """Nod for en fri ledningsande; andar inom toleransen delar nod."""
+        c = self.tol
+        cx, cy = int(x // c), int(y // c)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for nyckel, ex, ey in self.andar.get((cx + dx, cy + dy), ()):
+                    if (ex - x) ** 2 + (ey - y) ** 2 <= c * c:
+                        return nyckel
+        self.n_andar += 1
+        nyckel = ('P', self.n_andar)
+        self.andar.setdefault((cx, cy), []).append((nyckel, x, y))
+        self.koord[nyckel] = (x, y)
+        return nyckel
+
+    def _kant(self, n1, n2, pts, lager, oid):
+        self.kanter.setdefault(n1, []).append((n2, pts, lager, oid))
+        self.kanter.setdefault(n2, []).append((n1, pts[::-1], lager, oid))
+
+    def lagg_till(self, punkter, lager, oid):
+        """Lagger in en ledningsdel [(x, y, z)] och delar den vid sokta brunnar.
+        Returnerar antal bitar."""
+        if len(punkter) < 2:
+            return 0
+        matt = [0.0]
+        for i in range(1, len(punkter)):
+            matt.append(matt[-1] + _avst(punkter[i - 1], punkter[i]))
+
+        traffar = {}   # brunn -> (matt, avstand, punkt)
+        for i in range(len(punkter) - 1):
+            a, b = punkter[i], punkter[i + 1]
+            seglen = matt[i + 1] - matt[i]
+            for bid, bx, by in self._brunnar_nara(a[0], a[1], b[0], b[1]):
+                d, t, q = _punkt_segment(bx, by, a[0], a[1], b[0], b[1])
+                if d < self.narmast.get(bid, 1e30):
+                    self.narmast[bid] = d
+                if d <= self.tol and (bid not in traffar or d < traffar[bid][1]):
+                    z = None
+                    if a[2] is not None and b[2] is not None:
+                        z = a[2] + t * (b[2] - a[2])
+                    traffar[bid] = (matt[i] + t * seglen, d, (q[0], q[1], z))
+
+        noder = [(0.0, self._andnod(punkter[0][0], punkter[0][1]), punkter[0])]
+        for bid, (m, d, q) in traffar.items():
+            noder.append((m, ('B', bid), q))
+        noder.append((matt[-1], self._andnod(punkter[-1][0], punkter[-1][1]), punkter[-1]))
+        noder.sort(key=lambda n: n[0])
+
+        n_bitar = 0
+        for k in range(len(noder) - 1):
+            m1, n1, p1 = noder[k]
+            m2, n2, p2 = noder[k + 1]
+            if n1 == n2:
                 continue
-            if frozenset((a, b)) in bedomda:
-                ut.append((traffar[k][0], traffar[j][0], a, b))
-                break
-    return ut
+            pts = [p1] + [punkter[j] for j in range(len(punkter)) if m1 < matt[j] < m2] + [p2]
+            self._kant(n1, n2, pts, lager, oid)
+            n_bitar += 1
+        return n_bitar
+
+    def vag(self, a, b, max_hopp, max_delar=8):
+        """Vagen med farst bitar fran brunn a till brunn b, eller None. Hogst
+        max_hopp - 1 andra sokta brunnar far passeras, och hogst max_delar bitar."""
+        from collections import deque
+        start, mal = ('B', a), ('B', b)
+        if start not in self.kanter or mal not in self.kanter:
+            return None
+        ko = deque([(start, [], 0)])
+        sedda = set([start])
+        while ko:
+            nod, vagen, hopp = ko.popleft()
+            if len(vagen) >= max_delar:
+                continue
+            for annan, pts, lager, oid in self.kanter.get(nod, ()):
+                if annan == mal:
+                    return vagen + [(annan, pts, lager, oid)]
+                if annan in sedda:
+                    continue
+                h = hopp
+                if annan[0] == 'B':
+                    h += 1
+                    if h > max_hopp - 1:
+                        continue
+                sedda.add(annan)
+                ko.append((annan, vagen + [(annan, pts, lager, oid)], h))
+        return None
+
+
+    def komponent(self, start):
+        """Alla noder som gar att na fran start."""
+        sedda = set([start])
+        ko = [start]
+        while ko:
+            nod = ko.pop()
+            for annan, pts, lager, oid in self.kanter.get(nod, ()):
+                if annan not in sedda:
+                    sedda.add(annan)
+                    ko.append(annan)
+        return sedda
+
+    def diagnos(self, a, b, max_hopp):
+        """Varfor hittades ingen vag mellan a och b? Returnerar en forklaring."""
+        start, mal = ('B', a), ('B', b)
+        if start not in self.kanter or mal not in self.kanter:
+            return 'brunnen ligger inte pa nagon ledning'
+        v = self.vag(a, b, 999, 200)
+        if v:
+            n_br = sum(1 for nod, pts, lager, oid in v[:-1] if nod[0] == 'B')
+            return ('vag finns via %d bitar och %d andra brunnar - hoj max hopp till %d'
+                    % (len(v), n_br, n_br + 1))
+        ka = self.komponent(start)
+        kb = self.komponent(mal)
+        if ka == kb:
+            return 'samma natverk men vagen ar orimligt lang'
+        # Narmaste avstand mellan de tva natverksdelarna (rutnat over den mindre delen)
+        if len(kb) < len(ka):
+            ka, kb = kb, ka
+        c = self.cell
+        rn = {}
+        for nod in kb:
+            x, y = self.koord[nod]
+            rn.setdefault((int(x // c), int(y // c)), []).append((x, y))
+        bast, var = None, None
+        for nod in ka:
+            x, y = self.koord[nod]
+            cx, cy = int(x // c), int(y // c)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for bx, by in rn.get((cx + dx, cy + dy), ()):
+                        d = ((bx - x) ** 2 + (by - y) ** 2) ** 0.5
+                        if bast is None or d < bast:
+                            bast, var = d, ((x + bx) / 2.0, (y + by) / 2.0)
+        if bast is None:
+            return ('ledningen ar bruten med mer an %.0f m glapp, eller ligger i ett annat lager'
+                    % self.sokradie)
+        return ('glapp %.1f m i ledningen vid (%.0f, %.0f) - hoj toleransen till %.0f m'
+                ' eller kontrollera ledningen dar' % (bast, var[0], var[1], bast + 0.5))
+
+
+def sla_ihop(vagen):
+    """Punktlista for en vag av kanter, utan dubbla skarvpunkter."""
+    pts = []
+    for annan, p, lager, oid in vagen:
+        for q in p:
+            if pts and abs(q[0] - pts[-1][0]) < 1e-6 and abs(q[1] - pts[-1][1]) < 1e-6:
+                continue
+            pts.append(q)
+    return pts
 
 
 # ------------------------------------------------ bedomning
@@ -297,6 +464,7 @@ EGNA_FALT = [
     ('DATUM',      'TEXT',   10,  'Inspektionsdatum'),
     ('TV3_FIL',    'TEXT',   100, 'TV3-fil'),
     ('ANT_FILM',   'LONG',   None, 'Antal inspektioner av sträckan'),
+    ('ANT_DELAR',  'LONG',   None, 'Antal ledningsobjekt i kartan'),
     ('SRC_LAGER',  'TEXT',   100, 'Källager'),
     ('SRC_OID',    'LONG',   None, 'Käll-OID'),
 ]
@@ -418,7 +586,6 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     if not brunnar:
         raise RuntimeError('Inga brunnar hittades - kontrollera brunnsfaltet och koordinatsystem')
 
-    rutnat = bygg_rutnat(brunnar, tolerans)
     brunns_id = set(b[0] for b in brunnar)
 
     # Tackning: hur manga av JSON-filens brunnar finns i brunnslagren? Saknas hela
@@ -443,6 +610,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             logg('  (saknas en hel brunnstyp - lagg till lagret den ligger i under Brunnslager)')
         elif len(saknade) <= 20:
             logg('  saknade: %s' % ', '.join(saknade))
+
+    # Bara JSON-filens brunnar behovs for matchningen (forsta forekomsten vinner)
+    sokta = {}
+    for bid, x, y in brunnar:
+        if bid in json_brunnar and bid not in sokta:
+            sokta[bid] = (x, y)
 
     # ---------------------------------------------------- 4. Utdata
     d0 = arcpy.Describe(kalla(led_lager[0])[0])
@@ -544,117 +717,169 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     if ar_shapefil:
         logg('  tomma tal (t.ex. lutning utan profil) skrivs som 0 i shapefil')
 
-    # ---------------------------------------------------- 5. Matcha och skriv
-    traffade = set()
-    n_skrivna = n_lednkoll = 0
+    # ---------------------------------------------------- 5. Bygg natverk av ledningsbitar
+    nat = Natverk(sokta, tolerans)
+    extra_per_oid = {}
+    n_lednkoll = n_nara = n_bitar = 0
+    for lyr in led_lager:
+        namn = txt(getattr(lyr, 'name', lyr))
+        src, dq = kalla(lyr)
+        arcpy.MakeFeatureLayer_management(src, 'lyr_led', dq)
+        if omrade is not None:
+            arcpy.SelectLayerByLocation_management(
+                'lyr_led', urval, omrade, '', 'NEW_SELECTION')
+        antal = int(arcpy.GetCount_management('lyr_led').getOutput(0))
+        logg('  %s: %d ledningar att ga igenom' % (namn, antal))
 
-    insert = arcpy.da.InsertCursor(ut_fil, ut_falt)
-    try:
-        for lyr in led_lager:
-            namn = txt(getattr(lyr, 'name', lyr))
-            src, dq = kalla(lyr)
-            arcpy.MakeFeatureLayer_management(src, 'lyr_led', dq)
-            if omrade is not None:
-                arcpy.SelectLayerByLocation_management(
-                    'lyr_led', urval, omrade, '', 'NEW_SELECTION')
-            antal = int(arcpy.GetCount_management('lyr_led').getOutput(0))
-            logg('  %s: %d ledningar att ga igenom' % (namn, antal))
-
-            with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + kopiera) as mark:
-                for rad in mark:
-                    oid, geom = rad[0], rad[1]
-                    extra = list(rad[2:])
-                    n_lednkoll += 1
-                    if geom is None:
+        with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + kopiera) as mark:
+            for rad in mark:
+                oid, geom = rad[0], rad[1]
+                n_lednkoll += 1
+                if geom is None:
+                    continue
+                # Hoppa snabbt over ledningar langt fran alla sokta brunnar
+                try:
+                    e = geom.extent
+                    if not nat.inom_bbox(e.XMin, e.YMin, e.XMax, e.YMax):
                         continue
+                except Exception:
+                    pass
+                n_nara += 1
+                extra_per_oid[(namn, oid)] = list(rad[2:])
+                for del_ in geom:
+                    punkter = [(p.X, p.Y, p.Z if har_z else None) for p in del_ if p is not None]
+                    n_bitar += nat.lagg_till(punkter, namn, oid)
 
-                    for del_ in geom:
-                        punkter = [p for p in del_ if p is not None]
-                        if len(punkter) < 2:
-                            continue
-                        xy = [(p.X, p.Y) for p in punkter]
-                        traffar = traffar_langs(xy, rutnat, tolerans, tolerans)
-                        if len(traffar) < 2:
-                            continue
-
-                        for i, j, a, b in delstrackor(traffar, bedomda, max_hopp):
-                            par = frozenset((a, b))
-                            if par in traffade:
-                                continue          # varje brunnspar skrivs en gang
-                            s = bedomda[par]
-
-                            arr = arcpy.Array()
-                            for p in punkter[i:j + 1]:
-                                arr.add(arcpy.Point(p.X, p.Y, p.Z if har_z else None))
-                            ny = arcpy.Polyline(arr, sr, har_z, False)
-
-                            mask = txt(s.get('maskinell_bedomning') or 'E')[:2]
-                            man = tidigare_manuella.get(par, '')
-                            bed, bed_typ, stil = galler(mask, man)
-
-                            insert.insertRow(utan_null([
-                                ny, mask, man, bed, bed_typ, stil,
-                                klipp(s.get('startbrunn'), 50), klipp(s.get('slutbrunn'), 50),
-                                klipp(s.get('klasstext'), 40),
-                                s.get('totalindex'), s.get('konstruktionsindex'),
-                                s.get('maxgrad_konstruktion'), s.get('antal_skador'),
-                                klipp(s.get('skador'), 200), klipp(s.get('driftatgard'), 100),
-                                s.get('langd_m'), klipp(s.get('material'), 50),
-                                klipp(s.get('dimension'), 20), klipp(s.get('ledningstyp'), 30),
-                                'Ja' if s.get('relinad') else 'Nej',
-                                'Ja' if s.get('avbruten') else 'Nej',
-                                s.get('svackdjup_m'), s.get('lutning_promille'),
-                                klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
-                                klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
-                                antal_per_par.get(par, 1),
-                                namn[:100], oid,
-                            ] + extra))
-                            traffade.add(par)
-                            n_skrivna += 1
-
-            arcpy.Delete_management('lyr_led')
-    finally:
-        del insert
+        arcpy.Delete_management('lyr_led')
 
     if omrade is not None:
         arcpy.Delete_management('lyr_omr')
 
-    logg('  %d ledningar genomgangna' % n_lednkoll)
+    logg('  %d ledningar genomgangna, %d nara brunnarna, %d bitar i natverket'
+         % (n_lednkoll, n_nara, n_bitar))
+
+    # ---------------------------------------------------- 6. Sok vag per brunnspar och skriv
+    traffade = set()
+    n_skrivna = n_flerdelade = 0
+
+    insert = arcpy.da.InsertCursor(ut_fil, ut_falt)
+    try:
+        for par, s in bedomda.items():
+            a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
+            vagen = nat.vag(a, b, max_hopp)
+            if not vagen:
+                continue
+            pts = sla_ihop(vagen)
+            if len(pts) < 2:
+                continue
+
+            arr = arcpy.Array()
+            for x, y, z in pts:
+                arr.add(arcpy.Point(x, y, z if har_z else None))
+            ny = arcpy.Polyline(arr, sr, har_z, False)
+
+            mask = txt(s.get('maskinell_bedomning') or 'E')[:2]
+            man = tidigare_manuella.get(par, '')
+            bed, bed_typ, stil = galler(mask, man)
+            lager0, oid0 = vagen[0][2], vagen[0][3]
+            extra = extra_per_oid.get((lager0, oid0), [None] * len(kopiera))
+
+            insert.insertRow(utan_null([
+                ny, mask, man, bed, bed_typ, stil,
+                klipp(s.get('startbrunn'), 50), klipp(s.get('slutbrunn'), 50),
+                klipp(s.get('klasstext'), 40),
+                s.get('totalindex'), s.get('konstruktionsindex'),
+                s.get('maxgrad_konstruktion'), s.get('antal_skador'),
+                klipp(s.get('skador'), 200), klipp(s.get('driftatgard'), 100),
+                s.get('langd_m'), klipp(s.get('material'), 50),
+                klipp(s.get('dimension'), 20), klipp(s.get('ledningstyp'), 30),
+                'Ja' if s.get('relinad') else 'Nej',
+                'Ja' if s.get('avbruten') else 'Nej',
+                s.get('svackdjup_m'), s.get('lutning_promille'),
+                klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
+                klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
+                antal_per_par.get(par, 1), len(vagen),
+                lager0[:100], oid0,
+            ] + extra))
+            traffade.add(par)
+            n_skrivna += 1
+            if len(vagen) > 1:
+                n_flerdelade += 1
+    finally:
+        del insert
+
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
-    logg('  %d av %d brunnspar matchade' % (len(traffade), len(bedomda)))
+    logg('  %d av %d brunnspar matchade (%d sammansatta av flera ledningsobjekt)'
+         % (len(traffade), len(bedomda), n_flerdelade))
     if tidigare_manuella:
         logg('  %d manuella bedomningar aterstallda'
              % sum(1 for par in traffade if par in tidigare_manuella))
 
-    # ---------------------------------------------------- 6. Omatchade
+    # ---------------------------------------------------- 7. Omatchade
+    def avst(bid):
+        """Avstand fran brunnen till narmaste ledning, som text."""
+        if bid not in brunns_id:
+            return ''
+        d = nat.narmast.get(bid)
+        return ('%.1f' % d) if d is not None else ('>%.0f' % nat.sokradie)
+
     omatchade = []
     for par, s in bedomda.items():
         if par in traffade:
             continue
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
+        if a in brunns_id and b in brunns_id:
+            diagnos = nat.diagnos(a, b, max_hopp)
+        elif a in brunns_id or b in brunns_id:
+            diagnos = 'brunnen %s finns inte i brunnslagren' % (b if a in brunns_id else a)
+        else:
+            diagnos = 'ingen av brunnarna finns i brunnslagren'
         omatchade.append([a, b,
                           'JA' if a in brunns_id else 'NEJ',
                           'JA' if b in brunns_id else 'NEJ',
                           'JA' if (a in brunns_id or b in brunns_id) else 'NEJ',
+                          avst(a), avst(b),
                           txt(s.get('maskinell_bedomning')),
-                          txt(s.get('fil'))])
-    omatchade.sort(key=lambda r: (r[4] != 'JA', KLASSORDNING.get(r[5], 9), r[0]))
+                          txt(s.get('fil')), diagnos])
+    omatchade.sort(key=lambda r: (r[4] != 'JA', KLASSORDNING.get(r[7], 9), r[0]))
 
     if csv_ut:
         with io.open(csv_ut, 'w', encoding='cp1252', errors='replace') as f:
-            f.write('fran;till;fran_finns;till_finns;nagon_finns;maskinell_bedomning;kallfil\n')
+            f.write('fran;till;fran_finns;till_finns;nagon_finns;'
+                    'fran_avstand_m;till_avstand_m;maskinell_bedomning;kallfil;diagnos\n')
             for r in omatchade:
                 f.write(';'.join(txt(v).replace(';', ',') for v in r) + '\n')
         logg('  %d omatchade par -> %s' % (len(omatchade), csv_ut))
     else:
         logg('  %d omatchade par' % len(omatchade))
-    n_intressanta = sum(1 for r in omatchade if r[4] == 'JA')
-    logg('  varav %d har minst en brunn i kartan (dessa ar vard att granska)' % n_intressanta)
-    for r in omatchade[:10]:
-        if r[4] == 'JA':
-            logg('    %s - %s (klass %s)' % (r[0], r[1], r[5]))
 
-    # ---------------------------------------------------- 7. Karta
+    # Varfor? Bada brunnarna pa en ledning men ingen vag = ledningen ligger i ett annat
+    # lager, ar bruten, eller passerar fler brunnar an max_hopp. En brunn en bit fran
+    # ledningen = hoj toleransen.
+    def _tal(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    bada_brunnar = [r for r in omatchade if r[2] == 'JA' and r[3] == 'JA']
+    pa_ledning = [r for r in bada_brunnar
+                  if _tal(r[5]) is not None and _tal(r[5]) <= tolerans
+                  and _tal(r[6]) is not None and _tal(r[6]) <= tolerans]
+    nara = [r for r in bada_brunnar if r not in pa_ledning
+            and _tal(r[5]) is not None and _tal(r[6]) is not None
+            and max(_tal(r[5]), _tal(r[6])) <= 3 * tolerans]
+    logg('  varav %d har bada brunnarna i kartan%s' % (len(bada_brunnar), ':' if bada_brunnar else ''))
+    if pa_ledning:
+        logg('    %d dar bada brunnarna ligger pa en ledning men ingen vag hittades'
+             ' (annat ledningslager? bruten ledning? fler an %d brunnar emellan?)'
+             % (len(pa_ledning), max_hopp))
+    if nara:
+        logg('    %d dar en brunn ligger %.0f-%.0f m fran ledningen - prova tolerans %.0f m'
+             % (len(nara), tolerans, 3 * tolerans, 3 * tolerans))
+    for r in bada_brunnar[:12]:
+        logg('    %s - %s (klass %s): %s' % (r[0], r[1], r[7], r[9]))
+
+    # ---------------------------------------------------- 8. Karta
     if lagg_till_i_kartan:
         mxd = _mxd()
         if mxd is not None:
