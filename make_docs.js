@@ -149,6 +149,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["`-o MAPP`, `--utdata`", "Mapp där resultatet skrivs.", "`tv3_resultat`"],
     ["`--topp N`", "Antal sträckor i topplistan (diagram och Sammanfattning-fliken).", "15"],
     ["`--rapporter alla|AB|A|inga`", "Vilka sträckor som får PDF-rapport. `alla` är standard; `AB` bara klass A och B; `inga` hoppar över (snabbare).", "`alla`"],
+    ["`--behall-rapporter`", "Hoppar över PDF-rapporter som redan finns i utdatamappen och skriver bara de som saknas. Länkarna i Excel pekar ändå på dem. Använd vid omkörningar när bara Excel eller kartunderlaget ska uppdateras; kör utan flaggan (eller töm mappen `rapporter`) när rapportlayouten ändrats.", "av"],
     ["`--diagram`", "Sparar diagrammen som PNG-filer i `diagram`-mappen, t.ex. för PowerPoint. Utan flaggan bäddas de bara in i Excel-filen.", "av"],
     ["`--karta ja|nej`", "Skriver `kartunderlag.json` för kartframställning i ArcMap (se avsnitt 7).", "`ja`"],
     ["`--media KATALOG`", "Extra mapp att söka video- och bildfiler i (kan anges flera gånger). TV3-filens egen mapp söks alltid, inklusive undermappar.", "–"],
@@ -241,7 +242,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
 
   h1("8. Vanliga frågor"),
   p("**PDF-rapporterna saknar bilder.** Bilderna hämtas från samma mediamappar som länkarna i Excel. Rapporten anger hur många bilder som hittades och listar de som saknas. Positionerna i rapporten räknas från den brunn kameran startade i (Kamera från), precis som i entreprenörens protokoll, medan Startbrunn/Slutbrunn anger uppströms/nedströms."),
-  p("**Körningen tar lång tid.** PDF-rapporterna tar ungefär en halv sekund per sträcka. Använd `--rapporter AB` för att bara skapa rapporter för sträckor i klass A och B, eller `--rapporter inga` när du bara vill uppdatera Excel-filen."),
+  p("**Körningen tar lång tid.** PDF-rapporterna tar ungefär en halv sekund per sträcka. Använd `--behall-rapporter` vid omkörningar så skrivs bara rapporter som saknas, `--rapporter AB` för att bara skapa rapporter för sträckor i klass A och B, eller `--rapporter inga` när du bara vill uppdatera Excel-filen."),
   p("**Åäö blir fel i resultatet.** TV3-filer är normalt sparade i Windows-1252/ISO-8859-1. Skriptet provar UTF-8 först och faller sedan tillbaka till Windows-1252, så det ska fungera automatiskt. Om en fil ändå blir fel: öppna den i Anteckningar och spara om som UTF-8."),
   p("**Samma sträcka finns två gånger i listan.** Det händer när entreprenören filmat från båda hållen, ofta efter ett avbrott. Kolumnen Inspekterad flera ggr markerar dessa; bedöm dem tillsammans."),
   p("**Sträckor i klass E.** Sträckor utan inspekterad längd (ingen film gjord, bara brunnsregistrering). De behöver inspekteras innan de kan bedömas."),
