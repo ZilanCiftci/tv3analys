@@ -451,45 +451,94 @@ def _normlittera(t: str) -> str:
     return re.sub(r"[\s\-_]", "", t or "").upper()
 
 
-def las_littera(path: str) -> dict[str, str]:
+LITTERA_KOLUMNER = {
+    "fel": "fel", "felaktigt": "fel", "felaktig": "fel", "littera": "fel", "fran": "fel", "från": "fel",
+    "gammalt": "fel", "gammal": "fel",
+    "ratt": "ratt", "rätt": "ratt", "ny": "ratt", "nytt": "ratt", "till": "ratt", "ersattning": "ratt",
+    "ersättning": "ratt",
+    "fil": "fil", "tv3": "fil", "tv3_fil": "fil", "tv3-fil": "fil",
+    "nr": "nr", "stracka": "nr", "sträcka": "nr", "stracknr": "nr", "sträcknr": "nr",
+    "motbrunn": "motbrunn", "mot": "motbrunn", "partner": "motbrunn", "andra_brunn": "motbrunn",
+    "andrabrunn": "motbrunn",
+    "kommentar": "kommentar", "anm": "kommentar", "anmarkning": "kommentar", "anmärkning": "kommentar",
+}
+
+
+def las_littera(path: str) -> list[dict]:
     """Läser en CSV med ersättningslittera för brunnar som märkts fel vid filmningen.
 
-    En rad per brunn: felaktigt littera ; rätt littera [; kommentar]. Avgränsare ; , eller tab.
-    Rubrikrad, tomma rader och rader som börjar med # hoppas över. Jämförelsen sker utan
-    hänsyn till versaler, mellanslag, bindestreck och understreck."""
-    karta: dict[str, str] = {}
+    Kolumner (rubrikrad avgör ordningen; utan rubrik antas fel;ratt;kommentar):
+        fel        felaktigt littera i TV3-filen (obligatorisk)
+        ratt       rätt littera (obligatorisk)
+        fil        begränsa till en TV3-fil (filnamn, med eller utan .TV3)         valfri
+        nr         begränsa till ett sträcknummer i filen (som i fliken Prioritering) valfri
+        motbrunn   begränsa till filmningar där den andra brunnen är denna           valfri
+        kommentar  fritext                                                          valfri
+    Rader utan fil/nr/motbrunn gäller överallt. Har flera rader samma felaktiga littera
+    vinner den med flest villkor. Avgränsare ; , eller tab; tomma rader och #-rader hoppas
+    över. Littera jämförs utan hänsyn till versaler, mellanslag, bindestreck och understreck."""
+    regler: list[dict] = []
+    kolumner: list[str] | None = None
     for rad in las_text(path).splitlines():
         rad = rad.strip()
         if not rad or rad.startswith("#"):
             continue
         delar = [d.strip().strip('"').strip("'") for d in re.split(r"[;,\t]", rad)]
-        if len(delar) < 2 or not delar[0] or not delar[1]:
+        if kolumner is None:
+            kolumner = ["fel", "ratt", "kommentar"]
+            if delar and delar[0].lower() in LITTERA_KOLUMNER and LITTERA_KOLUMNER[delar[0].lower()] == "fel":
+                kolumner = [LITTERA_KOLUMNER.get(d.lower(), d.lower()) for d in delar]
+                continue                                    # rubrikrad
+        post = {k: (delar[i] if i < len(delar) else "") for i, k in enumerate(kolumner)}
+        if not post.get("fel") or not post.get("ratt"):
             continue
-        if delar[0].lower() in ("fel", "felaktigt", "felaktig", "littera", "fran", "från", "gammalt", "gammal"):
-            continue                                    # rubrikrad
-        karta[_normlittera(delar[0])] = delar[1]
-    return karta
+        regel = {
+            "fel": _normlittera(post["fel"]),
+            "ratt": post["ratt"],
+            "fil": os.path.splitext(os.path.basename(post.get("fil", "")))[0].strip().lower(),
+            "nr": _i(post.get("nr", "")) if post.get("nr", "").strip() else None,
+            "motbrunn": _normlittera(post.get("motbrunn", "")),
+            "kommentar": post.get("kommentar", ""),
+        }
+        regel["villkor"] = sum(1 for k in ("fil", "nr", "motbrunn") if regel[k])
+        regler.append(regel)
+    regler.sort(key=lambda r: -r["villkor"])            # mest specifika först
+    return regler
 
 
-def ratta_littera(strackor: list[Stracka], karta: dict[str, str]) -> int:
-    """Byter ut brunnslittera enligt kartan i start-, slut- och utgångsbrunn.
+def ratta_littera(strackor: list[Stracka], regler: list[dict]) -> int:
+    """Byter ut brunnslittera enligt reglerna i start-, slut- och utgångsbrunn.
     Returnerar antal sträckor som ändrats; ändringen noteras i Stracka.littera_rattat."""
     n = 0
     for s in strackor:
+        fil = os.path.splitext(os.path.basename(s.fil))[0].strip().lower()
+        par = {_normlittera(s.startbrunn), _normlittera(s.slutbrunn)}
         andringar: list[str] = []
         for falt in ("startbrunn", "slutbrunn", "utgangsbrunn"):
             v = getattr(s, falt)
-            ny = karta.get(_normlittera(v)) if v else None
-            if ny and ny != v:
-                andringar.append(f"{v}→{ny}")
-                setattr(s, falt, ny)
+            if not v:
+                continue
+            nv = _normlittera(v)
+            for r in regler:
+                if r["fel"] != nv:
+                    continue
+                if r["fil"] and r["fil"] != fil:
+                    continue
+                if r["nr"] is not None and r["nr"] != s.nr:
+                    continue
+                if r["motbrunn"] and (r["motbrunn"] not in par or r["motbrunn"] == nv):
+                    continue
+                if r["ratt"] != v:
+                    andringar.append(f"{v}→{r['ratt']}")
+                    setattr(s, falt, r["ratt"])
+                break                                       # första (mest specifika) träffen gäller
         if andringar:
             s.littera_rattat = ", ".join(dict.fromkeys(andringar))
             n += 1
     return n
 
 
-def las_tv3(path: str, littera: dict[str, str] | None = None) -> list[Stracka]:
+def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
     text = las_text(path)
     filnamn = os.path.basename(path)
     sektioner: dict[str, list[list[str]]] = defaultdict(list)
@@ -1615,15 +1664,18 @@ def main(argv=None):
     strackor: list[Stracka] = []
     fel: list[str] = []
 
-    littera: dict[str, str] = {}
+    littera: list[dict] = []
     for lf in littera_filer + a.littera:
         if not os.path.isfile(lf):
             fel.append(f"{lf}: litterafilen finns inte")
             print(f"  VARNING litterafil saknas: {lf}")
             continue
-        littera.update(las_littera(lf))
+        littera += las_littera(lf)
+    littera.sort(key=lambda r: -r["villkor"])
     if littera:
-        print(f"  {len(littera)} ersättningslittera lästa")
+        print(f"  {len(littera)} ersättningslittera lästa"
+              + (f" ({sum(1 for r in littera if r['villkor'])} begränsade till fil/sträcka/motbrunn)"
+                 if any(r["villkor"] for r in littera) else ""))
     for p, media in filer:
         for m in media:
             if not os.path.isdir(m):

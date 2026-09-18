@@ -1,5 +1,15 @@
 # Ersättningslittera för brunnar som märkts fel vid filmningen.
-# En rad per brunn: felaktigt littera ; rätt littera ; kommentar (valfri)
+# fel, ratt = felaktigt och rätt littera. fil, nr, motbrunn är valfria och begränsar
+# raden till en viss TV3-fil, ett visst sträcknummer (Nr i fliken Prioritering) eller
+# filmningar där den andra brunnen är motbrunn. Tomma = gäller överallt.
 # Anges i listfilen som  littera: brunnslittera.csv  eller på kommandoraden med --littera
-fel;ratt;kommentar
-BDNB1005633;BDNB1015633;DUF 701 – heter BDNB1015633 i kartan
+fel;ratt;fil;nr;motbrunn;kommentar
+BDNB1005633;BDNB1015633;;;;DUF 701
+BNB63303;KNB1017080;;;;DUF 701
+KRB65728;KRB68728;;;;DUF 701
+KNBL62724;KNB62724;;;;DUF 701
+KNB64767;KNB62767;;;;DUF 701
+BTB61146;KNB1016294;;;;DUF 701
+# Exempel på begränsade rader (ta bort # för att aktivera):
+#KRB65728;KRB68728;DUF 701;60;;bara sträcka 60 i DUF 701.TV3
+#KRB65728;KRB68728;;;KTB1016017;bara filmningar mellan KRB65728 och KTB1016017
