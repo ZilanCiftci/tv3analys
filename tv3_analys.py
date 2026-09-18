@@ -1595,7 +1595,12 @@ def main(argv=None):
         print(f"\nSkriver PDF-rapporter ({a.rapporter}) ...")
         n = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter)
         print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}")
-    skriv_excel(strackor, os.path.join(a.utdata, "prioritering.xlsx"), diagram, a.topp)
+    excel_fil = os.path.join(a.utdata, "prioritering.xlsx")
+    try:
+        skriv_excel(strackor, excel_fil, diagram, a.topp)
+    except PermissionError:
+        sys.exit(f"\nKan inte skriva {excel_fil} – filen är troligen öppen i Excel. "
+                 "Stäng den och kör igen.")
     if a.karta == "ja":
         kartfil = os.path.join(a.utdata, KARTUNDERLAG_FIL)
         n_poster = skriv_kartunderlag(strackor, kartfil)
