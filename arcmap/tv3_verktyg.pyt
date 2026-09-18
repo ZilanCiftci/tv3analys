@@ -8,9 +8,13 @@ unicode-koder: u00e5, u00e4 och u00f6 efter ett omvant snedstreck. Tack vare
 unicode_literals blir de riktiga tecken i dialogen.
 
 Lagg till i ArcToolbox: hogerklicka > Add Toolbox > valj denna .pyt-fil.
-Logiken ligger i skapa_ledningslager.py i samma mapp; den har filen ar bara
-dialogen. Andra i skapa_ledningslager.py och kor verktyget igen - modulen
-laddas om vid varje korning.
+Logiken ligger i skapa_ledningslager.py och skapa_lyr.py i samma mapp; den har
+filen ar bara dialogerna. Modulerna laddas om vid varje korning.
+
+Lagervalen ar rullistor med kartans lagernamn (inte lagerparametrar): ArcMap
+tolkar '/' i ett lagernamn som sokvag nar namnet skickas som text, vilket gor
+att t.ex. "A Rensbrunn/tillsynsbrunn" annars inte hittas. Namnen slas upp
+till lagerobjekt via arcpy.mapping i skapa_ledningslager.py.
 """
 from __future__ import unicode_literals
 
@@ -29,32 +33,6 @@ STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 STANDARD_LEDNING = ['A Ledning']
 STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbrunn']
 STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
-
-
-def _lager_i_kartan(namnlista):
-    """Namnen i namnlista som finns som lager i den oppna kartan (aven i grupplager)."""
-    try:
-        mxd = arcpy.mapping.MapDocument('CURRENT')
-        finns = {}
-        for l in arcpy.mapping.ListLayers(mxd):
-            try:
-                if l.isFeatureLayer:
-                    finns[l.name.strip().lower()] = l.name
-            except Exception:
-                pass
-        return [finns[n.strip().lower()] for n in namnlista if n.strip().lower() in finns]
-    except Exception:
-        return []
-
-
-def _satt_lager(param, namn):
-    """Fyller i en (multivalue-)lagerparameter med lagernamn."""
-    if not namn:
-        return
-    try:
-        param.values = list(namn)
-    except Exception:
-        param.value = ';'.join(namn)
 
 
 def _ladda_modul(namn='skapa_ledningslager'):
@@ -77,30 +55,90 @@ def _filter(param, lista):
         pass
 
 
-def _kolla_geometri(param, tillatna, vad):
-    """Varnar om nagot valt lager har fel geometrityp. Inget filter anvands pa
-    lagerparametrarna eftersom ArcMaps geometrifilter doljer lager i geometriska
-    natverk (complex edges/junctions)."""
-    if not param.valueAsText:
+def _kartlager():
+    """Featurelagren i den oppna kartan: lista med (langt namn, lagerobjekt) i TOC-ordning.
+    Langt namn = Grupp\\Lager, sa att lager med samma namn i olika grupper kan skiljas."""
+    ut = []
+    try:
+        mxd = arcpy.mapping.MapDocument('CURRENT')
+        for l in arcpy.mapping.ListLayers(mxd):
+            try:
+                if l.isFeatureLayer:
+                    ut.append((l.longName, l))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return ut
+
+
+def _langa_namn(namnlista, kartlager):
+    """Langa namn for de lager i namnlista som finns i kartan (matchar kort eller langt namn)."""
+    sokta = [n.strip().lower() for n in namnlista]
+    ut = []
+    for langt, l in kartlager:
+        if l.name.strip().lower() in sokta or langt.strip().lower() in sokta:
+            if langt not in ut:
+                ut.append(langt)
+    return ut
+
+
+def _lagerparam(displayName, name, multi, kartlager, parameterType='Required'):
+    """Rullista (GPString) med kartans lager. Fri text tillats ocksa, t.ex. en sokvag."""
+    p = arcpy.Parameter(displayName=displayName, name=name, datatype='GPString',
+                        parameterType=parameterType, direction='Input', multiValue=multi)
+    namn = [langt for langt, l in kartlager]
+    if namn:
+        _filter(p, namn)
+    return p
+
+
+def _satt_varden(param, varden):
+    """Fyller i en (multivalue-)parameter."""
+    if not varden:
         return
-    fel = []
-    for lyr in _lagerlista(param):
-        try:
-            typ = arcpy.Describe(lyr).shapeType
-        except Exception:
-            continue
-        if typ not in tillatna:
-            fel.append('%s (%s)' % (getattr(lyr, 'name', lyr), typ))
-    if fel:
-        param.setWarningMessage('%s bor vara %s: %s' % (vad, '/'.join(tillatna), ', '.join(fel)))
+    try:
+        param.values = list(varden)
+    except Exception:
+        param.value = ';'.join(varden)
 
 
 def _lagerlista(param):
-    """Multivalue-parameter -> lista med lagerobjekt eller namn."""
-    if param.values:
-        return list(param.values)
+    """Multivalue-parameter -> lista med namn (citattecken bortskalade)."""
     text = param.valueAsText or ''
     return [v.strip().strip("'") for v in text.split(';') if v.strip()]
+
+
+def _lagerobjekt(namn):
+    """Lagerobjekt i kartan for ett kort eller langt namn, annars None."""
+    sokt = namn.strip().strip("'").lower()
+    for langt, l in _kartlager():
+        if langt.strip().lower() == sokt or l.name.strip().lower() == sokt:
+            return l
+    return None
+
+
+def _kolla_geometri(param, tillatna, vad):
+    """Varnar om nagot valt lager har fel geometrityp eller inte finns i kartan."""
+    if not param.valueAsText:
+        return
+    fel, saknas = [], []
+    for namn in _lagerlista(param):
+        l = _lagerobjekt(namn)
+        if l is None:
+            if not arcpy.Exists(namn):
+                saknas.append(namn)
+            continue
+        try:
+            typ = arcpy.Describe(l.dataSource).shapeType
+        except Exception:
+            continue
+        if typ not in tillatna:
+            fel.append('%s (%s)' % (l.name, typ))
+    if saknas:
+        param.setErrorMessage('Finns inte i kartan: %s' % ', '.join(saknas))
+    elif fel:
+        param.setWarningMessage('%s bor vara %s: %s' % (vad, '/'.join(tillatna), ', '.join(fel)))
 
 
 class Toolbox(object):
@@ -115,29 +153,25 @@ class SkapaLedningslager(object):
         self.label = 'Skapa ledningslager'
         self.description = (
             'Skapar ett ledningslager av kartunderlag.json fr\u00e5n tv3_analys. '
-            'Varje brunnspar i filen letas upp i brunnslagret och ledningen mellan '
+            'Varje brunnspar i filen letas upp i brunnslagren och ledningen mellan '
             'brunnarna klipps ut som ett eget objekt med f\u00e4lten Maskinell bed\u00f6mning '
             'och Manuell bed\u00f6mning. Manuella bed\u00f6mningar fr\u00e5n en tidigare k\u00f6rning bevaras.')
         self.canRunInBackground = False
 
     def getParameterInfo(self):
+        kartlager = _kartlager()
+
         json_in = arcpy.Parameter(
             displayName='Kartunderlag (kartunderlag.json fr\u00e5n tv3_analys)',
             name='json_in', datatype='DEFile', parameterType='Required', direction='Input')
         _filter(json_in, ['json'])
 
-        ledning = arcpy.Parameter(
-            displayName='Ledningslager', name='ledningslager',
-            datatype='GPFeatureLayer', parameterType='Required', direction='Input',
-            multiValue=True)
-
-        brunn = arcpy.Parameter(
-            displayName='Brunnslager (v\u00e4lj alla lager d\u00e4r brunnar kan ligga)', name='brunnslager',
-            datatype='GPFeatureLayer', parameterType='Required', direction='Input',
-            multiValue=True)
+        ledning = _lagerparam('Ledningslager', 'ledningslager', True, kartlager)
+        brunn = _lagerparam('Brunnslager (v\u00e4lj alla lager d\u00e4r brunnar kan ligga)',
+                            'brunnslager', True, kartlager)
 
         brunn_id = arcpy.Parameter(
-            displayName='F\u00e4lt med brunnsbeteckning i brunnslagret', name='brunn_id',
+            displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
             datatype='GPString', parameterType='Required', direction='Input')
         brunn_id.value = 'EntityID'
 
@@ -145,9 +179,8 @@ class SkapaLedningslager(object):
             displayName='Utdata (featureklass i geodatabas, eller shapefil)', name='ut_fc',
             datatype='DEFeatureClass', parameterType='Required', direction='Output')
 
-        omrade = arcpy.Parameter(
-            displayName='Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', name='omradeslager',
-            datatype='GPFeatureLayer', parameterType='Optional', direction='Input')
+        omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)',
+                             'omradeslager', False, kartlager, 'Optional')
 
         lyr_fil = arcpy.Parameter(
             displayName='Symbologi (.lyr-fil, valfritt)', name='lyr_fil',
@@ -173,8 +206,8 @@ class SkapaLedningslager(object):
         max_hopp.value = 2
 
         marginal = arcpy.Parameter(
-            displayName='Marginal utanf\u00f6r omr\u00e5det d\u00e4r brunnar \u00e4nd\u00e5 l\u00e4ses in (m)', name='marginal',
-            datatype='GPDouble', parameterType='Required', direction='Input',
+            displayName='Marginal utanf\u00f6r omr\u00e5det d\u00e4r brunnar \u00e4nd\u00e5 l\u00e4ses in (m)',
+            name='marginal', datatype='GPDouble', parameterType='Required', direction='Input',
             category='Matchning')
         marginal.value = 100.0
 
@@ -183,8 +216,8 @@ class SkapaLedningslager(object):
             datatype='GPString', parameterType='Optional', direction='Input',
             multiValue=True, category='Matchning')
 
-        _satt_lager(ledning, _lager_i_kartan(STANDARD_LEDNING))
-        _satt_lager(brunn, _lager_i_kartan(STANDARD_BRUNN))
+        _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
+        _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
 
         return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
                 tolerans, max_hopp, marginal, kopiera]
@@ -214,19 +247,20 @@ class SkapaLedningslager(object):
 
     def execute(self, parameters, messages):
         m = _ladda_modul()
+        omrade = _lagerlista(parameters[5])
         ut = m.skapa(
             parameters[0].valueAsText,
             _lagerlista(parameters[1]),
             _lagerlista(parameters[2]),
             parameters[3].valueAsText,
             parameters[4].valueAsText,
-            omradeslager=parameters[5].value if parameters[5].valueAsText else None,
+            omradeslager=omrade[0] if omrade else None,
             csv_ut=parameters[7].valueAsText or None,
             lyr_fil=parameters[6].valueAsText or None,
             tolerans=float(parameters[8].value),
             marginal=float(parameters[10].value),
             max_hopp=int(parameters[9].value),
-            kopiera_falt=_lagerlista(parameters[11]) if parameters[11].valueAsText else [],
+            kopiera_falt=_lagerlista(parameters[11]),
             lagg_till_i_kartan=False,     # ArcMap lagger sjalv till utdata-parametern i kartan
         )
         parameters[4].value = ut
@@ -244,15 +278,9 @@ class UppdateraBedomning(object):
         self.canRunInBackground = False
 
     def getParameterInfo(self):
-        lager = arcpy.Parameter(
-            displayName='Ledningslager fr\u00e5n "Skapa ledningslager"', name='lager',
-            datatype='GPFeatureLayer', parameterType='Required', direction='Input')
-        ut = arcpy.Parameter(
-            displayName='Uppdaterat lager', name='ut', datatype='GPFeatureLayer',
-            parameterType='Derived', direction='Output')
-        ut.parameterDependencies = [lager.name]
-        ut.schema.clone = True
-        return [lager, ut]
+        lager = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager"', 'lager',
+                            False, _kartlager())
+        return [lager]
 
     def isLicensed(self):
         return True
@@ -260,21 +288,19 @@ class UppdateraBedomning(object):
     def updateMessages(self, parameters):
         _kolla_geometri(parameters[0], ('Polyline',), 'Lagret')
         if parameters[0].valueAsText:
+            l = _lagerobjekt(parameters[0].valueAsText)
             try:
-                namn = [f.name.upper() for f in arcpy.ListFields(parameters[0].valueAsText)]
+                namn = [f.name.upper() for f in arcpy.ListFields(l.dataSource if l else parameters[0].valueAsText)]
                 if 'MAN_BED' not in namn or 'MASK_BED' not in namn:
                     parameters[0].setErrorMessage(
-                        'Lagret saknar falten MASK_BED/MAN_BED - valj lagret fran "Skapa ledningslager".')
+                        'Lagret saknar faltet MASK_BED/MAN_BED - valj lagret fran "Skapa ledningslager".')
             except Exception:
                 pass
         return
 
     def execute(self, parameters, messages):
         m = _ladda_modul()
-        lyr = parameters[0].value
-        sokvag = arcpy.Describe(lyr).catalogPath if lyr is not None else parameters[0].valueAsText
-        m.uppdatera(sokvag)
-        parameters[1].value = parameters[0].value
+        m.uppdatera(parameters[0].valueAsText.strip("'"))
         try:
             arcpy.RefreshActiveView()
         except Exception:
@@ -293,9 +319,8 @@ class SkapaSymbologi(object):
         self.canRunInBackground = False
 
     def getParameterInfo(self):
-        lager = arcpy.Parameter(
-            displayName='Ledningslager i kartan (fr\u00e5n "Skapa ledningslager")', name='lager',
-            datatype='GPFeatureLayer', parameterType='Required', direction='Input')
+        lager = _lagerparam('Ledningslager i kartan (fr\u00e5n "Skapa ledningslager")', 'lager',
+                            False, _kartlager())
         lyr_ut = arcpy.Parameter(
             displayName='Spara som (.lyr)', name='lyr_ut',
             datatype='DELayer', parameterType='Required', direction='Output')
@@ -308,8 +333,9 @@ class SkapaSymbologi(object):
     def updateMessages(self, parameters):
         _kolla_geometri(parameters[0], ('Polyline',), 'Lagret')
         if parameters[0].valueAsText:
+            l = _lagerobjekt(parameters[0].valueAsText)
             try:
-                namn = [f.name.upper() for f in arcpy.ListFields(parameters[0].valueAsText)]
+                namn = [f.name.upper() for f in arcpy.ListFields(l.dataSource if l else parameters[0].valueAsText)]
                 if 'STIL' not in namn:
                     parameters[0].setErrorMessage(
                         'Lagret saknar faltet STIL - valj lagret fran "Skapa ledningslager".')
@@ -319,8 +345,8 @@ class SkapaSymbologi(object):
 
     def execute(self, parameters, messages):
         m = _ladda_modul('skapa_lyr')
-        lyr = parameters[0].value
-        namn = getattr(lyr, 'name', None) or parameters[0].valueAsText
+        l = _lagerobjekt(parameters[0].valueAsText)
+        namn = l.name if l is not None else parameters[0].valueAsText.strip("'")
         ut = m.skapa_lyr(namn, parameters[1].valueAsText)
         parameters[1].value = ut
         return

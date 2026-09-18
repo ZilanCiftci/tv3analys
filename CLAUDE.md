@@ -76,6 +76,13 @@ som verktyget använder som standard. Manuell väg (Unique values + Save As Laye
 kvar i handledningen. `.lyr` är binär och kan inte skapas utanför ArcMap. "Uppdatera bedömning"
 (eller `BARA_UPPDATERA = True`) räknar bara om de härledda fälten efter manuell ifyllnad; vid
 full omkörning bevaras manuella bedömningar per brunnspar. Omatchade par listas i CSV.
+Lagervalen i verktyget är **rullistor med kartans lagernamn (GPString)**, inte
+GPFeatureLayer: ArcMap tolkar `/` i lagernamn (`A Rensbrunn/tillsynsbrunn`) som sökväg när namnet
+skickas som text → "does not exist". Namnen slås upp till lagerobjekt via `arcpy.mapping`
+(`hitta_lager`, matchar kort eller långt namn `Grupp\Lager`) och `kalla()` ger lagrets
+`dataSource` + definitionsfråga till `MakeFeatureLayer`, så namnet aldrig går som text till GP.
+Brunnar i SVOA-kartan: nedstigningsbrunnar (xNB/xNBL) i `A Nedstign och övriga brunnar`,
+rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn` – båda behövs (standard).
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 
 ## 3. TV3-formatet (Svenskt Vatten TV-fil v3.0, P93-koder) – det vi lärt oss
