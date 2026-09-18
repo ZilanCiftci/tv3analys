@@ -23,9 +23,13 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 
 `tv3_analys.py` (~1 200 rader, Python 3.10+, beroenden: `openpyxl`, `matplotlib`, `reportlab`).
 Övriga filer: `filer.txt` (exempel-listfil), `brunnslittera.csv` (exempel på ersättningslittera:
-`fel;ratt;kommentar` – felmärkta brunnar i TV3-filen byts ut vid inläsning, anges med
+`fel;ratt;fil;nr;motbrunn;kommentar` – felmärkta brunnar i TV3-filen byts ut vid inläsning;
+`fil`/`nr`/`motbrunn` är valfria och begränsar raden till en fil, ett sträcknummer eller ett
+brunnspar när det felaktiga litterat även är ett riktigt littera på andra sträckor; mest
+specifika raden vinner; rubrikraden styr kolumnordningen, tab/;/, som avgränsare; anges med
 `littera: FIL` i listfilen eller `--littera`; Excel-kolumn "Littera rättat", rad i PDF och fält
-`littera_rattat` i JSON), `Anvandarhandledning tv3_analys.docx`,
+`littera_rattat` i JSON; användarens sex DUF 701-rättningar ligger i filen),
+`Anvandarhandledning tv3_analys.docx`,
 `Metodbeskrivning prioritering avloppsledningar.docx` (genereras av `make_docs.js` med npm-paketet
 `docx`; filnamn hålls ASCII eftersom Windows zip-hantering förvanskar åäö).
 
