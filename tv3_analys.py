@@ -43,7 +43,8 @@ Poängmodell (kan justeras i KONFIG nedan):
     Driftskador (ROT, INL, UTF, SED, INH) räknas med faktor 0,5 i driftindex, som redovisas
     separat och varken påverkar prioritetsklass eller rangordning.
     Konstruktionskoder viktas inbördes med KODFAKTOR: SPR/RBR/DEF 1,0, YTS 0,7,
-    FOG/FRF 0,6, DEA 0,3 (None stänger av).
+    FOG/FRF 0,6, DEA 0,3 (None stänger av). Cirkulära sprickor viktas dessutom med 0,7
+    (ATTRIBUTFAKTOR).
     Poängen normeras till poäng per 100 m ledning (sträckor kortare än
     MINLANGD räknas som MINLANGD, så att mycket korta sträckor inte överdrivs).
     Löpande skador (A1…B1) räknas vid startmarkeringen, viktade med längden:
@@ -100,6 +101,11 @@ DRIFTFAKTOR = 0.5
 # rörbrott och deformation väger fullt, ytskada (väggen tunnas ut men röret bär) 0,7,
 # fogfel 0,6 och defekt anslutning 0,3 (åtgärdas ändå med hatt efter infodringen).
 KODFAKTOR: dict[str, float] | None = {"YTS": 0.7, "FOG": 0.6, "FRF": 0.6, "DEA": 0.3}
+
+# Viktning per attribut, utöver KODFAKTOR: poäng × ATTRIBUTFAKTOR[(kod, attribut)]. Cirkulära
+# sprickor beror oftast på en sättning vid en fog och är mindre allvarliga för bärigheten än
+# komplexa och längsgående. None = ingen attributviktning.
+ATTRIBUTFAKTOR: dict[tuple[str, str], float] | None = {("SPR", "CIRK"): 0.7}
 
 # Löpande skador (A1…B1) viktas med längden: poängen multipliceras med längd / LOPANDE_ENHET_M
 # (minst 1, högst LOPANDE_TAK). 10 m och 5× betyder att en 30 m löpande skada räknas som tre
@@ -227,8 +233,11 @@ class Observation:
         p = GRADPOANG.get(self.grad, 0)
         if self.typ == "D":
             p *= DRIFTFAKTOR
-        elif KODFAKTOR:
-            p *= KODFAKTOR.get(self.kod, 1.0)
+        else:
+            if KODFAKTOR:
+                p *= KODFAKTOR.get(self.kod, 1.0)
+            if ATTRIBUTFAKTOR:
+                p *= ATTRIBUTFAKTOR.get((self.kod, self.attribut), 1.0)
         return p * self.lopande_faktor
 
     def beskrivning(self) -> str:
@@ -867,6 +876,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
               ["Konstruktionskoder" + ("" if KODFAKTOR else " (faktor 1,0)"),
                ", ".join(k + (f" ×{KODFAKTOR.get(k, 1.0):g}".replace(".", ",") if KODFAKTOR else "")
                          for k, v in KODER.items() if v[1] == "K")],
+              ["Attributvikter", ", ".join(f"{k} {ATTRIBUT.get(a, a)} ×{v:g}".replace(".", ",")
+                                           for (k, a), v in ATTRIBUTFAKTOR.items()) if ATTRIBUTFAKTOR else "inga"],
               ["Driftkoder (faktor %s)" % str(DRIFTFAKTOR).replace(".", ","),
                ", ".join(k for k, v in KODER.items() if v[1] == "D")],
               ["Löpande skador", (f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1, högst {LOPANDE_TAK:g})"

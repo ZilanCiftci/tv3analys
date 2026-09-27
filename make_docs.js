@@ -202,6 +202,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["`GRADPOANG`", "Poäng per grad 1–4.", "1 / 3 / 10 / 30"],
     ["`DRIFTFAKTOR`", "Faktor för driftskador (rötter, inläckage, sediment m.m.) i driftindex.", "0,5"],
     ["`KODFAKTOR`", "Viktning av konstruktionskoder inbördes. `None` = bara graden avgör.", "YTS 0,7; FOG, FRF 0,6; DEA 0,3; övriga 1,0"],
+    ["`ATTRIBUTFAKTOR`", "Viktning per attribut, utöver kodvikten. `None` = ingen attributviktning.", "SPR CIRK 0,7"],
     ["`LOPANDE_ENHET_M`", "Längd (m) per poängenhet för löpande skador: poäng × längd / enhet, minst 1. `None` = räkna en gång oavsett längd.", "10"],
     ["`LOPANDE_TAK`", "Högsta faktor en löpande skada kan få. `None` = inget tak.", "5"],
     ["`MINLANGD`", "Minsta längd (m) som används som nämnare vid normering per 100 m.", "20"],
@@ -310,7 +311,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   spacer(),
   p("Nämnaren är aldrig kortare än 20 m. Utan den regeln skulle en enstaka skada på en 5 m lång sträcka ge ett orimligt högt index jämfört med samma skada på en 50 m lång sträcka."),
   p("Tre index redovisas: konstruktionsindex, driftindex och totalindex (summan). Bara konstruktionsindex används för klass och rangordning; driftindex och totalindex är information."),
-  p("Konstruktionskoderna viktas dessutom inbördes med `KODFAKTOR` i KONFIG. Syftet är att hitta ledningar som bör strumpinfodras medan det fortfarande går, innan de blivit så dåliga att bara schakt återstår. Sprickor, rörbrott och deformation är de tydligaste tecknen på att röret är på väg att brista och väger fullt (1,0). Ytskada, där väggen tunnas ut men röret fortfarande bär, väger 0,7. Fogförskjutning och fog-/rörfel är i första hand läckagepunkter som strumpan tätar och väger 0,6. Defekt anslutning väger 0,3 eftersom den ändå åtgärdas med hatt när anslutningen öppnas efter infodringen. En ytskada grad 3 ger alltså 7 p i stället för 10."),
+  p("Konstruktionskoderna viktas dessutom inbördes med `KODFAKTOR` i KONFIG. Syftet är att hitta ledningar som bör strumpinfodras medan det fortfarande går, innan de blivit så dåliga att bara schakt återstår. Sprickor, rörbrott och deformation är de tydligaste tecknen på att röret är på väg att brista och väger fullt (1,0). Ytskada, där väggen tunnas ut men röret fortfarande bär, väger 0,7. Fogförskjutning och fog-/rörfel är i första hand läckagepunkter som strumpan tätar och väger 0,6. Defekt anslutning väger 0,3 eftersom den ändå åtgärdas med hatt när anslutningen öppnas efter infodringen. En ytskada grad 3 ger alltså 7 p i stället för 10. Cirkulära sprickor (attribut CIRK) viktas dessutom med 0,7 (`ATTRIBUTFAKTOR`): de beror oftast på en sättning vid en fog och är mindre allvarliga för bärigheten än komplexa och längsgående sprickor, som är de egentliga förvarningarna om brott."),
   p("Utan kodviktning blev 58 av 185 sträckor i DUF 701 klass A, och 43 av dem bara på grund av ytskador. Med viktningen blir 41 sträckor A; de 17 som flyttas till B har i nästan alla fall en enda löpande ytskada grad 3 och inga sprickor."),
 
   h1("5. Prioritetsklass"),
@@ -348,7 +349,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   bullet("Alla parametrar – poäng per grad, driftfaktor, minsta längd och trösklar – kan ändras i skriptets konfigurationsdel. Ändringar bör dokumenteras så att resultat från olika tillfällen förblir jämförbara."),
 
   h1("9. Exempel"),
-  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 × 0,7 + 10 + 10 × 0,7 × 3,5 = 223,5. Konstruktionsindex: 223,5 / 35,1 × 100 = 637 p/100 m. Klass A (konstruktionsindex ≥ 80), rang 1 i uppdraget DUF 701."),
+  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 × 0,7 + 10 × 0,7 (cirkulär spricka) + 10 × 0,7 × 3,5 = 220,5. Konstruktionsindex: 220,5 / 35,1 × 100 ≈ 629 p/100 m. Klass A (konstruktionsindex ≥ 80), rang 1 i uppdraget DUF 701."),
   p("Sträckan KRB68713 → KRB68712 (betong 225 mm, 9,7 m) har en spricka grad 3, en ytskada grad 3 och ett inträngande hinder grad 2. Poäng: 10 + 10 + 3 × 0,5 = 21,5. Eftersom sträckan är kortare än 20 m används 20 m som nämnare: 21,5 / 20 × 100 = 108 p/100 m, varav konstruktion 100. Klass A (konstruktionsindex ≥ 80)."),
 ]);
 
