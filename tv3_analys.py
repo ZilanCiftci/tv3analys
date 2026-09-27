@@ -42,7 +42,8 @@ Poängmodell (kan justeras i KONFIG nedan):
     Konstruktionsskador (SPR, RBR, DEF, YTS, FOG, FRF, DEA) räknas fullt.
     Driftskador (ROT, INL, UTF, SED, INH) räknas med faktor 0,5 i driftindex, som redovisas
     separat och varken påverkar prioritetsklass eller rangordning.
-    Konstruktionskoder kan viktas inbördes med KODFAKTOR (avstängt som standard).
+    Konstruktionskoder viktas inbördes med KODFAKTOR: SPR/RBR/DEF 1,0, YTS 0,7,
+    FOG/FRF 0,6, DEA 0,3 (None stänger av).
     Poängen normeras till poäng per 100 m ledning (sträckor kortare än
     MINLANGD räknas som MINLANGD, så att mycket korta sträckor inte överdrivs).
     Löpande skador (A1…B1) räknas vid startmarkeringen, viktade med längden:
@@ -94,9 +95,11 @@ KODER = {
 DRIFTFAKTOR = 0.5
 
 # Viktning av konstruktionskoder inbördes: poäng × KODFAKTOR[kod]. Koder som saknas räknas
-# med 1,0. Tom ({}) eller None = ingen viktning, bara graden avgör. Exempel som simulerats på
-# DUF 701: {"FOG": 0.8, "FRF": 0.8, "YTS": 0.7, "DEA": 0.7} → 41 A i stället för 58.
-KODFAKTOR: dict[str, float] | None = None
+# med 1,0. Tom ({}) eller None = ingen viktning, bara graden avgör.
+# Syftet är att hitta ledningar som bör strumpinfodras medan det fortfarande går: sprickor,
+# rörbrott och deformation väger fullt, ytskada (väggen tunnas ut men röret bär) 0,7,
+# fogfel 0,6 och defekt anslutning 0,3 (åtgärdas ändå med hatt efter infodringen).
+KODFAKTOR: dict[str, float] | None = {"YTS": 0.7, "FOG": 0.6, "FRF": 0.6, "DEA": 0.3}
 
 # Löpande skador (A1…B1) viktas med längden: poängen multipliceras med längd / LOPANDE_ENHET_M
 # (minst 1, högst LOPANDE_TAK). 10 m och 5× betyder att en 30 m löpande skada räknas som tre
@@ -910,7 +913,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
-           "Rapport", "Videofil"]
+           "Manuell bedömning", "Kommentar", "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
     rader = []
     for rang, s in enumerate(sorterade, 1):
@@ -929,10 +932,11 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(pa["bakfall"], 1) if pa else None,
                       round(lut, 1) if lut is not None else None,
                       ("Ja" if pa["osaker"] else "") if pa else "",
-                      "Öppna rapport" if s.rapport_fil else "", s.videofil])
+                      "", "", "Öppna rapport" if s.rapport_fil else "", s.videofil])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
-    tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15},
+    tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
+                            "Manuell bedömning": 18, "Kommentar": 30},
            klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls})
     ci = kol.index("Svackdjup/diameter") + 1
     for r in range(2, ws.max_row + 1):

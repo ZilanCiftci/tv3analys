@@ -189,7 +189,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   h1("5. Flikarna i Excel"),
   table(["Flik", "Innehåll och användning"], [
     ["Sammanfattning", "Nyckeltal för hela underlaget, fördelning per prioritetsklass (antal och längd), poängmodellens parametrar och två inbäddade diagram."],
-    ["Prioritering", "En rad per sträcka, rankad efter prioritetsklass och index. Använd autofiltret för att filtrera på klass, material, ledningstyp, område eller fil. Kolumnen Skador (kod+grad) visar t.ex. 9×YTS4, 1×SPR3. Kolumnerna Avbruten inspektion, Inspekterad flera ggr och Relinad ger extra kontext. Ur inklinometerprofilen beräknas Svackdjup i cm (största stående vattendjup i en svacka), Svackdjup/diameter, Svacklängd, Bakfall längd (meter med lutning mot flödesriktningen) och Lutning; Profil osäker markerar sträckor där inklinometerns fall avviker kraftigt från brunnshöjderna och profilen därför inte bör användas. Antal anslutningar räknar registrerade anslutningar (AS/AG) på sträckan. Kolumnen Rapport öppnar sträckans PDF-rapport (länken är relativ, så Excel-filen och mappen rapporter måste ligga kvar bredvid varandra). Kolumnen Videofil är en klickbar länk som öppnar filmen (se avsnitt 7 om länken inte fungerar)."],
+    ["Prioritering", "En rad per sträcka, rankad efter prioritetsklass och index. Använd autofiltret för att filtrera på klass, material, ledningstyp, område eller fil. Kolumnen Skador (kod+grad) visar t.ex. 9×YTS4, 1×SPR3. Kolumnerna Avbruten inspektion, Inspekterad flera ggr och Relinad ger extra kontext. Ur inklinometerprofilen beräknas Svackdjup i cm (största stående vattendjup i en svacka), Svackdjup/diameter, Svacklängd, Bakfall längd (meter med lutning mot flödesriktningen) och Lutning; Profil osäker markerar sträckor där inklinometerns fall avviker kraftigt från brunnshöjderna och profilen därför inte bör användas. Antal anslutningar räknar registrerade anslutningar (AS/AG) på sträckan. Kolumnerna Manuell bedömning och Kommentar är tomma och avsedda för den egna genomgången av sträckorna. Kolumnen Rapport öppnar sträckans PDF-rapport (länken är relativ, så Excel-filen och mappen rapporter måste ligga kvar bredvid varandra). Kolumnen Videofil är en klickbar länk som öppnar filmen (se avsnitt 7 om länken inte fungerar)."],
     ["Observationer", "Varje observation i klartext med läge (m), tid i filmen, kod, grad, poäng, klockposition, vattennivå, bild och kommentar. Bild och Videofil är klickbara länkar när filerna hittats. Sorterad i samma ordning som prioriteringslistan så att man snabbt hittar detaljerna för en kritisk sträcka."],
     ["Kodstatistik", "Antal observationer per skadekod fördelat på grad 1–4, samt hur många sträckor som berörs."],
     ["Per fil", "Nyckeltal per TV3-fil: projekt, område, period, sträckor, längd, index, klassfördelning och avbrutna inspektioner. Praktiskt när flera uppdrag analyseras samtidigt."],
@@ -201,7 +201,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   table(["Parameter", "Betydelse", "Standard"], [
     ["`GRADPOANG`", "Poäng per grad 1–4.", "1 / 3 / 10 / 30"],
     ["`DRIFTFAKTOR`", "Faktor för driftskador (rötter, inläckage, sediment m.m.) i driftindex.", "0,5"],
-    ["`KODFAKTOR`", "Viktning av konstruktionskoder inbördes, t.ex. {\"YTS\": 0.7}. `None` = bara graden avgör.", "None"],
+    ["`KODFAKTOR`", "Viktning av konstruktionskoder inbördes. `None` = bara graden avgör.", "YTS 0,7; FOG, FRF 0,6; DEA 0,3; övriga 1,0"],
     ["`LOPANDE_ENHET_M`", "Längd (m) per poängenhet för löpande skador: poäng × längd / enhet, minst 1. `None` = räkna en gång oavsett längd.", "10"],
     ["`LOPANDE_TAK`", "Högsta faktor en löpande skada kan få. `None` = inget tak.", "5"],
     ["`MINLANGD`", "Minsta längd (m) som används som nämnare vid normering per 100 m.", "20"],
@@ -310,7 +310,8 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   spacer(),
   p("Nämnaren är aldrig kortare än 20 m. Utan den regeln skulle en enstaka skada på en 5 m lång sträcka ge ett orimligt högt index jämfört med samma skada på en 50 m lång sträcka."),
   p("Tre index redovisas: konstruktionsindex, driftindex och totalindex (summan). Bara konstruktionsindex används för klass och rangordning; driftindex och totalindex är information."),
-  p("Konstruktionskoderna kan viktas inbördes med `KODFAKTOR` i KONFIG (t.ex. ytskada 0,7 av en spricka med samma grad). Som standard är viktningen avstängd och bara graden avgör poängen."),
+  p("Konstruktionskoderna viktas dessutom inbördes med `KODFAKTOR` i KONFIG. Syftet är att hitta ledningar som bör strumpinfodras medan det fortfarande går, innan de blivit så dåliga att bara schakt återstår. Sprickor, rörbrott och deformation är de tydligaste tecknen på att röret är på väg att brista och väger fullt (1,0). Ytskada, där väggen tunnas ut men röret fortfarande bär, väger 0,7. Fogförskjutning och fog-/rörfel är i första hand läckagepunkter som strumpan tätar och väger 0,6. Defekt anslutning väger 0,3 eftersom den ändå åtgärdas med hatt när anslutningen öppnas efter infodringen. En ytskada grad 3 ger alltså 7 p i stället för 10."),
+  p("Utan kodviktning blev 58 av 185 sträckor i DUF 701 klass A, och 43 av dem bara på grund av ytskador. Med viktningen blir 41 sträckor A; de 17 som flyttas till B har i nästan alla fall en enda löpande ytskada grad 3 och inga sprickor."),
 
   h1("5. Prioritetsklass"),
   p("Klassen bestäms av konstruktionsskadorna – den värsta graden på sträckan och konstruktionsindex:"),
@@ -347,7 +348,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   bullet("Alla parametrar – poäng per grad, driftfaktor, minsta längd och trösklar – kan ändras i skriptets konfigurationsdel. Ändringar bör dokumenteras så att resultat från olika tillfällen förblir jämförbara."),
 
   h1("9. Exempel"),
-  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 + 10 + 10 × 3,5 = 315. Konstruktionsindex: 315 / 35,1 × 100 = 898 p/100 m. Klass A (konstruktionsindex ≥ 80), rang 1 i uppdraget DUF 701."),
+  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 × 0,7 + 10 + 10 × 0,7 × 3,5 = 223,5. Konstruktionsindex: 223,5 / 35,1 × 100 = 637 p/100 m. Klass A (konstruktionsindex ≥ 80), rang 1 i uppdraget DUF 701."),
   p("Sträckan KRB68713 → KRB68712 (betong 225 mm, 9,7 m) har en spricka grad 3, en ytskada grad 3 och ett inträngande hinder grad 2. Poäng: 10 + 10 + 3 × 0,5 = 21,5. Eftersom sträckan är kortare än 20 m används 20 m som nämnare: 21,5 / 20 × 100 = 108 p/100 m, varav konstruktion 100. Klass A (konstruktionsindex ≥ 80)."),
 ]);
 
