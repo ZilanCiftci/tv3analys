@@ -165,7 +165,8 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   vattenytan i varje punkt = högsta punkten nedströms (vattnet kan bara lämna nedströms – vid
   bakfall räknas djupet upp till utloppet; den tidigare symmetriska "fill"-metoden med
   min(uppströms, nedströms) cappade vid inloppet, fel enligt användaren sep 2026; beräknat djup
-  > `SVACKA_MAX_M` (1 m) = driftande inklinometer → svacka None/"okänd", profil osäker),
+  > `SVACKA_MAX_M` (1 m) = driftande inklinometer → svacka None/"okänd", profil osäker; **redovisas
+  i cm** i Excel, PDF, profilbild, JSON `svackdjup_cm` och kartfältet `SVACKA_CM` – beräknas i m),
   **svacklängd** (stående vatten > 1 cm), **bakfall** (längd med lutning mot flödet > 5 ‰),
   **svackdjup/diameter**, samt **profil osäker** när inklinometerns fall avviker > 0,3 m eller
   50 % från brunnshöjderna (26 av 181 profiler i DUF 701 – inklinometrar driftar).
