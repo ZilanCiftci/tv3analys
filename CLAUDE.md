@@ -160,11 +160,19 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   minst 1, högst `LOPANDE_TAK` (5). Tidigare räknades de en gång oavsett längd – en 105 m YTS3 gav
   10 p som en punktspricka. `None` stänger av. 213 av 474 skador i DUF 701 är löpande (median 16 m).
 - Index = poäng / max(längd, 20 m) × 100 (poäng per 100 m). Konstruktions-, drift- och totalindex.
+  **Bara konstruktionsindex styr klass och rangordning** (sep 2026: "att det är rötter medför inte
+  att jag vill renovera ledningen") – drift-/totalindex är information (Excel-kolumnordning
+  Konstruktions-, Drift-, Totalindex; topplistan visar K-index; PDF-rad Konstruktionsindex först).
+- `KODFAKTOR` (KONFIG, standard None) viktar konstruktionskoder inbördes. Simulerat sep 2026 på
+  DUF 701 (A/B/C/D/E): alla 1,0 → 58/40/19/62/6; FOG/FRF 0,8 + YTS/DEA 0,7 → 41/54/22/62/6
+  (17 A→B, nästan alla en löpande YTS3 över hela sträckan = exakt 100 p/100 m); YTS/DEA 0,5 →
+  34/59/24/62/6; FOG/FRF 0,5 + YTS/DEA 0,3 → 26/67/24/62/6. Användaren har inte valt värden än.
 - Klass **A** Åtgärda (hette "Åtgärd snarast" t.o.m. sep 2026): grad 4 på **RBR eller DEF**
   (`GRAD4_KODER_A`, sep 2026 – tidigare alla konstruktionskoder; grad 4-YTS/FRF gav då 4 sträckor A
   med en enda punktskada på 40–80 m frisk ledning) eller konstruktionsindex ≥ 80.
   **B** Planera renovering: grad 3 eller index ≥ 25. **C** Bevaka: övriga med skador.
-  **D** Inga skador. **E** Ej bedömd (längd < 1 m). Rangordning inom klass efter totalindex.
+  **D** Inga skador. **E** Ej bedömd (längd < 1 m). Rangordning inom klass efter konstruktionsindex
+  (t.o.m. sep 2026 totalindex).
 - Driftåtgärd flaggas separat (rotskärning, spolning, täta inläckage, ta bort hinder) – ingår
   inte i klassen. Även flaggor: avbruten inspektion, relinad, inspekterad flera ggr.
 - Facit DUF 701 (längdviktning + GRAD4_KODER_A): klasser A/B/C/D/E = **58/40/19/62/6**; A = 2 199 m
@@ -195,8 +203,8 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   sträcka och sida. Typsnitt DejaVu Sans / Segoe UI / Arial om hittat (för åäö och →).
 - Rubrik med brunn → brunn (**ingen klassruta**). Infotabell: område, datum + väder, start-/slutbrunn
   (uppströms/nedströms), kamera från (position 0), riktning, längd, ledningstyp, material,
-  dimension/form, antal anslutningar, antal skador, totalindex, avbruten inspektion,
-  konstruktions-/driftindex, svacka (djup/längd), lutning (+ bakfall, + "profil osäker"),
+  dimension/form, antal anslutningar, antal skador, konstruktionsindex, avbruten inspektion,
+  driftindex/totalindex, svacka (djup/längd), lutning (+ bakfall, + "profil osäker"),
   videofil, TV3-fil, littera rättat (bara om rättat).
   **Borttaget på begäran:** projekt, ägare, operatör, driftåtgärd, **prioritetsklass/rekommendation**
   (sep 2026 – finns bara i Excel och kartunderlaget; klassbokstaven sitter kvar i PDF-filnamnet).
