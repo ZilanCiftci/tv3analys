@@ -309,7 +309,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   h1("5. Prioritetsklass"),
   p("Klassen bestäms av konstruktionsskadorna – den värsta graden på sträckan och konstruktionsindex:"),
   table(["Klass", "Regel", "Tolkning"], [
-    ["A – Åtgärd snarast", "Konstruktionsgrad 4 på sträckan, eller konstruktionsindex ≥ 80 p/100 m", "Renovering bör planeras in omgående; teknisk bedömning av metod."],
+    ["A – Åtgärda", "Konstruktionsgrad 4 på sträckan, eller konstruktionsindex ≥ 80 p/100 m", "Renovering bör planeras in omgående; teknisk bedömning av metod."],
     ["B – Planera renovering", "Konstruktionsgrad 3, eller konstruktionsindex ≥ 25 p/100 m", "Tas med i den fleråriga förnyelseplanen."],
     ["C – Bevaka", "Övriga sträckor med registrerade skador", "Ingen åtgärd nu; följ upp vid nästa inspektion."],
     ["D – Inga skador", "Inga skadeobservationer", "–"],
@@ -332,7 +332,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   bullet("**Avbruten inspektion** – sträckan har koden KAM med attribut HINDE; kameran kom inte fram (inträngande servis, sediment, rötter, stalp). Den inspekterade längden är då kortare än sträckan och bedömningen ofullständig. Kandidat för kompletterande inspektion från andra hållet."),
   bullet("**Inspekterad flera gånger** – samma brunnspar förekommer flera gånger i underlaget, oftast med- och motströms efter ett avbrott. Bedömningarna bör slås ihop manuellt."),
   bullet("**Relinad** – ledningen har foder enligt TVADM eller kommentaren 'relinad'. Skador på fodret bedöms på samma sätt, men åtgärden är en annan."),
-  bullet("**Svackor, bakfall och lutning** – beräknas ur inklinometerprofilen när sådan finns. Svackdjupet är det största vattendjup som blir stående i en svacka, det vill säga hur mycket lägre en punkt ligger än både sin uppströms- och nedströmskant (så kallad fill-metod i flödesriktningen). Svacklängd är den sträcka där stående vatten överstiger 1 cm och bakfall den sammanlagda längden där ledningen lutar mot flödesriktningen (mer än 5 ‰). Svackdjupet sätts också i relation till rördiametern. Stora svackor ger sediment- och kapacitetsproblem och kan motivera åtgärd även utan konstruktionsskador. Inklinometerprofiler kan drifta; om inklinometerns fall avviker mer än 0,3 m eller 50 % från brunnshöjderna markeras profilen som osäker."),
+  bullet("**Svackor, bakfall och lutning** – beräknas ur inklinometerprofilen när sådan finns. Svackdjupet är det största stående vattendjupet: vattnet kan bara lämna ledningen nedströms, så vattenytan i varje punkt ligger på den högsta punkten nedströms om den, och djupet är skillnaden mellan den nivån och punktens höjd. Ligger hela ledningen i bakfall räknas djupet därför upp till utloppets höjd. Svacklängd är den sträcka där stående vatten överstiger 1 cm och bakfall den sammanlagda längden där ledningen lutar mot flödesriktningen (mer än 5 ‰). Svackdjupet sätts också i relation till rördiametern. Stora svackor ger sediment- och kapacitetsproblem och kan motivera åtgärd även utan konstruktionsskador. Inklinometerprofiler kan drifta; om inklinometerns fall avviker mer än 0,3 m eller 50 % från brunnshöjderna markeras profilen som osäker."),
 
   h1("8. Begränsningar"),
   bullet("Metoden bygger på entreprenörens kodning. Olika operatörer graderar olika; jämförelser mellan uppdrag bör göras med det i åtanke."),

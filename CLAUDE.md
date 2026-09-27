@@ -152,7 +152,7 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 
 - Grad → poäng: 1 → 1, 2 → 3, 3 → 10, 4 → 30. Driftskador × 0,5. Löpande skador räknas en gång.
 - Index = poäng / max(längd, 20 m) × 100 (poäng per 100 m). Konstruktions-, drift- och totalindex.
-- Klass **A** Åtgärd snarast: konstruktionsgrad 4 eller konstruktionsindex ≥ 80.
+- Klass **A** Åtgärda (hette "Åtgärd snarast" t.o.m. sep 2026): konstruktionsgrad 4 eller konstruktionsindex ≥ 80.
   **B** Planera renovering: grad 3 eller index ≥ 25. **C** Bevaka: övriga med skador.
   **D** Inga skador. **E** Ej bedömd (längd < 1 m). Rangordning inom klass efter totalindex.
 - Driftåtgärd flaggas separat (rotskärning, spolning, täta inläckage, ta bort hinder) – ingår
@@ -161,8 +161,11 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   rang 1 = SRB64009 → SRB1016560 (betong 225, 35,1 m, 9×YTS4 + SPR3 + löpande YTS3 = 290 p →
   826,5 p/100 m); 12 avbrutna inspektioner; 16 relinade; YTS 153 (44 grad 4), SPR 138, ROT 110.
 - Profilanalys (viktig lärdom): avvikelse från rät linje mellan brunnarna var **fel mått** –
-  det flaggade lutningsbrott som svackor. Nu: **svackdjup** = största stående vattendjup
-  ("fill"-metod i flödesriktningen: punkt lägre än både uppströms- och nedströmskant),
+  det flaggade lutningsbrott som svackor. Nu: **svackdjup** = största stående vattendjup,
+  vattenytan i varje punkt = högsta punkten nedströms (vattnet kan bara lämna nedströms – vid
+  bakfall räknas djupet upp till utloppet; den tidigare symmetriska "fill"-metoden med
+  min(uppströms, nedströms) cappade vid inloppet, fel enligt användaren sep 2026; beräknat djup
+  > `SVACKA_MAX_M` (1 m) = driftande inklinometer → svacka None/"okänd", profil osäker),
   **svacklängd** (stående vatten > 1 cm), **bakfall** (längd med lutning mot flödet > 5 ‰),
   **svackdjup/diameter**, samt **profil osäker** när inklinometerns fall avviker > 0,3 m eller
   50 % från brunnshöjderna (26 av 181 profiler i DUF 701 – inklinometrar driftar).
@@ -174,11 +177,13 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 
 - A4, sidhuvud "Inspektionsprotokoll (TV-inspektion, P93)" + projekt/område, sidfot med fil,
   sträcka och sida. Typsnitt DejaVu Sans / Segoe UI / Arial om hittat (för åäö och →).
-- Rubrik med brunn → brunn och färgad klassruta. Infotabell: område, datum, start-/slutbrunn
+- Rubrik med brunn → brunn (**ingen klassruta**). Infotabell: område, datum + väder, start-/slutbrunn
   (uppströms/nedströms), kamera från (position 0), riktning, längd, ledningstyp, material,
-  dimension/form, antal anslutningar, antal skador, klass, index, avbruten inspektion, väder,
-  svacka (djup/längd), lutning (+ bakfall, + "profil osäker"), videofil, TV3-fil.
-  **Borttaget på begäran:** projekt, ägare, operatör, driftåtgärd.
+  dimension/form, antal anslutningar, antal skador, totalindex, avbruten inspektion,
+  konstruktions-/driftindex, svacka (djup/längd), lutning (+ bakfall, + "profil osäker"),
+  videofil, TV3-fil, littera rättat (bara om rättat).
+  **Borttaget på begäran:** projekt, ägare, operatör, driftåtgärd, **prioritetsklass/rekommendation**
+  (sep 2026 – finns bara i Excel och kartunderlaget; klassbokstaven sitter kvar i PDF-filnamnet).
 - Schematisk översikt: horisontellt rör, brunnar i ändarna, skador som romber färgade efter grad
   (grön/gul/orange/röd), löpande skador som band ovanför, anslutningar som trianglar ovanför
   (vänster) / under (höger) röret med etikett "15.6 m kl 9", meterskala, riktningspil.
