@@ -841,7 +841,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Totalindex (p/100 m)", "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)",
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
-           "Svackdjup (m)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
+           "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
     rader = []
@@ -855,7 +855,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       len(s.skador()), s.antal_anslutningar, s.sammanfattning_skador(), s.driftatgard,
                       "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", "Ja" if s.relinad else "",
                       s.littera_rattat,
-                      round(pa["svackdjup"], 2) if pa and pa["svackdjup"] is not None else None,
+                      round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
                       s.svacka_andel,
                       round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
                       round(pa["bakfall"], 1) if pa else None,
@@ -1012,7 +1012,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "avbruten": s.avbruten,
             "flerinspekterad": s.flerinspekterad,
             "littera_rattat": s.littera_rattat,
-            "svackdjup_m": round(pa["svackdjup"], 2) if pa and pa["svackdjup"] is not None else None,
+            "svackdjup_cm": round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
             "svacklangd_m": round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
             "bakfall_m": round(pa["bakfall"], 1) if pa else None,
             "lutning_promille": round(lut, 1) if lut is not None else None,
@@ -1344,7 +1344,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
         j = min(range(len(x)), key=lambda i: abs(x[i] - xs))
         zi = z[j]
         ax.plot([xs, xs], [zi, zi + pa["svackdjup"]], color="#d03b3b", lw=1.5)
-        ax.annotate(f"svacka {pa['svackdjup']:.2f} m", (xs, zi), xytext=(0, -14), textcoords="offset points",
+        ax.annotate(f"svacka {pa['svackdjup'] * 100:.0f} cm", (xs, zi), xytext=(0, -14), textcoords="offset points",
                     ha="center", fontsize=7.5, color="#d03b3b")
     if pa and pa["osaker"]:
         ax.text(0.99, 0.03, "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
@@ -1433,7 +1433,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         ("Totalindex", f"{s.index():.1f} p/100 m", "Avbruten inspektion", "Ja" if s.avbruten else "Nej"),
         ("Konstruktionsindex", f"{s.index('K'):.1f} p/100 m (maxgrad {s.maxgrad('K') or '–'})",
          "Driftindex", f"{s.index('D'):.1f} p/100 m (maxgrad {s.maxgrad('D') or '–'})"),
-        ("Svacka (djup / längd)", f"{pa['svackdjup']:.2f} m / {pa['svacklangd']:.1f} m"
+        ("Svacka (djup / längd)", f"{pa['svackdjup'] * 100:.0f} cm / {pa['svacklangd']:.1f} m"
          if pa and pa["svackdjup"] is not None else ("okänd (profil osäker)" if pa else "–"),
          "Lutning", (f"{lut:.1f} ‰" if lut is not None else "–") + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
