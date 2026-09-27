@@ -405,8 +405,24 @@ class Stracka:
 
     @property
     def fran_brunn(self) -> str:
-        """Brunnen där kameran startade (position 0 m)."""
-        return self.utgangsbrunn or self.startbrunn
+        """Brunnen där kameran startade (position 0 m). Saknas utgångsbrunn i filen används
+        Riktning: Motströms = kameran startade i slutbrunnen."""
+        if self.utgangsbrunn:
+            return self.utgangsbrunn
+        return self.slutbrunn if self.riktning.strip().lower().startswith("mot") else self.startbrunn
+
+    @property
+    def brunnar_omvanda(self) -> bool:
+        """True om filens start-/slutbrunn verkar stå i kamerans riktning i stället för i
+        flödesriktningen: Riktning och Utgångsbrunn motsäger varandra (Medströms men kameran
+        startade i slutbrunnen, eller Motströms men i startbrunnen). Konventionen i TV3
+        (WinCan) är startbrunn = uppströms; alla 282 sträckor i DUF 700/701 följer den."""
+        r = self.riktning.strip().lower()
+        u = self.utgangsbrunn.strip()
+        if not u or not r or u not in (self.startbrunn, self.slutbrunn) or self.startbrunn == self.slutbrunn:
+            return False
+        medstroms = r.startswith("med")
+        return (medstroms and u == self.slutbrunn) or (r.startswith("mot") and u == self.startbrunn)
 
     @property
     def till_brunn(self) -> str:
@@ -620,6 +636,17 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
 
     if littera:
         ratta_littera(list(strackor.values()), littera)
+
+    # Startbrunn ska vara uppströms. Om Riktning och Utgångsbrunn visar att filen i stället
+    # anger brunnarna i kamerans riktning byts de (inkl. brunnshöjderna från PROFILADM).
+    omvanda = [s for s in strackor.values() if s.brunnar_omvanda]
+    for s in omvanda:
+        s.startbrunn, s.slutbrunn = s.slutbrunn, s.startbrunn
+        s.profil_start_z, s.profil_slut_z = s.profil_slut_z, s.profil_start_z
+    if omvanda:
+        print(f"  OBS     {filnamn}: {len(omvanda)} sträckor har start-/slutbrunn i kamerans riktning "
+              f"– bytta så att startbrunn är uppströms (nr {', '.join(str(s.nr) for s in omvanda[:8])}"
+              + (" …" if len(omvanda) > 8 else "") + ")")
 
     par = Counter(frozenset((s.startbrunn, s.slutbrunn)) for s in strackor.values())
     for s in strackor.values():

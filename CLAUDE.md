@@ -121,6 +121,11 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   `#PROFILDAT` (inklinometer, kan vara >100 000 rader), `#SLUT`. Fält separeras med `;`.
 - TVADM-index (0-baserat): 0 sträcknr, 2 startbrunn (uppströms), 3 slutbrunn (nedströms),
   4 **utgångsbrunn (där kameran startade – position 0 m räknas härifrån!)**, 7 ägare, 8 område,
+  (Konventionen startbrunn = uppströms är verifierad: i DUF 700/701 gäller Medströms ⇔ utgångsbrunn =
+  startbrunn (188 st) och Motströms ⇔ utgångsbrunn = slutbrunn (94 st), inga undantag. Flödes-
+  orienteringen tas ur utgångsbrunnen, med Riktning som reserv. Motsäger Riktning och utgångsbrunn
+  varandra (`brunnar_omvanda`) antas filen ange brunnarna i kamerans riktning: start/slut och
+  PROFILADM-höjderna byts vid inläsning och det loggas med "OBS".)
   9 projekt, 10 riktning (Medströms/Motströms), 12 datum, 13 tid, 14 operatör, 18 videofil,
   22 form, 23 dimension, 24 dimension 2, 25 material, 26 foder, 27 fodermaterial,
   29 ledningstyp, 31 väder. 38 kolumner i exempelfilen.
