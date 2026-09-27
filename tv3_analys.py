@@ -40,7 +40,9 @@ Excel visar varifrån varje sträcka kommer.
 Poängmodell (kan justeras i KONFIG nedan):
     grad 1 = 1 p, grad 2 = 3 p, grad 3 = 10 p, grad 4 = 30 p
     Konstruktionsskador (SPR, RBR, DEF, YTS, FOG, FRF, DEA) räknas fullt.
-    Driftskador (ROT, INL, UTF, SED, INH) räknas med faktor 0,5.
+    Driftskador (ROT, INL, UTF, SED, INH) räknas med faktor 0,5 i driftindex, som redovisas
+    separat och varken påverkar prioritetsklass eller rangordning.
+    Konstruktionskoder kan viktas inbördes med KODFAKTOR (avstängt som standard).
     Poängen normeras till poäng per 100 m ledning (sträckor kortare än
     MINLANGD räknas som MINLANGD, så att mycket korta sträckor inte överdrivs).
     Löpande skador (A1…B1) räknas vid startmarkeringen, viktade med längden:
@@ -52,7 +54,7 @@ Prioritetsklass (för renoveringsbehov):
     C – Bevaka            : övriga sträckor med registrerade skador
     D – Inga skador       : inga skadeobservationer
     E – Ej bedömd         : ingen inspekterad längd (< 1 m)
-Inom varje klass rangordnas sträckorna efter totalindex.
+Inom varje klass rangordnas sträckorna efter konstruktionsindex.
 Driftåtgärd (spolning/rotskärning) flaggas separat när driftgrad ≥ 3.
 """
 
@@ -90,6 +92,11 @@ KODER = {
     "KAM": ("Kamera/inspektion avbruten", "I"),
 }
 DRIFTFAKTOR = 0.5
+
+# Viktning av konstruktionskoder inbördes: poäng × KODFAKTOR[kod]. Koder som saknas räknas
+# med 1,0. Tom ({}) eller None = ingen viktning, bara graden avgör. Exempel som simulerats på
+# DUF 701: {"FOG": 0.8, "FRF": 0.8, "YTS": 0.7, "DEA": 0.7} → 41 A i stället för 58.
+KODFAKTOR: dict[str, float] | None = None
 
 # Löpande skador (A1…B1) viktas med längden: poängen multipliceras med längd / LOPANDE_ENHET_M
 # (minst 1, högst LOPANDE_TAK). 10 m och 5× betyder att en 30 m löpande skada räknas som tre
@@ -215,7 +222,11 @@ class Observation:
         if not self.raknas:
             return 0.0
         p = GRADPOANG.get(self.grad, 0)
-        return p * (DRIFTFAKTOR if self.typ == "D" else 1.0) * self.lopande_faktor
+        if self.typ == "D":
+            p *= DRIFTFAKTOR
+        elif KODFAKTOR:
+            p *= KODFAKTOR.get(self.kod, 1.0)
+        return p * self.lopande_faktor
 
     def beskrivning(self) -> str:
         if self.kod:
@@ -850,7 +861,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(klass_m.get(k, 0)), klass_m.get(k, 0) / tot_m if tot_m else 0])
     rader += [["", ""], ["Poängmodell", ""],
               ["Grad 1 / 2 / 3 / 4", " / ".join(f"{GRADPOANG[g]} p" for g in (1, 2, 3, 4))],
-              ["Konstruktionskoder (faktor 1,0)", ", ".join(k for k, v in KODER.items() if v[1] == "K")],
+              ["Konstruktionskoder" + ("" if KODFAKTOR else " (faktor 1,0)"),
+               ", ".join(k + (f" ×{KODFAKTOR.get(k, 1.0):g}".replace(".", ",") if KODFAKTOR else "")
+                         for k, v in KODER.items() if v[1] == "K")],
               ["Driftkoder (faktor %s)" % str(DRIFTFAKTOR).replace(".", ","),
                ", ".join(k for k, v in KODER.items() if v[1] == "D")],
               ["Löpande skador", (f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1, högst {LOPANDE_TAK:g})"
@@ -858,6 +871,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                                   f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1)" if LOPANDE_ENHET_M else
                                   "räknas en gång oavsett längd")],
               ["Index", "poäng per 100 m ledning"],
+              ["Rangordning", "inom klass efter konstruktionsindex (driftindex påverkar inte)"],
               ["Klass A", (f"grad 4 på {'/'.join(sorted(GRAD4_KODER_A))}" if GRAD4_KODER_A else "konstruktionsgrad 4")
                           + f" eller konstruktionsindex ≥ {TROSKEL_A:g}"],
               ["Klass B", f"konstruktionsgrad 3 eller konstruktionsindex ≥ {TROSKEL_B:g}"],
@@ -892,7 +906,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     ws = wb.create_sheet("Prioritering")
     kol = ["Rang", "Prioritetsklass", "Fil", "Nr", "Startbrunn", "Slutbrunn", "Område", "Ledningstyp",
            "Material", "Dim (mm)", "Längd (m)", "Datum",
-           "Totalindex (p/100 m)", "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)",
+           "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
@@ -904,8 +918,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         lut = s.lutning_promille
         rader.append([rang, KLASS_TEXT[s.klass], s.fil, s.nr, s.startbrunn, s.slutbrunn, s.omrade,
                       s.ledningstyp.capitalize(), s.material, s.dimension + (f"/{s.dimension2}" if s.dimension2 else ""),
-                      round(s.langd, 1), s.datum, round(s.index(), 1), round(s.index("K"), 1),
-                      round(s.index("D"), 1), s.maxgrad("K") or None, s.maxgrad("D") or None,
+                      round(s.langd, 1), s.datum, round(s.index("K"), 1), round(s.index("D"), 1),
+                      round(s.index(), 1), s.maxgrad("K") or None, s.maxgrad("D") or None,
                       len(s.skador()), s.antal_anslutningar, s.sammanfattning_skador(), s.driftatgard,
                       "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", "Ja" if s.relinad else "",
                       s.littera_rattat,
@@ -1091,7 +1105,9 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
 
 def sorterade_strackor(strackor):
     ordn = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
-    return sorted(strackor, key=lambda s: (ordn[s.klass], -s.index(), -s.maxgrad("K"), s.fil, s.nr))
+    # Rangordning inom klass efter konstruktionsindex – driftskador (rötter, sediment …)
+    # påverkar varken klass eller ordning, de redovisas bara som driftindex/driftåtgärd.
+    return sorted(strackor, key=lambda s: (ordn[s.klass], -s.index("K"), -s.maxgrad("K"), s.fil, s.nr))
 
 
 # ----------------------------------------------------------------------------
@@ -1150,7 +1166,7 @@ def rita_diagram(strackor: list[Stracka], katalog: str, topp: int) -> dict[str, 
     ax.barh(etik, k_idx, color="#2a78d6", height=0.62, label="Konstruktion (SPR, RBR, DEF, YTS, FOG)")
     ax.barh(etik, d_idx, left=k_idx, color="#eb6834", height=0.62, label="Drift (ROT, INL, SED, UTF, INH)")
     for i, s in enumerate(top[::-1]):
-        ax.text(k_idx[i] + d_idx[i] + max(k_idx) * 0.01, i, f"{s.index():.0f}  ·  {KLASS_TEXT[s.klass][:1]}",
+        ax.text(k_idx[i] + d_idx[i] + max(k_idx) * 0.01, i, f"{s.index('K'):.0f}  ·  {KLASS_TEXT[s.klass][:1]}",
                 va="center", fontsize=9, color="#52514e")
     ax.grid(axis="y", visible=False)
     ax.grid(axis="x", visible=True)
@@ -1485,9 +1501,10 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         ("Material", s.material + (f" (foder: {s.foder}, {s.fodermaterial})" if s.foder.strip() else ""),
          "Dimension / form", f"{dim}, {s.form.lower()}"),
         ("Antal anslutningar", str(s.antal_anslutningar), "Antal skador", str(len(s.skador()))),
-        ("Totalindex", f"{s.index():.1f} p/100 m", "Avbruten inspektion", "Ja" if s.avbruten else "Nej"),
         ("Konstruktionsindex", f"{s.index('K'):.1f} p/100 m (maxgrad {s.maxgrad('K') or '–'})",
-         "Driftindex", f"{s.index('D'):.1f} p/100 m (maxgrad {s.maxgrad('D') or '–'})"),
+         "Avbruten inspektion", "Ja" if s.avbruten else "Nej"),
+        ("Driftindex", f"{s.index('D'):.1f} p/100 m (maxgrad {s.maxgrad('D') or '–'})",
+         "Totalindex", f"{s.index():.1f} p/100 m"),
         ("Svacka (djup / längd)", f"{pa['svackdjup'] * 100:.0f} cm / {pa['svacklangd']:.1f} m"
          if pa and pa["svackdjup"] is not None else ("okänd (profil osäker)" if pa else "–"),
          "Lutning", (f"{lut:.1f} ‰" if lut is not None else "–") + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
@@ -1860,7 +1877,7 @@ def main(argv=None):
     print(f"\nTopp {a.topp}:")
     for i, s in enumerate(sorterade_strackor(strackor)[:a.topp], 1):
         print(f"{i:>3}. [{s.klass}] {s.id:<28} {s.material:<7}{s.dimension:>4} {s.langd:6.1f} m  "
-              f"index {s.index():6.1f}  {s.sammanfattning_skador()}")
+              f"k-index {s.index('K'):6.1f}  {s.sammanfattning_skador()}")
     print(f"\nResultat skrivet till: {os.path.abspath(a.utdata)}")
 
 

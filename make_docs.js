@@ -200,7 +200,8 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   p("Alla parametrar ligger samlade överst i `tv3_analys.py` under rubriken **KONFIG** och kan ändras med en vanlig textredigerare utan att röra resten av koden:"),
   table(["Parameter", "Betydelse", "Standard"], [
     ["`GRADPOANG`", "Poäng per grad 1–4.", "1 / 3 / 10 / 30"],
-    ["`DRIFTFAKTOR`", "Faktor för driftskador (rötter, inläckage, sediment m.m.).", "0,5"],
+    ["`DRIFTFAKTOR`", "Faktor för driftskador (rötter, inläckage, sediment m.m.) i driftindex.", "0,5"],
+    ["`KODFAKTOR`", "Viktning av konstruktionskoder inbördes, t.ex. {\"YTS\": 0.7}. `None` = bara graden avgör.", "None"],
     ["`LOPANDE_ENHET_M`", "Längd (m) per poängenhet för löpande skador: poäng × längd / enhet, minst 1. `None` = räkna en gång oavsett längd.", "10"],
     ["`LOPANDE_TAK`", "Högsta faktor en löpande skada kan få. `None` = inget tak.", "5"],
     ["`MINLANGD`", "Minsta längd (m) som används som nämnare vid normering per 100 m.", "20"],
@@ -308,7 +309,8 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   ...code(["index = summa poäng / max(inspekterad längd, 20 m) × 100"]),
   spacer(),
   p("Nämnaren är aldrig kortare än 20 m. Utan den regeln skulle en enstaka skada på en 5 m lång sträcka ge ett orimligt högt index jämfört med samma skada på en 50 m lång sträcka."),
-  p("Tre index redovisas: konstruktionsindex, driftindex och totalindex (summan)."),
+  p("Tre index redovisas: konstruktionsindex, driftindex och totalindex (summan). Bara konstruktionsindex används för klass och rangordning; driftindex och totalindex är information."),
+  p("Konstruktionskoderna kan viktas inbördes med `KODFAKTOR` i KONFIG (t.ex. ytskada 0,7 av en spricka med samma grad). Som standard är viktningen avstängd och bara graden avgör poängen."),
 
   h1("5. Prioritetsklass"),
   p("Klassen bestäms av konstruktionsskadorna – den värsta graden på sträckan och konstruktionsindex:"),
@@ -320,10 +322,10 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
     ["E – Ej bedömd", "Ingen inspekterad längd (< 1 m)", "Behöver inspekteras."],
   ], [2400, 3760, 3200]),
   spacer(),
-  p("Inom varje klass rangordnas sträckorna efter totalindex, därefter efter högsta konstruktionsgrad. Det innebär att sammanhängande stråk med många skador hamnar överst, vilket ofta också är de sträckor där en samordnad renovering (t.ex. relining av flera sträckor i följd) ger mest nytta."),
+  p("Inom varje klass rangordnas sträckorna efter konstruktionsindex, därefter efter högsta konstruktionsgrad. Driftskador påverkar inte ordningen – att en ledning har rötter är inte ett skäl att renovera den. Det innebär att sammanhängande stråk med många skador hamnar överst, vilket ofta också är de sträckor där en samordnad renovering (t.ex. relining av flera sträckor i följd) ger mest nytta."),
 
   h1("6. Driftåtgärder"),
-  p("Driftskador påverkar inte prioritetsklassen men flaggas separat, eftersom de kräver åtgärd oavsett om ledningen ska renoveras:"),
+  p("Driftskador påverkar varken prioritetsklassen eller rangordningen men flaggas separat, eftersom de kräver åtgärd oavsett om ledningen ska renoveras:"),
   table(["Observation", "Flagga"], [
     ["Rötter grad 3–4", "Rotskärning"],
     ["Rötter grad 2", "Bevaka rötter"],
