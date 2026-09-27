@@ -160,12 +160,16 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   minst 1, högst `LOPANDE_TAK` (5). Tidigare räknades de en gång oavsett längd – en 105 m YTS3 gav
   10 p som en punktspricka. `None` stänger av. 213 av 474 skador i DUF 701 är löpande (median 16 m).
 - Index = poäng / max(längd, 20 m) × 100 (poäng per 100 m). Konstruktions-, drift- och totalindex.
-- Klass **A** Åtgärda (hette "Åtgärd snarast" t.o.m. sep 2026): konstruktionsgrad 4 eller konstruktionsindex ≥ 80.
+- Klass **A** Åtgärda (hette "Åtgärd snarast" t.o.m. sep 2026): grad 4 på **RBR eller DEF**
+  (`GRAD4_KODER_A`, sep 2026 – tidigare alla konstruktionskoder; grad 4-YTS/FRF gav då 4 sträckor A
+  med en enda punktskada på 40–80 m frisk ledning) eller konstruktionsindex ≥ 80.
   **B** Planera renovering: grad 3 eller index ≥ 25. **C** Bevaka: övriga med skador.
   **D** Inga skador. **E** Ej bedömd (längd < 1 m). Rangordning inom klass efter totalindex.
 - Driftåtgärd flaggas separat (rotskärning, spolning, täta inläckage, ta bort hinder) – ingår
   inte i klassen. Även flaggor: avbruten inspektion, relinad, inspekterad flera ggr.
-- Facit DUF 701 (med längdviktning): klasser A/B/C/D/E = **62/36/19/62/6**; A = 2 444 m (33 %);
+- Facit DUF 701 (längdviktning + GRAD4_KODER_A): klasser A/B/C/D/E = **58/40/19/62/6**; A = 2 199 m
+  (30 %); med grad 4 på alla koder: 62/36/19/62/6, A = 2 444 m (nr 41, 44, 118, 123 var A via en
+  enda YTS4/FRF4);
   474 räknade skador; rang 1 = SRB64009 → SRB1016560 (betong 225, 35,1 m, 9×YTS4 + SPR3 +
   löpande YTS3 35 m × 3,5 = 315 p → 898 p/100 m); 12 avbrutna inspektioner; 16 relinade;
   YTS 153 (44 grad 4), SPR 138, ROT 110. Utan viktning (t.o.m. sep 2026): 41/53/23/62/6, A = 1 583 m,

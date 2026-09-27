@@ -47,7 +47,7 @@ Poängmodell (kan justeras i KONFIG nedan):
     poäng × längd / 10 m (minst 1, högst 5) – se LOPANDE_ENHET_M / LOPANDE_TAK.
 
 Prioritetsklass (för renoveringsbehov):
-    A – Åtgärda           : konstruktionsgrad 4, eller konstruktionsindex ≥ 80 p/100 m
+    A – Åtgärda           : grad 4 på RBR/DEF (GRAD4_KODER_A), eller konstruktionsindex ≥ 80 p/100 m
     B – Planera renovering: konstruktionsgrad 3, eller konstruktionsindex ≥ 25 p/100 m
     C – Bevaka            : övriga sträckor med registrerade skador
     D – Inga skador       : inga skadeobservationer
@@ -126,6 +126,11 @@ KLASS_TEXT = {
 }
 KLASS_FARG = {"A": "D03B3B", "B": "EC835A", "C": "FAB219", "D": "0CA30C", "E": "BFBFBF"}
 KLASS_FARG_HEX = {k: "#" + v for k, v in KLASS_FARG.items()}
+
+# Skadekoder där en enda observation av grad 4 räcker för klass A (rörbrott, deformation).
+# Grad 4 på andra konstruktionskoder (ytskada, fogfel …) ger poäng som vanligt men inte
+# automatiskt klass A. None = alla konstruktionskoder (tidigare beteende).
+GRAD4_KODER_A = {"RBR", "DEF"}
 
 TROSKEL_A = 80.0   # konstruktionsindex p/100 m
 TROSKEL_B = 25.0
@@ -313,7 +318,9 @@ class Stracka:
         if self.langd < 1:
             return "E"
         kmax, kidx = self.maxgrad("K"), self.index("K")
-        if kmax >= 4 or kidx >= TROSKEL_A:
+        grad4_a = any(o.grad == 4 and (GRAD4_KODER_A is None or o.kod in GRAD4_KODER_A)
+                      for o in self.skador("K"))
+        if grad4_a or kidx >= TROSKEL_A:
             return "A"
         if kmax >= 3 or kidx >= TROSKEL_B:
             return "B"
@@ -851,7 +858,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                                   f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1)" if LOPANDE_ENHET_M else
                                   "räknas en gång oavsett längd")],
               ["Index", "poäng per 100 m ledning"],
-              ["Klass A", f"konstruktionsgrad 4 eller konstruktionsindex ≥ {TROSKEL_A:g}"],
+              ["Klass A", (f"grad 4 på {'/'.join(sorted(GRAD4_KODER_A))}" if GRAD4_KODER_A else "konstruktionsgrad 4")
+                          + f" eller konstruktionsindex ≥ {TROSKEL_A:g}"],
               ["Klass B", f"konstruktionsgrad 3 eller konstruktionsindex ≥ {TROSKEL_B:g}"],
               ["Klass C", "övriga sträckor med skador"],
               ["Klass D", "inga skadeobservationer"],
