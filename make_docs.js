@@ -204,6 +204,7 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
     ["`LOPANDE_ENHET_M`", "Längd (m) per poängenhet för löpande skador: poäng × längd / enhet, minst 1. `None` = räkna en gång oavsett längd.", "10"],
     ["`LOPANDE_TAK`", "Högsta faktor en löpande skada kan få. `None` = inget tak.", "5"],
     ["`MINLANGD`", "Minsta längd (m) som används som nämnare vid normering per 100 m.", "20"],
+    ["`GRAD4_KODER_A`", "Skadekoder där en enda grad 4-observation räcker för klass A. `None` = alla konstruktionskoder.", "RBR, DEF"],
     ["`TROSKEL_A`", "Konstruktionsindex (p/100 m) som ger klass A.", "80"],
     ["`TROSKEL_B`", "Konstruktionsindex (p/100 m) som ger klass B.", "25"],
     ["`KODER`", "Skadekoder med klartext och typ (K = konstruktion, D = drift, I = information).", "P93"],
@@ -312,7 +313,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   h1("5. Prioritetsklass"),
   p("Klassen bestäms av konstruktionsskadorna – den värsta graden på sträckan och konstruktionsindex:"),
   table(["Klass", "Regel", "Tolkning"], [
-    ["A – Åtgärda", "Konstruktionsgrad 4 på sträckan, eller konstruktionsindex ≥ 80 p/100 m", "Renovering bör planeras in omgående; teknisk bedömning av metod."],
+    ["A – Åtgärda", "Rörbrott (RBR) eller deformation (DEF) av grad 4 på sträckan, eller konstruktionsindex ≥ 80 p/100 m", "Renovering bör planeras in omgående; teknisk bedömning av metod."],
     ["B – Planera renovering", "Konstruktionsgrad 3, eller konstruktionsindex ≥ 25 p/100 m", "Tas med i den fleråriga förnyelseplanen."],
     ["C – Bevaka", "Övriga sträckor med registrerade skador", "Ingen åtgärd nu; följ upp vid nästa inspektion."],
     ["D – Inga skador", "Inga skadeobservationer", "–"],
@@ -340,11 +341,11 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   h1("8. Begränsningar"),
   bullet("Metoden bygger på entreprenörens kodning. Olika operatörer graderar olika; jämförelser mellan uppdrag bör göras med det i åtanke."),
   bullet("Konsekvens vid fel (ledningens betydelse, trafiklast, närhet till vattendrag, dimension, ålder) ingår inte. Prioritetsklassen beskriver **tillstånd**, inte risk. Vid budgetprioritering bör konsekvens läggas till som en separat faktor."),
-  bullet("Grad 4-ytskada räcker ensamt för klass A. Det är rimligt för betong (armering kan vara synlig) men kan behöva justeras för andra material."),
+  bullet("Bara rörbrott och deformation av grad 4 ger ensamt klass A (`GRAD4_KODER_A` i KONFIG). En grad 4-ytskada eller ett grad 4-fogfel ger 30 poäng och grad 3-regeln ger klass B, men inte automatiskt A – i DUF 701 gällde det fyra sträckor med en enda sådan skada på 40–80 m i övrigt frisk ledning."),
   bullet("Alla parametrar – poäng per grad, driftfaktor, minsta längd och trösklar – kan ändras i skriptets konfigurationsdel. Ändringar bör dokumenteras så att resultat från olika tillfällen förblir jämförbara."),
 
   h1("9. Exempel"),
-  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 + 10 + 10 × 3,5 = 315. Konstruktionsindex: 315 / 35,1 × 100 = 898 p/100 m. Klass A (grad 4 finns), rang 1 i uppdraget DUF 701."),
+  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 + 10 + 10 × 3,5 = 315. Konstruktionsindex: 315 / 35,1 × 100 = 898 p/100 m. Klass A (konstruktionsindex ≥ 80), rang 1 i uppdraget DUF 701."),
   p("Sträckan KRB68713 → KRB68712 (betong 225 mm, 9,7 m) har en spricka grad 3, en ytskada grad 3 och ett inträngande hinder grad 2. Poäng: 10 + 10 + 3 × 0,5 = 21,5. Eftersom sträckan är kortare än 20 m används 20 m som nämnare: 21,5 / 20 × 100 = 108 p/100 m, varav konstruktion 100. Klass A (konstruktionsindex ≥ 80)."),
 ]);
 
