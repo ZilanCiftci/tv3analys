@@ -1417,6 +1417,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                            spaceBefore=8, spaceAfter=4)
     st_vit = ParagraphStyle("v", fontName=fet, fontSize=7.5, leading=9.5, textColor=colors.white)
     st_cell = ParagraphStyle("c", fontName=normal, fontSize=7.5, leading=9.5)
+    st_ankare = ParagraphStyle("a", fontName=normal, fontSize=1, leading=1)
 
     bredd = A4[0] - 30 * mm
 
@@ -1498,13 +1499,29 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         ("ALIGN", (7, 1), (8, -1), "CENTER"),
     ]
     obs = [o for o in s.observationer if o.kod or o.infokod]
+
+    def esc(t) -> str:
+        return str(t).replace("&", "&amp;").replace("<", "&lt;")
+
+    def ankare(namn: str) -> str:
+        return "foto_" + re.sub(r"[^A-Za-z0-9]", "_", namn)
+
+    # Bilder som finns med i rapporten (första förekomsten av varje filnamn bär ankaret)
+    fotoankare: dict[str, str] = {}
+    for o in s.observationer:
+        for n, pth in o.bilder:
+            if pth and n not in fotoankare:
+                fotoankare[n] = ankare(n)
+
     for i, o in enumerate(obs, 1):
         klocka = o.klocka_fran + (f"–{o.klocka_till}" if o.klocka_till and o.klocka_till != o.klocka_fran else "")
-        foto = ", ".join(n for n, _ in o.bilder)
+        # klickbart bildnamn → hoppar till fotografiet längre bak i rapporten
+        foto = ", ".join(f'<a href="#{fotoankare[n]}" color="#1f3864"><u>{esc(n)}</u></a>' if n in fotoankare else esc(n)
+                         for n, _ in o.bilder)
         rader.append([P(f"{o.lage:.2f}", st_cell), P(o.tid, st_cell), P(o.kod or o.infokod, st_cell),
                       P(o.beskrivning(), st_cell), P(klocka, st_cell),
                       P(f"{o.vattenniva}%" if o.vattenniva and o.vattenniva != "0" else "", st_cell),
-                      P(foto, st_cell), P(o.grad or "", st_cell), P(f"{o.poang:g}" if o.poang else "", st_cell)])
+                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(f"{o.poang:g}" if o.poang else "", st_cell)])
         if o.grad and o.ar_skada:
             stil.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor(GRAD_FARG_LJUS.get(o.grad, "#ffffff"))))
     if len(rader) == 1:
@@ -1547,14 +1564,16 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                 img = Image(pth, width=bw_, height=bh)
             except Exception:
                 img = P(f"[kunde inte läsa {n}]", st_liten)
-            esc = lambda t: str(t).replace("&", "&amp;").replace("<", "&lt;")
             txt = Paragraph(f"<b>{esc(n)}</b> · {o.lage:.2f} m · {esc(o.tid)}<br/>{esc(o.beskrivning())}", st_liten)
-            celler.append([img, txt])
+            # ankare ovanför bilden så att länken från tabellen landar med bilden i vy;
+            # bara första förekomsten av ett filnamn (samma bild kan höra till flera observationer)
+            ank = fotoankare.pop(n, None)
+            celler.append([Paragraph(f'<a name="{ank}"/>' if ank else "", st_ankare), img, txt])
         # två per rad
         rader = []
         for i in range(0, len(celler), 2):
             par = celler[i:i + 2]
-            rader.append([Table([[c[0]], [c[1]]], colWidths=[bw]) for c in par] + ([""] if len(par) == 1 else []))
+            rader.append([Table([[c[0]], [c[1]], [c[2]]], colWidths=[bw]) for c in par] + ([""] if len(par) == 1 else []))
         if rader:
             t = Table(rader, colWidths=[bredd / 2, bredd / 2])
             t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),

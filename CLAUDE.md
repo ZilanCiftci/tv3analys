@@ -194,6 +194,9 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   (grön/gul/orange/röd), löpande skador som band ovanför, anslutningar som trianglar ovanför
   (vänster) / under (höger) röret med etikett "15.6 m kl 9", meterskala, riktningspil.
 - Observationstabell med radfärg efter grad (ingen förklaringstext – borttagen på begäran).
+  Bildnamnen i kolumnen Foto är **interna PDF-länkar** (`<a href="#foto_…">`) till fotografiet
+  längre bak; ankaret (`<a name>` i en 1 pt-paragraf) ligger ovanför bilden så den hamnar i vy.
+  Bara bilder som hittats länkas; första förekomsten av ett filnamn bär ankaret.
 - Profil: exakt **höjd- och längdskala** väljs ur fasta serier (1:1, 1:2, 1:5, 1:10 … resp.
   1:10, 1:20, 1:25, 1:40, 1:50, 1:75, 1:100 …) så att kurvan fyller diagrammet; skalorna skrivs i
   rubriken. **Höga änden alltid till vänster** (profilen speglas vid behov; x-axeln anger
