@@ -169,8 +169,11 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   tätas av strumpan, defekt anslutning åtgärdas ändå med hatt. Simulerat på DUF 701 (A/B/C/D/E):
   alla 1,0 → 58/40/19/62/6; valt förslag → 41/54/22/62/6 (17 A→B, tio av dem en enda löpande YTS3 =
   exakt 100 → 70 p/100 m; 3 B→C); YTS/DEA 0,5 → 34/59/24/62/6; FOG/FRF 0,5 + YTS/DEA 0,3 →
-  26/67/24/62/6. Topp 10 oförändrad i alla varianter. Idéer som nämnts: attributvikt för sprickor
-  (CIRK lägre än KOMPL/LÄNGS) och flagga "risk för schakt" vid grad 4 RBR/DEF/FOG.
+  26/67/24/62/6. Topp 10 oförändrad i alla varianter.
+- `ATTRIBUTFAKTOR` (KONFIG): **cirkulära sprickor (SPR, CIRK) × 0,7** (sep 2026) – sättning vid fog,
+  mindre allvarligt för bärigheten än KOMPL/LÄNGS. DUF 701: 25 sträckor har CIRK (20 A, 5 B);
+  0,8 → 39 A (nr 19, 171 A→B), 0,7 och 0,5 → 38 A (även nr 99). Facit blir 38/57/22/62/6, A = 1 391 m.
+  Idé som nämnts: flagga "risk för schakt" vid grad 4 RBR/DEF/FOG.
 - **Manuellt facit på gång:** användaren går igenom alla A- och B-sträckor i DUF 701 för hand och
   lämnar sin bedömning som facit att kalibrera modellen mot. Excel-fliken Prioritering har därför
   tomma kolumner **"Manuell bedömning"** och **"Kommentar"** (före Rapport/Videofil).
@@ -182,12 +185,13 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
   (t.o.m. sep 2026 totalindex).
 - Driftåtgärd flaggas separat (rotskärning, spolning, täta inläckage, ta bort hinder) – ingår
   inte i klassen. Även flaggor: avbruten inspektion, relinad, inspekterad flera ggr.
-- Facit DUF 701 (längdviktning + GRAD4_KODER_A + KODFAKTOR): klasser A/B/C/D/E = **41/54/22/62/6**;
-  A = 1 481 m (20 %); utan KODFAKTOR 58/40/19/62/6, A = 2 199 m; med grad 4 på alla koder dessutom:
+- Facit DUF 701 (längdviktning + GRAD4_KODER_A + KODFAKTOR + ATTRIBUTFAKTOR): klasser A/B/C/D/E =
+  **38/57/22/62/6**; A = 1 391 m (19 %); utan CIRK-vikt 41/54/22/62/6, A = 1 481 m; utan KODFAKTOR
+  58/40/19/62/6, A = 2 199 m; med grad 4 på alla koder dessutom:
   62/36/19/62/6, A = 2 444 m (nr 41, 44, 118, 123 var A via en enda YTS4/FRF4);
   474 räknade skador; rang 1 = SRB64009 → SRB1016560 (betong 225, 35,1 m, 9×YTS4 + SPR3 +
-  löpande YTS3 35 m × 3,5: 9×30×0,7 + 10 + 10×0,7×3,5 = 223,5 p → 637 p/100 m; utan KODFAKTOR 315 p
-  → 898); 12 avbrutna inspektioner; 16 relinade;
+  löpande YTS3 35 m × 3,5: 9×30×0,7 + 10×0,7 (CIRK) + 10×0,7×3,5 = 220,5 p → 628,6 p/100 m; utan
+  CIRK-vikt 637; utan KODFAKTOR 315 p → 898); 12 avbrutna inspektioner; 16 relinade;
   YTS 153 (44 grad 4), SPR 138, ROT 110. Utan viktning (t.o.m. sep 2026): 41/53/23/62/6, A = 1 583 m,
   rang 1 = 290 p → 826,5; 25 sträckor byter klass (21 B→A, 4 C→B), nr 108 (105 m YTS3) stannar i B
   (74,9 p/100 m) tack vare taket.
