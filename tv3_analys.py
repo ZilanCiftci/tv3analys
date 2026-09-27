@@ -46,7 +46,7 @@ Poängmodell (kan justeras i KONFIG nedan):
     Löpande skador (A1…B1) räknas en gång (vid startmarkeringen).
 
 Prioritetsklass (för renoveringsbehov):
-    A – Åtgärd snarast    : konstruktionsgrad 4, eller konstruktionsindex ≥ 80 p/100 m
+    A – Åtgärda           : konstruktionsgrad 4, eller konstruktionsindex ≥ 80 p/100 m
     B – Planera renovering: konstruktionsgrad 3, eller konstruktionsindex ≥ 25 p/100 m
     C – Bevaka            : övriga sträckor med registrerade skador
     D – Inga skador       : inga skadeobservationer
@@ -111,7 +111,7 @@ INFOKODER = {
 }
 
 KLASS_TEXT = {
-    "A": "A – Åtgärd snarast",
+    "A": "A – Åtgärda",
     "B": "B – Planera renovering",
     "C": "C – Bevaka",
     "D": "D – Inga skador",
@@ -123,6 +123,8 @@ KLASS_FARG_HEX = {k: "#" + v for k, v in KLASS_FARG.items()}
 TROSKEL_A = 80.0   # konstruktionsindex p/100 m
 TROSKEL_B = 25.0
 MINLANGD = 20.0    # m – nämnare vid normering av korta sträckor
+SVACKA_MAX_M = 1.0  # m – större beräknat svackdjup än så är en inklinometerartefakt (driftande
+                    # profil); svackan redovisas då som okänd och profilen markeras osäker
 
 # Relinade (infodrade) sträckor redovisas som ett eget material i fliken Material och i
 # diagrammet "Prioritetsklass per material", i stället för som rörets ursprungsmaterial.
@@ -342,8 +344,9 @@ class Stracka:
     @property
     def profil_analys(self) -> dict | None:
         """Svackor och bakfall ur inklinometerprofilen.
-        svackdjup  – största vattendjup (m) som blir stående i en svacka (punkt lägre än
-                     både uppströms och nedströms kant) – 'fill'-metoden i flödesriktningen
+        svackdjup  – största stående vattendjup (m). Vattnet kan bara lämna ledningen
+                     nedströms, så vattenytan i varje punkt ligger på den högsta punkten
+                     nedströms om den (t.ex. utloppet vid bakfall) – djup = den nivån − höjden
         svacklangd – total längd (m) där stående vatten > 1 cm
         svackpos   – position (m från kamerans start) för djupaste punkten
         bakfall    – total längd (m) med lutning mot flödesriktningen (> 5 ‰ över minst 1 m)
@@ -354,15 +357,11 @@ class Stracka:
             return None
         n = len(pts)
         z = [p[1] for p in pts]
-        upp = [0.0] * n
-        ned = [0.0] * n
-        m = -1e9
-        for i in range(n):
-            m = max(m, z[i]); upp[i] = m
+        ned = [0.0] * n                      # högsta punkt nedströms om (och med) punkt i
         m = -1e9
         for i in range(n - 1, -1, -1):
             m = max(m, z[i]); ned[i] = m
-        djup = [max(0.0, min(upp[i], ned[i]) - z[i]) for i in range(n)]
+        djup = [max(0.0, ned[i] - z[i]) for i in range(n)]
         i_max = max(range(n), key=lambda i: djup[i])
         svacklangd = sum(abs(pts[i + 1][0] - pts[i][0]) for i in range(n - 1) if djup[i] > 0.01 or djup[i + 1] > 0.01)
         bakfall = 0.0
@@ -376,6 +375,10 @@ class Stracka:
             fall_inkl = z[0] - z[-1]
             if abs(fall_inkl - fall_brunnar) > max(0.3, 0.5 * abs(fall_brunnar)):
                 osaker = True
+        if djup[i_max] > SVACKA_MAX_M:
+            # Orimligt djup = inklinometern har driftat; svackan går inte att bedöma
+            return {"svackdjup": None, "svacklangd": None, "svackpos": None,
+                    "bakfall": bakfall, "osaker": True}
         return {"svackdjup": djup[i_max], "svacklangd": svacklangd, "svackpos": pts[i_max][0],
                 "bakfall": bakfall, "osaker": osaker}
 
@@ -387,7 +390,7 @@ class Stracka:
             d = float(self.dimension) / 1000
         except ValueError:
             return None
-        return round(a["svackdjup"] / d, 2) if a and d > 0 else None
+        return round(a["svackdjup"] / d, 2) if a and a["svackdjup"] is not None and d > 0 else None
 
     @property
     def max_svacka(self) -> float | None:
@@ -852,9 +855,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       len(s.skador()), s.antal_anslutningar, s.sammanfattning_skador(), s.driftatgard,
                       "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", "Ja" if s.relinad else "",
                       s.littera_rattat,
-                      round(pa["svackdjup"], 2) if pa else None,
+                      round(pa["svackdjup"], 2) if pa and pa["svackdjup"] is not None else None,
                       s.svacka_andel,
-                      round(pa["svacklangd"], 1) if pa else None,
+                      round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
                       round(pa["bakfall"], 1) if pa else None,
                       round(lut, 1) if lut is not None else None,
                       ("Ja" if pa["osaker"] else "") if pa else "",
@@ -1009,8 +1012,8 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "avbruten": s.avbruten,
             "flerinspekterad": s.flerinspekterad,
             "littera_rattat": s.littera_rattat,
-            "svackdjup_m": round(pa["svackdjup"], 2) if pa else None,
-            "svacklangd_m": round(pa["svacklangd"], 1) if pa else None,
+            "svackdjup_m": round(pa["svackdjup"], 2) if pa and pa["svackdjup"] is not None else None,
+            "svacklangd_m": round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
             "bakfall_m": round(pa["bakfall"], 1) if pa else None,
             "lutning_promille": round(lut, 1) if lut is not None else None,
             "profil_osaker": bool(pa["osaker"]) if pa else None,
@@ -1332,7 +1335,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
         zj.append(sum(grannar) / len(grannar))
     ax.plot(x, zj, color="#2a78d6", lw=1.6, label="uppmätt profil (utjämnad, cm-upplösning i filen)")
     pa = s.profil_analys
-    if pa and pa["svackdjup"] > 0.01:
+    if pa and pa["svackdjup"] is not None and pa["svackdjup"] > 0.01:
         xs = pa["svackpos"]
         if z[-1] > z[0] if False else (s.profil[-1][2] > s.profil[0][2]):
             xs = s.profil[-1][0] - xs                       # speglad axel
@@ -1389,7 +1392,6 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
     st_cell = ParagraphStyle("c", fontName=normal, fontSize=7.5, leading=9.5)
 
     bredd = A4[0] - 30 * mm
-    klassfarg = colors.HexColor(KLASS_FARG_HEX[s.klass])
 
     def P(t, stil=st):
         return Paragraph(str(t).replace("&", "&amp;").replace("<", "&lt;"), stil)
@@ -1412,14 +1414,8 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                             author="tv3_analys")
     el = []
 
-    # --- rubrik + klass ---
-    rub = Table([[P(f"Sträcka {s.nr}: {s.startbrunn} → {s.slutbrunn}", st_h1),
-                  P(KLASS_TEXT[s.klass], ParagraphStyle("k", parent=st_vit, fontSize=9.5, leading=12))]],
-                colWidths=[bredd - 48 * mm, 48 * mm])
-    rub.setStyle(TableStyle([("BACKGROUND", (1, 0), (1, 0), klassfarg), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                             ("ALIGN", (1, 0), (1, 0), "CENTER"), ("LEFTPADDING", (0, 0), (0, 0), 0),
-                             ("TOPPADDING", (1, 0), (1, 0), 5), ("BOTTOMPADDING", (1, 0), (1, 0), 5)]))
-    el.append(rub)
+    # --- rubrik (prioritetsklass visas inte i rapporten – bara i Excel och kartunderlaget) ---
+    el.append(P(f"Sträcka {s.nr}: {s.startbrunn} → {s.slutbrunn}", st_h1))
     el.append(Spacer(1, 4))
 
     # --- infotabell ---
@@ -1427,18 +1423,18 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
     lut = s.lutning_promille
     dim = s.dimension + (f"/{s.dimension2}" if s.dimension2 else "") + " mm"
     info = [
-        ("Område", s.omrade, "Datum", f"{s.datum} {s.klockslag}".strip()),
+        ("Område", s.omrade, "Datum", f"{s.datum} {s.klockslag}".strip() + (f"  ·  {s.vader}" if s.vader.strip() else "")),
         ("Startbrunn (uppströms)", s.startbrunn, "Slutbrunn (nedströms)", s.slutbrunn),
         ("Kamera från", f"{s.fran_brunn} (position 0 m)", "Riktning", s.riktning),
         ("Inspekterad längd", f"{s.langd:.2f} m", "Ledningstyp", s.ledningstyp.capitalize()),
         ("Material", s.material + (f" (foder: {s.foder}, {s.fodermaterial})" if s.foder.strip() else ""),
          "Dimension / form", f"{dim}, {s.form.lower()}"),
         ("Antal anslutningar", str(s.antal_anslutningar), "Antal skador", str(len(s.skador()))),
-        ("Prioritetsklass", KLASS_TEXT[s.klass], "Totalindex", f"{s.index():.1f} p/100 m"),
+        ("Totalindex", f"{s.index():.1f} p/100 m", "Avbruten inspektion", "Ja" if s.avbruten else "Nej"),
         ("Konstruktionsindex", f"{s.index('K'):.1f} p/100 m (maxgrad {s.maxgrad('K') or '–'})",
          "Driftindex", f"{s.index('D'):.1f} p/100 m (maxgrad {s.maxgrad('D') or '–'})"),
-        ("Avbruten inspektion", "Ja" if s.avbruten else "Nej", "Väder", s.vader),
-        ("Svacka (djup / längd)", f"{pa['svackdjup']:.2f} m / {pa['svacklangd']:.1f} m" if pa else "–",
+        ("Svacka (djup / längd)", f"{pa['svackdjup']:.2f} m / {pa['svacklangd']:.1f} m"
+         if pa and pa["svackdjup"] is not None else ("okänd (profil osäker)" if pa else "–"),
          "Lutning", (f"{lut:.1f} ‰" if lut is not None else "–") + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
         ("Videofil", s.videofil or "–", "TV3-fil", s.fil),
