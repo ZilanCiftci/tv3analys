@@ -43,7 +43,8 @@ Poängmodell (kan justeras i KONFIG nedan):
     Driftskador (ROT, INL, UTF, SED, INH) räknas med faktor 0,5.
     Poängen normeras till poäng per 100 m ledning (sträckor kortare än
     MINLANGD räknas som MINLANGD, så att mycket korta sträckor inte överdrivs).
-    Löpande skador (A1…B1) räknas en gång (vid startmarkeringen).
+    Löpande skador (A1…B1) räknas vid startmarkeringen, viktade med längden:
+    poäng × längd / 10 m (minst 1, högst 5) – se LOPANDE_ENHET_M / LOPANDE_TAK.
 
 Prioritetsklass (för renoveringsbehov):
     A – Åtgärda           : konstruktionsgrad 4, eller konstruktionsindex ≥ 80 p/100 m
@@ -89,6 +90,12 @@ KODER = {
     "KAM": ("Kamera/inspektion avbruten", "I"),
 }
 DRIFTFAKTOR = 0.5
+
+# Löpande skador (A1…B1) viktas med längden: poängen multipliceras med längd / LOPANDE_ENHET_M
+# (minst 1, högst LOPANDE_TAK). 10 m och 5× betyder att en 30 m löpande skada räknas som tre
+# punktskador och att ingen löpande skada räknas som mer än fem. None = räkna en gång, oavsett längd.
+LOPANDE_ENHET_M = 10.0
+LOPANDE_TAK = 5.0
 
 # Attribut/typkoder (kolumn 8) – för läsbara texter
 ATTRIBUT = {
@@ -191,11 +198,19 @@ class Observation:
         return KODER.get(self.kod, ("", ""))[1] if self.kod else ""
 
     @property
+    def lopande_faktor(self) -> float:
+        """Längdviktning för en löpande skada: längd / LOPANDE_ENHET_M, minst 1, högst LOPANDE_TAK."""
+        if not LOPANDE_ENHET_M or not self.lopande.startswith("A") or not self.lopande_langd:
+            return 1.0
+        f = max(1.0, self.lopande_langd / LOPANDE_ENHET_M)
+        return min(f, LOPANDE_TAK) if LOPANDE_TAK else f
+
+    @property
     def poang(self) -> float:
         if not self.raknas:
             return 0.0
         p = GRADPOANG.get(self.grad, 0)
-        return p * (DRIFTFAKTOR if self.typ == "D" else 1.0)
+        return p * (DRIFTFAKTOR if self.typ == "D" else 1.0) * self.lopande_faktor
 
     def beskrivning(self) -> str:
         if self.kod:
@@ -831,6 +846,10 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
               ["Konstruktionskoder (faktor 1,0)", ", ".join(k for k, v in KODER.items() if v[1] == "K")],
               ["Driftkoder (faktor %s)" % str(DRIFTFAKTOR).replace(".", ","),
                ", ".join(k for k, v in KODER.items() if v[1] == "D")],
+              ["Löpande skador", (f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1, högst {LOPANDE_TAK:g})"
+                                  if LOPANDE_ENHET_M and LOPANDE_TAK else
+                                  f"poäng × längd / {LOPANDE_ENHET_M:g} m (minst 1)" if LOPANDE_ENHET_M else
+                                  "räknas en gång oavsett längd")],
               ["Index", "poäng per 100 m ledning"],
               ["Klass A", f"konstruktionsgrad 4 eller konstruktionsindex ≥ {TROSKEL_A:g}"],
               ["Klass B", f"konstruktionsgrad 3 eller konstruktionsindex ≥ {TROSKEL_B:g}"],

@@ -155,16 +155,22 @@ Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körning
 
 ## 4. Poängmodell och prioritetsklass (alla parametrar under KONFIG i skriptet)
 
-- Grad → poäng: 1 → 1, 2 → 3, 3 → 10, 4 → 30. Driftskador × 0,5. Löpande skador räknas en gång.
+- Grad → poäng: 1 → 1, 2 → 3, 3 → 10, 4 → 30. Driftskador × 0,5. **Löpande skador viktas med
+  längden** (sep 2026, användarens val efter simulering): poäng × längd / `LOPANDE_ENHET_M` (10 m),
+  minst 1, högst `LOPANDE_TAK` (5). Tidigare räknades de en gång oavsett längd – en 105 m YTS3 gav
+  10 p som en punktspricka. `None` stänger av. 213 av 474 skador i DUF 701 är löpande (median 16 m).
 - Index = poäng / max(längd, 20 m) × 100 (poäng per 100 m). Konstruktions-, drift- och totalindex.
 - Klass **A** Åtgärda (hette "Åtgärd snarast" t.o.m. sep 2026): konstruktionsgrad 4 eller konstruktionsindex ≥ 80.
   **B** Planera renovering: grad 3 eller index ≥ 25. **C** Bevaka: övriga med skador.
   **D** Inga skador. **E** Ej bedömd (längd < 1 m). Rangordning inom klass efter totalindex.
 - Driftåtgärd flaggas separat (rotskärning, spolning, täta inläckage, ta bort hinder) – ingår
   inte i klassen. Även flaggor: avbruten inspektion, relinad, inspekterad flera ggr.
-- Facit DUF 701: klasser A/B/C/D/E = 41/53/23/62/6; A = 1 583 m (21 %); 474 räknade skador;
-  rang 1 = SRB64009 → SRB1016560 (betong 225, 35,1 m, 9×YTS4 + SPR3 + löpande YTS3 = 290 p →
-  826,5 p/100 m); 12 avbrutna inspektioner; 16 relinade; YTS 153 (44 grad 4), SPR 138, ROT 110.
+- Facit DUF 701 (med längdviktning): klasser A/B/C/D/E = **62/36/19/62/6**; A = 2 444 m (33 %);
+  474 räknade skador; rang 1 = SRB64009 → SRB1016560 (betong 225, 35,1 m, 9×YTS4 + SPR3 +
+  löpande YTS3 35 m × 3,5 = 315 p → 898 p/100 m); 12 avbrutna inspektioner; 16 relinade;
+  YTS 153 (44 grad 4), SPR 138, ROT 110. Utan viktning (t.o.m. sep 2026): 41/53/23/62/6, A = 1 583 m,
+  rang 1 = 290 p → 826,5; 25 sträckor byter klass (21 B→A, 4 C→B), nr 108 (105 m YTS3) stannar i B
+  (74,9 p/100 m) tack vare taket.
 - Profilanalys (viktig lärdom): avvikelse från rät linje mellan brunnarna var **fel mått** –
   det flaggade lutningsbrott som svackor. Nu: **svackdjup** = största stående vattendjup,
   vattenytan i varje punkt = högsta punkten nedströms (vattnet kan bara lämna nedströms – vid

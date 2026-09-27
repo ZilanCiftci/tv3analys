@@ -201,6 +201,8 @@ const handledning = doc("Användarhandledning – tv3_analys", "Analys av TV-ins
   table(["Parameter", "Betydelse", "Standard"], [
     ["`GRADPOANG`", "Poäng per grad 1–4.", "1 / 3 / 10 / 30"],
     ["`DRIFTFAKTOR`", "Faktor för driftskador (rötter, inläckage, sediment m.m.).", "0,5"],
+    ["`LOPANDE_ENHET_M`", "Längd (m) per poängenhet för löpande skador: poäng × längd / enhet, minst 1. `None` = räkna en gång oavsett längd.", "10"],
+    ["`LOPANDE_TAK`", "Högsta faktor en löpande skada kan få. `None` = inget tak.", "5"],
     ["`MINLANGD`", "Minsta längd (m) som används som nämnare vid normering per 100 m.", "20"],
     ["`TROSKEL_A`", "Konstruktionsindex (p/100 m) som ger klass A.", "80"],
     ["`TROSKEL_B`", "Konstruktionsindex (p/100 m) som ger klass B.", "25"],
@@ -298,7 +300,8 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
     ["4", "30", "Mycket allvarlig skada"],
   ], [1400, 1400, 6560]),
   spacer(),
-  p("Driftskador multipliceras med faktor **0,5**. Löpande skador (markerade A1 … B1 i filen) räknas **en gång**, vid startmarkeringen; längden på den löpande skadan redovisas separat."),
+  p("Driftskador multipliceras med faktor **0,5**."),
+  p("**Löpande skador** (markerade A1 … B1 i filen) räknas vid startmarkeringen och **viktas med längden**: poängen multipliceras med längden delad med 10 m, dock minst 1 och högst 5. En 30 m löpande ytskada grad 3 räknas alltså som tre punktskador (30 p), och ingen löpande skada räknas som mer än fem (max 150 p för grad 4). Utan viktning räknades en 100 m lång skada lika som en enda punkt; med viktning värderas den som fem. Enhet och tak kan ändras i KONFIG (`LOPANDE_ENHET_M`, `LOPANDE_TAK`); `None` stänger av viktningen."),
   h2("4.2 Index per sträcka"),
   p("Poängen summeras per sträcka, separat för konstruktion och drift, och normeras till **poäng per 100 m**:"),
   ...code(["index = summa poäng / max(inspekterad längd, 20 m) × 100"]),
@@ -341,7 +344,7 @@ const metod = doc("Metodbeskrivning – prioritering av avloppsledningar", "Poä
   bullet("Alla parametrar – poäng per grad, driftfaktor, minsta längd och trösklar – kan ändras i skriptets konfigurationsdel. Ändringar bör dokumenteras så att resultat från olika tillfällen förblir jämförbara."),
 
   h1("9. Exempel"),
-  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3. Poäng: 9 × 30 + 10 + 10 = 290. Konstruktionsindex: 290 / 35,1 × 100 = 826 p/100 m. Klass A (grad 4 finns), rang 1 i uppdraget DUF 701."),
+  p("Sträckan SRB64009 → SRB1016560 (betong 225 mm, 35,1 m) har nio ytskador grad 4, en komplex spricka grad 3 och en löpande ytskada grad 3 över 35 m. Poäng: 9 × 30 + 10 + 10 × 3,5 = 315. Konstruktionsindex: 315 / 35,1 × 100 = 898 p/100 m. Klass A (grad 4 finns), rang 1 i uppdraget DUF 701."),
   p("Sträckan KRB68713 → KRB68712 (betong 225 mm, 9,7 m) har en spricka grad 3, en ytskada grad 3 och ett inträngande hinder grad 2. Poäng: 10 + 10 + 3 × 0,5 = 21,5. Eftersom sträckan är kortare än 20 m används 20 m som nämnare: 21,5 / 20 × 100 = 108 p/100 m, varav konstruktion 100. Klass A (konstruktionsindex ≥ 80)."),
 ]);
 
