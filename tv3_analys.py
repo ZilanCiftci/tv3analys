@@ -22,16 +22,19 @@ Användning:
     python tv3_analys.py -l filer.txt              # textfil med en TV3-sökväg per rad
     python tv3_analys.py katalog/                  # alla .TV3-filer i katalogen (rekursivt)
     python tv3_analys.py -l filer.txt --media D:/Filmer   # extra katalog att söka videofiler i
+    python tv3_analys.py -l filer.txt --media D:/Filmer --bilder D:/Foton   # bilder i egen katalog
     python tv3_analys.py -l filer.txt --behall-rapporter  # skriv inte om PDF-rapporter som finns
 
 Listfilen (-l/--lista) är en vanlig textfil. Tomma rader och rader som börjar
 med # hoppas över. Relativa sökvägar tolkas relativt listfilens katalog.
 
     # exempel på listfil
-    media: D:\\Inspektioner\\Filmer            mediakatalog som gäller alla filer
+    media: D:\\Inspektioner\\Filmer            filmkatalog som gäller alla filer
+    bild: D:\\Inspektioner\\Foton              bildkatalog för alla filer (annars söks bilder
+                                               i filmkatalogerna)
     littera: brunnslittera.csv                 ersättningslittera för felmärkta brunnar
     DUF 701.TV3                                TV3-fil (media söks även i filens egen katalog)
-    DUF 702.TV3 ; D:\\Filmer\\DUF702 ; E:\\Bilder  TV3-fil med egna mediakataloger
+    DUF 702.TV3 ; D:\\Filmer\\DUF702 ; bild: E:\\Bilder  TV3-fil med egen film- och bildkatalog
     C:\\Inspektioner\\2022\\                    katalog: alla TV3-filer i den
 
 Alla filer analyseras tillsammans i ett gemensamt underlag; kolumnen "Fil" i
@@ -301,7 +304,8 @@ class Stracka:
     profil_slut_z: float | None = None
     tv3_sokvag: str = ""                 # absolut sökväg till TV3-filen
     rapport_fil: str | None = None       # relativ sökväg (från utdatakatalogen) till PDF-rapporten
-    media_kataloger: list[str] = field(default_factory=list)   # extra kataloger för just denna fil
+    media_kataloger: list[str] = field(default_factory=list)   # film-/mediakataloger för just denna fil
+    bild_kataloger: list[str] = field(default_factory=list)    # bildkataloger för just denna fil (valfritt)
     video_sokvag: str | None = None      # hittad sökväg till videofilen
 
     # ---- härledda värden ----
@@ -735,23 +739,30 @@ def indexera_katalog(katalog: str) -> dict[str, str]:
     return idx
 
 
-def koppla_media(strackor: list[Stracka], extra_kataloger: list[str]) -> tuple[int, int, int, int]:
-    """Letar upp video- och bildfiler. Söker i TV3-filens katalog först, sedan i filens egna
-    mediakataloger (från listfilen) och sist i de globala (media: i listfilen eller --media).
+def koppla_media(strackor: list[Stracka], extra_kataloger: list[str],
+                 extra_bildkataloger: list[str] | None = None) -> tuple[int, int, int, int]:
+    """Letar upp video- och bildfiler. Filmer söks i TV3-filens katalog först, sedan i filens
+    egna mediakataloger (från listfilen) och sist i de globala (media: i listfilen eller --media).
+    Bilder söks i bildkatalogerna (bild: i listfilen eller --bilder, per fil eller globalt) om
+    några angetts, annars i samma kataloger som filmerna. TV3-filens egen katalog söks alltid.
     Returnerar (videor hittade, videor totalt, bilder hittade, bilder totalt)."""
     vh = vt = bh = bt = 0
     saknade_video: dict[str, list[str]] = {}
     kataloger_per_fil: dict[str, list[str]] = {}
     for s in strackor:
-        kataloger = [os.path.dirname(s.tv3_sokvag)] + list(s.media_kataloger) + list(extra_kataloger)
+        egen = os.path.dirname(s.tv3_sokvag)
+        kataloger = [egen] + list(s.media_kataloger) + list(extra_kataloger)
+        bildkat = list(s.bild_kataloger) + list(extra_bildkataloger or [])
+        bildkataloger = bildkat + [egen] if bildkat else kataloger
         kataloger_per_fil.setdefault(s.fil, kataloger)
         index = [indexera_katalog(k) for k in kataloger]
+        bildindex = [indexera_katalog(k) for k in bildkataloger]
 
         def hitta(namn: str, video: bool = False) -> str | None:
             n = os.path.basename(namn.strip().replace("\\", "/")).lower()   # TV3 kan ha sökväg i namnet
             if not n:
                 return None
-            for idx in index:
+            for idx in (index if video else bildindex):
                 if n in idx:
                     return idx[n]
             if video:                                 # annan filändelse på disk (.mpg vs .mp4)
@@ -1696,16 +1707,26 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
 # main
 # ----------------------------------------------------------------------------
 
-def las_listfil(path: str) -> tuple[list[tuple[str, list[str]]], list[str], list[str]]:
-    """Läser en listfil. Returnerar ([(tv3-sökväg, [mediakataloger för just den filen]), ...],
-    [mediakataloger som gäller alla filer], [CSV-filer med ersättningslittera]).
+Listpost = tuple[str, list[str], list[str]]      # (tv3-sökväg, filmkataloger, bildkataloger)
+Globala = dict[str, list[str]]                    # {"media": [...], "bild": [...], "littera": [...]}
+_BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
+_MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
+
+
+def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
+    """Läser en listfil. Returnerar ([(tv3-sökväg, [filmkataloger], [bildkataloger]), ...],
+    {"media": [filmkataloger för alla filer], "bild": [bildkataloger för alla filer],
+     "littera": [CSV-filer med ersättningslittera]}).
 
     Format (en post per rad, tomma rader och #-kommentarer ignoreras):
-        media: D:\\Inspektioner\\Filmer          gäller alla TV3-filer i listan
+        media: D:\\Inspektioner\\Filmer          filmkatalog för alla TV3-filer i listan
+        bild: D:\\Inspektioner\\Foton            bildkatalog för alla filer (valfritt – annars
+                                                 söks bilderna i filmkatalogerna)
         littera: brunnslittera.csv               ersättningslittera för felmärkta brunnar
         DUF 701.TV3                              TV3-fil; media söks i filens egen katalog
-        DUF 702.TV3 ; D:\\Filmer\\DUF702          TV3-fil med egen mediakatalog (fler kan
+        DUF 702.TV3 ; D:\\Filmer\\DUF702          TV3-fil med egen filmkatalog (fler kan
                                                  anges, separerade med ;)
+        DUF 703.TV3 ; D:\\Film ; bild: E:\\Foton   egen filmkatalog och egen bildkatalog
         C:\\Inspektioner\\2022\\                  katalog: alla TV3-filer i den
     Relativa sökvägar tolkas relativt listfilens katalog."""
     bas = os.path.dirname(os.path.abspath(path))
@@ -1714,73 +1735,84 @@ def las_listfil(path: str) -> tuple[list[tuple[str, list[str]]], list[str], list
         p = p.strip().strip('"').strip("'")
         return p if os.path.isabs(p) else os.path.normpath(os.path.join(bas, p))
 
-    poster: list[tuple[str, list[str]]] = []
-    globala: list[str] = []
-    littera: list[str] = []
+    nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR
+                                                             + ("littera", "brunnslittera", "brunnar")),
+                           re.IGNORECASE)
+    poster: list[Listpost] = []
+    globala: Globala = {"media": [], "bild": [], "littera": []}
     for rad in las_text(path).splitlines():
         rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
             continue
-        m = re.match(r"^(media|film|bilder|filmer)\s*[:=]\s*(.+)$", rad, re.IGNORECASE)
+        m = nyckel_re.match(rad)
         if m:
-            globala += [abs_(d) for d in m.group(2).split(";") if d.strip()]
+            nyckel = m.group(1).lower()
+            slag = "bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR else "littera"
+            globala[slag] += [abs_(d) for d in m.group(2).split(";") if d.strip()]
             continue
-        m = re.match(r"^(littera|brunnslittera|brunnar)\s*[:=]\s*(.+)$", rad, re.IGNORECASE)
-        if m:
-            littera += [abs_(d) for d in m.group(2).split(";") if d.strip()]
-            continue
-        delar = [d for d in rad.split(";")]
+        delar = rad.split(";")
         tv3 = abs_(delar[0])
-        media = [abs_(d) for d in delar[1:] if d.strip()]
-        poster.append((tv3, media))
-    return poster, globala, littera
+        media: list[str] = []
+        bild: list[str] = []
+        for d in delar[1:]:
+            d = d.strip()
+            if not d:
+                continue
+            m = re.match(r"^(%s)\s*[:=]\s*(.+)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR), d, re.IGNORECASE)
+            if m and m.group(1).lower() in _BILD_NYCKLAR:
+                bild.append(abs_(m.group(2)))
+            elif m:
+                media.append(abs_(m.group(2)))
+            else:
+                media.append(abs_(d))
+        poster.append((tv3, media, bild))
+    return poster, globala
 
 
-def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[tuple[str, list[str]]], list[str], list[str]]:
+def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Listpost], Globala]:
     """Löser upp argument (filer, kataloger, jokertecken, .txt-listor) till
-    [(tv3-fil, [mediakataloger]), ...] samt globala mediakataloger och
-    littera-CSV:er från listfiler."""
+    [(tv3-fil, [filmkataloger], [bildkataloger]), ...] samt de globala film-/bildkatalogerna
+    och littera-CSV:erna från listfilerna."""
     import glob
-    kandidater: list[tuple[str, list[str]]] = []
-    globala: list[str] = []
-    littera: list[str] = []
+    kandidater: list[Listpost] = []
+    globala: Globala = {"media": [], "bild": [], "littera": []}
+
+    def lagg_till_lista(lf: str) -> None:
+        p, g = las_listfil(lf)
+        kandidater.extend(p)
+        for slag in globala:
+            globala[slag] += g[slag]
+
     for lf in listfiler:
-        p, g, l = las_listfil(lf)
-        kandidater += p
-        globala += g
-        littera += l
+        lagg_till_lista(lf)
     for arg in argument:
         if arg.lower().endswith(".txt"):          # listfil även utan -l
-            p, g, l = las_listfil(arg)
-            kandidater += p
-            globala += g
-            littera += l
+            lagg_till_lista(arg)
         elif any(ch in arg for ch in "*?["):
-            kandidater += [(f, []) for f in sorted(glob.glob(arg))]
+            kandidater += [(f, [], []) for f in sorted(glob.glob(arg))]
         else:
-            kandidater.append((arg, []))
+            kandidater.append((arg, [], []))
 
-    filer: list[tuple[str, list[str]]] = []
-    for k, media in kandidater:
+    filer: list[Listpost] = []
+    for k, media, bild in kandidater:
         if os.path.isdir(k):
             for rot, _, namn in os.walk(k):
-                filer += [(os.path.join(rot, n), media) for n in sorted(namn) if n.lower().endswith(".tv3")]
+                filer += [(os.path.join(rot, n), media, bild) for n in sorted(namn) if n.lower().endswith(".tv3")]
         else:
-            filer.append((k, media))
+            filer.append((k, media, bild))
 
-    # ta bort dubbletter, behåll ordning (mediakataloger slås ihop)
+    # ta bort dubbletter, behåll ordning (katalogerna slås ihop)
     index: dict[str, int] = {}
-    unika: list[tuple[str, list[str]]] = []
-    for f, media in filer:
+    unika: list[Listpost] = []
+    for f, media, bild in filer:
         key = os.path.abspath(f)
         if key in index:
-            for m in media:
-                if m not in unika[index[key]][1]:
-                    unika[index[key]][1].append(m)
+            for lista, nya in ((unika[index[key]][1], media), (unika[index[key]][2], bild)):
+                lista.extend(m for m in nya if m not in lista)
         else:
             index[key] = len(unika)
-            unika.append((f, list(media)))
-    return unika, globala, littera
+            unika.append((f, list(media), list(bild)))
+    return unika, globala
 
 
 def main(argv=None):
@@ -1804,14 +1836,18 @@ def main(argv=None):
                     help="CSV med ersättningslittera för felmärkta brunnar (fel;rätt per rad); "
                          "kan även anges i listfilen som 'littera: FIL.CSV'")
     ap.add_argument("--media", action="append", default=[], metavar="KATALOG",
-                    help="extra katalog att söka video-/bildfiler i (kan anges flera gånger); "
-                         "TV3-filens egen katalog söks alltid")
+                    help="extra katalog att söka videofiler i, och bilder om ingen bildkatalog angetts "
+                         "(kan anges flera gånger); TV3-filens egen katalog söks alltid")
+    ap.add_argument("--bilder", action="append", default=[], metavar="KATALOG",
+                    help="katalog att söka bilder i (kan anges flera gånger); anges ingen söks "
+                         "bilderna i videokatalogerna; kan även anges i listfilen som 'bild: KATALOG'")
     a = ap.parse_args(argv)
 
     if not a.filer and not a.lista:
         ap.error("ange minst en TV3-fil, katalog eller listfil (-l filer.txt)")
 
-    filer, globala_media, littera_filer = hitta_tv3_filer(a.filer, a.lista)
+    filer, globala = hitta_tv3_filer(a.filer, a.lista)
+    globala_media, globala_bild, littera_filer = globala["media"], globala["bild"], globala["littera"]
     if not filer:
         sys.exit("Inga TV3-filer hittades.")
     print(f"{len(filer)} fil(er) att analysera\n")
@@ -1831,8 +1867,8 @@ def main(argv=None):
         print(f"  {len(littera)} ersättningslittera lästa"
               + (f" ({sum(1 for r in littera if r['villkor'])} begränsade till fil/sträcka/motbrunn)"
                  if any(r["villkor"] for r in littera) else ""))
-    for p, media in filer:
-        for m in media:
+    for p, media, bild in filer:
+        for m in media + bild:
             if not os.path.isdir(m):
                 fel.append(f"{p}: mediakatalogen finns inte: {m}")
                 print(f"  VARNING mediakatalog saknas: {m}")
@@ -1848,6 +1884,7 @@ def main(argv=None):
             continue
         for st_ in st:
             st_.media_kataloger = list(media)
+            st_.bild_kataloger = list(bild)
         print(f"  OK      {os.path.basename(p)}: {len(st)} sträckor, {sum(s.langd for s in st):.0f} m, "
               f"{sum(len(s.skador()) for s in st)} skadeobservationer"
               + (f", {sum(1 for s in st if s.littera_rattat)} sträckor med rättat littera"
@@ -1858,10 +1895,10 @@ def main(argv=None):
     if fel:
         print(f"\n{len(fel)} varning(ar) – se {os.path.join(a.utdata, 'fel.txt')}")
 
-    for m in globala_media + a.media:
+    for m in globala_media + a.media + globala_bild + a.bilder:
         if not os.path.isdir(m):
             print(f"  VARNING mediakatalog saknas: {m}")
-    vh, vt, bh, bt = koppla_media(strackor, globala_media + a.media)
+    vh, vt, bh, bt = koppla_media(strackor, globala_media + a.media, globala_bild + a.bilder)
     print(f"\nVideofiler hittade: {vh} av {vt}   Bilder hittade: {bh} av {bt}")
     if vt and vh < vt:
         print("  (ange katalogen med filmerna i listfilen – 'media: KATALOG' eller 'fil.TV3 ; KATALOG' –\n"

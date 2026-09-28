@@ -35,18 +35,24 @@ specifika raden vinner; rubrikraden styr kolumnordningen, tab/;/, som avgränsar
 
 Körning:
 ```
-python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--behall-rapporter] [--diagram] [--media KATALOG] [--littera FIL.CSV]
+python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--behall-rapporter] [--diagram] [--media KATALOG] [--bilder KATALOG] [--littera FIL.CSV]
 python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
 ```
 
 Listfilens format (relativa sökvägar tolkas relativt listfilen, `#` = kommentar):
 ```
-media: D:\Inspektioner\Filmer          # mediamapp för alla filer i listan (kan upprepas)
+media: D:\Inspektioner\Filmer          # filmmapp för alla filer i listan (kan upprepas; alias film/video)
+bild: D:\Inspektioner\Foton            # bildmapp (valfritt, alias foto; sep 2026) – utan den söks
+                                       # bilderna i filmmapparna
 littera: brunnslittera.csv             # ersättningslittera (kan upprepas)
 DUF 701.TV3                            # media söks alltid även i TV3-filens egen mapp (rekursivt)
-DUF 702.TV3 ; D:\Filmer\DUF702 ; E:\Bilder   # egna mediamappar för just den filen
+DUF 702.TV3 ; D:\Filmer\DUF702 ; bild: E:\Foton   # egen film- och bildmapp för just den filen
 C:\Inspektioner\2022\                  # katalog: alla .TV3 i den
 ```
+Internt: `las_listfil` → `(poster, globala)` med poster `(tv3, filmkataloger, bildkataloger)` och
+`globala = {"media", "bild", "littera"}`; `Stracka.media_kataloger`/`bild_kataloger`;
+`koppla_media(strackor, media, bild)` söker bilder i bildkataloger + TV3-mappen om några angetts,
+annars i filmkatalogerna.
 
 Utdata i `tv3_resultat/` (eller `-o`):
 - `prioritering.xlsx` – flikar **Sammanfattning** (nyckeltal, klassfördelning, metodparametrar,
