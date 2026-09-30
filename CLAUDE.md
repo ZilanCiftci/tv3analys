@@ -145,7 +145,12 @@ om profilen är osäker), `hojdflagga` ("Liten täckning" < `TACKNING_MIN_M` 1,0
 höjdfel"), `lutning_promille` ur korrigerade höjder. Excel: Höjdanpassning, Täckning min/max,
 Höjdflagga (före Manuell bedömning) + rad i Sammanfattning; JSON: hojdanpassning, hojd_offset_m,
 gis_vg_*, tackning_*, hojdflagga; PDF: rad Höjdläge/Täckning, brun markyta i profilen, täckning
-utsatt, höjdläge som text nere till vänster. Beräkningar cachas i `Stracka._cache` (rensas i
+utsatt, höjdläge som text nere till vänster. **Avbrutna/ofullständiga inspektioner**
+(`Stracka.ofullstandig`: KAM/HINDE eller langd < `OFULLSTANDIG_ANDEL` 0,85 × langd_karta): upphängning
+bara i kamerans startbrunn (status "förskjuten till GIS vid X (avbruten inspektion)"), ingen
+lutningskorrigering, ingen skalning (kartmeter från kamerans brunn = filmposition), mark bara
+över filmad del, "avbrott" i stället för brunnsnamn i profilbilden; syskon filmade från andra
+hållet hängs upp i sin egen brunn. Beräkningar cachas i `Stracka._cache` (rensas i
 koppla_markprofil). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
 markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
@@ -185,7 +190,10 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   Sträckans längd = största läge. Rader med `B` är slutmarkering för löpande skada och ska inte
   räknas igen.
 - PROFILADM: index 16/17 = start-/sluthöjd vid **start-/slutbrunn** (flödesriktning), inte vid
-  utgångsbrunnen. PROFILDAT: 1 läge, 2 relativ höjd, 3 absolut höjd; **kan ligga i fallande
+  utgångsbrunnen. **Vid avbruten inspektion är "sluthöjden" bara inklinometerns höjd där kameran
+  stannade** (DUF 701 nr 72: 16,04/15,75 = PROFILDAT:s ändar), och för det motströms filmade
+  syskonet (nr 73) är PROFILADM bara kopierat från nr 72 – lita inte på PROFILADM:s slutvärde
+  när inspektionen är ofullständig. PROFILDAT: 1 läge, 2 relativ höjd, 3 absolut höjd; **kan ligga i fallande
   positionsordning – sortera alltid på läge**. Höjder har 2 decimaler (cm), vilket ger
   trappstegsprofil på flacka ledningar → utjämna vid uppritning, inte vid beräkning.
 - Video/bild finns bara som filnamn i filen. Skriptet indexerar mediamappar rekursivt
