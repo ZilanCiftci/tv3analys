@@ -194,11 +194,12 @@ BEHALL_RAPPORTER = False
 
 # Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
 # kolumnrubrikerna, eller Data > Dela upp grupp). Allt finns kvar i filen. Tom lista = visa allt.
+# Ange rubriken utan enhet ("Längd", inte "Längd (m)") – enheten står på egen rad i Excel.
 DOLDA_KOLUMNER = {
-    "Prioritering": ["Fil", "Område", "Ledningstyp", "Datum", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
-                     "Drift maxgrad", "Antal skador", "Inspekterad flera ggr", "Littera rättat",
-                     "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
-                     "Höjdanpassning", "Täckning min (m)", "Täckning max (m)"],
+    "Prioritering": ["Fil", "Nr", "Område", "Ledningstyp", "Datum", "Driftindex", "Totalindex",
+                     "Drift maxgrad", "Antal skador", "Driftåtgärd", "Inspekterad flera ggr", "Littera rättat",
+                     "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
+                     "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
 }
 
@@ -1105,16 +1106,33 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
 
     lank = Font(color="0563C1", underline="single")
 
-    def tabell(ws, kolumner, rader, bredder=None, klasskol=None, lankar=None, dolda=None):
-        """lankar: {kolumnindex: [url eller None per rad]} – gör cellerna klickbara.
-        dolda: kolumnrubriker som döljs (grupperade, så de kan fällas ut med plustecknet)."""
-        ws.append(kolumner)
+    def tabell(ws, kolumner, rader, bredder=None, klasskol=None, lankar=None, dolda=None) -> int:
+        """Skriver rubrikrad, enhetsrad (om någon rubrik har enhet inom parentes, t.ex.
+        "Längd (m)": rubriken blir "Längd" och enheten hamnar på raden under) och data.
+        lankar: {kolumnindex: [url eller None per rad]} – gör cellerna klickbara.
+        dolda: kolumnrubriker (utan enhet) som döljs, grupperade så de kan fällas ut med plustecknet.
+        Returnerar första dataradens radnummer."""
+        namn, enheter = [], []
+        for k in kolumner:
+            m = re.match(r"^(.*?)\s*\((.+)\)$", k)
+            namn.append(m.group(1) if m else k)
+            enheter.append(m.group(2) if m else "")
+        har_enhet = any(enheter)
+        ws.append(namn)
         for c in ws[1]:
             c.font, c.fill, c.border = rubrik, rubrikfyll, kant
             c.alignment = Alignment(vertical="center", wrap_text=True)
+        if har_enhet:
+            ws.append(enheter)
+            for c in ws[2]:
+                c.font = Font(italic=True, color="595959", size=9)
+                c.fill = PatternFill("solid", fgColor="EDEDED")
+                c.border = kant
+                c.alignment = Alignment(horizontal="center", vertical="center")
+        start = 3 if har_enhet else 2
         for rad in rader:
             ws.append(rad)
-        for ri, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row)):
+        for ri, row in enumerate(ws.iter_rows(min_row=start, max_row=ws.max_row)):
             for c in row:
                 c.border = kant
             for ci, urls in (lankar or {}).items():
@@ -1126,18 +1144,19 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                 if k and k[0] in KLASS_FARG:
                     row[klasskol].fill = PatternFill("solid", fgColor=KLASS_FARG[k[0]])
                     row[klasskol].font = Font(bold=True, color="FFFFFF" if k[0] in "AB" else "000000")
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = f"A{start}"
+        ws.auto_filter.ref = f"A{start - 1}:{get_column_letter(len(kolumner))}{max(ws.max_row, start)}"
         for i, kol in enumerate(kolumner, 1):
-            b = (bredder or {}).get(kol)
+            b = (bredder or {}).get(kol, (bredder or {}).get(namn[i - 1]))
             if b is None:
                 langsta = max((len(str(r[i - 1])) for r in rader[:200] if i - 1 < len(r) and r[i - 1] is not None),
                               default=0)
-                b = min(45, max(10, langsta + 2, len(kol) + 2))
+                b = min(45, max(10, langsta + 2, max(len(namn[i - 1]), len(enheter[i - 1])) + 2))
             ws.column_dimensions[get_column_letter(i)].width = b
         # Dolda kolumner: sammanhängande block grupperas med outline så att Excel visar ett
         # plustecken ovanför rubrikraden där de kan fällas ut
-        index = sorted(i for i, kol in enumerate(kolumner, 1) if kol in set(dolda or []))
+        dold = set(dolda or [])
+        index = sorted(i for i, kol in enumerate(kolumner, 1) if kol in dold or namn[i - 1] in dold)
         block: list[list[int]] = []
         for i in index:
             if block and i == block[-1][-1] + 1:
@@ -1151,6 +1170,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                 cd.outlineLevel = 1
         if block:
             ws.sheet_properties.outlinePr.summaryRight = False
+        return start
 
     # ---- Sammanfattning ----
     ws = wb.active
@@ -1239,7 +1259,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     kol = ["Rang", "Prioritetsklass", "Fil", "Nr", "Startbrunn", "Slutbrunn", "Område", "Ledningstyp",
            "Material", "Dim (mm)", "Längd (m)", "Datum",
            "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
-           "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
+           "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Anslutningar", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
@@ -1269,12 +1289,12 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       "", "", "Öppna rapport" if s.rapport_fil else "", s.videofil])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
-    tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
-                            "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26},
-           klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
-           dolda=DOLDA_KOLUMNER.get("Prioritering"))
+    start = tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
+                                    "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26},
+                   klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
+                   dolda=DOLDA_KOLUMNER.get("Prioritering"))
     ci = kol.index("Svackdjup/diameter") + 1
-    for r in range(2, ws.max_row + 1):
+    for r in range(start, ws.max_row + 1):
         ws.cell(r, ci).number_format = "0%"
 
     # ---- Observationer ----
@@ -1346,8 +1366,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(g["p"] / g["m"] * 100, 1) if g["m"] else 0,
                       g["A"], g["B"], g["C"], g["D"], g["E"],
                       (g["A"] + g["B"]) / g["n"] if g["n"] else 0, round(ab_m), g["avbr"]])
-    tabell(ws, kol, rader, {"Område": 30})
-    for r in range(2, ws.max_row + 1):
+    start = tabell(ws, kol, rader, {"Område": 30})
+    for r in range(start, ws.max_row + 1):
         ws.cell(r, 14).number_format = "0%"
 
     # ---- Material & dimension ----
@@ -1372,8 +1392,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Konstruktionsindex (p/100 m)", "Klass A", "Klass B", "Andel A+B"]
     rader = [[m, ursprung(m, g), t, g["n"], round(g["m"]), round(g["p"] / g["m"] * 100, 1) if g["m"] else 0,
               g["A"], g["B"], (g["A"] + g["B"]) / g["n"]] for (m, t), g in sorted(grp.items())]
-    tabell(ws, kol, rader)
-    for r in range(2, ws.max_row + 1):
+    start = tabell(ws, kol, rader)
+    for r in range(start, ws.max_row + 1):
         ws.cell(r, 9).number_format = "0%"
 
     wb.save(path)

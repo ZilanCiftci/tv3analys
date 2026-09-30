@@ -61,10 +61,13 @@ Utdata i `tv3_resultat/` (eller `-o`):
   hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut `file:///`-länk);
   **dolda kolumner** sep 2026: `DOLDA_KOLUMNER` i KONFIG per flik, varje dold kolumn får
   `hidden=True` + `outlineLevel=1` (kolumngrupp med plustecken, `summaryRight=False`) – synliga i
-  Prioritering: Rang, Klass, Nr, brunnar, Material, Dim, Längd, Konstruktionsindex, Konstr. maxgrad,
-  Antal anslutningar, Skador, Driftåtgärd, Avbruten, Relinad, Svackdjup, Höjdflagga, Manuell
-  bedömning, Kommentar, Rapport, Videofil; Observationer döljer Fil, Typ, Löpande, Klocka till,
-  Vattennivå),
+  Prioritering: Rang, Klass, brunnar, Material, Dim, Längd, Konstruktionsindex, Konstr. maxgrad,
+  Anslutningar, Skador, Avbruten, Relinad, Svackdjup, Manuell bedömning, Kommentar, Rapport,
+  Videofil – Nr, Driftåtgärd och Höjdflagga döljs på användarens begäran; Observationer döljer
+  Fil, Typ, Löpande, Klocka till, Vattennivå). **Enhetsrad** (sep 2026): `tabell()` delar
+  rubriker "Namn (enhet)" i rubrikrad 1 och enhetsrad 2 (grå kursiv), data från rad 3, frys A3,
+  autofilter från rad 2; returnerar första dataraden (anropen använder den för talformat).
+  `DOLDA_KOLUMNER`/`bredder` anges med rubrik utan enhet. "Antal anslutningar" heter "Anslutningar",
   **Observationer** (alla observationer i klartext, länk till bild och video),
   **Kodstatistik**, **Per fil**, **Material** (relinade sträckor redovisas som eget material
   `Relinad` med ursprungsmaterialet i egen kolumn – styrs av `RELINAD_SOM_MATERIAL` i KONFIG;
