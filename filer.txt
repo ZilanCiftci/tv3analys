@@ -2,6 +2,7 @@
 # media: D:\Inspektioner\Filmer          <- mapp med filmer för alla filer (bilder söks också här)
 # bild: D:\Inspektioner\Foton            <- egen mapp för bilder (valfritt)
 littera: brunnslittera.csv              # ersättningslittera för felmärkta brunnar
+# markprofil: Karta\markprofil.json      <- från ArcMap-verktyget Markprofil (markhöjder + GIS-vattengång)
 
 testdata/DUF 701.TV3
 # DUF 702.TV3 ; D:\Filmer\DUF702        <- egen filmmapp för just den filen

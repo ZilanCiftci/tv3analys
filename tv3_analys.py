@@ -162,6 +162,13 @@ MINLANGD = 20.0    # m – nämnare vid normering av korta sträckor
 SVACKA_MAX_M = 1.0  # m – större beräknat svackdjup än så är en inklinometerartefakt (driftande
                     # profil); svackan redovisas då som okänd och profilen markeras osäker
 
+# Markprofil (markprofil.json från ArcMap-verktyget "Markprofil"): filmens höjder hängs upp på
+# GIS-vattengången i brunnarna (RH2000), eftersom filmerna ofta har ett lokalt nollplan.
+HOJD_SAMMA_M = 0.3      # m – avviker filens brunnshöjder mindre än så från GIS är de i samma system
+HOJD_FALL_TOL_M = 0.3   # m – skiljer sig fallet mellan brunnarna mer än så från GIS korrigeras
+                        #     lutningen linjärt (inklinometerdrift), annars bara en förskjutning
+TACKNING_MIN_M = 1.0    # m – mindre täckning (mark − hjässa) än så flaggas
+
 # Relinade (infodrade) sträckor redovisas som ett eget material i fliken Material och i
 # diagrammet "Prioritetsklass per material", i stället för som rörets ursprungsmaterial.
 # Sätt RELINAD_SOM_MATERIAL = False för att räkna dem som betong/plast som tidigare.
@@ -382,13 +389,161 @@ class Stracka:
 
     flerinspekterad: bool = False   # samma brunnspar förekommer flera gånger (t.ex. från båda håll)
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
+    # Från markprofil.json (ArcMap-verktyget Markprofil): markhöjder längs kartlinjen
+    # [(m från startbrunn, höjd)], GIS-vattengång i brunnarna och kartlinjens längd
+    mark: list[tuple[float, float]] = field(default_factory=list)
+    gis_vg_start: float | None = None
+    gis_vg_slut: float | None = None
+    langd_karta: float | None = None
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
+
+    # ---- höjdläge: filmens höjder mot GIS ----
+    def _filens_brunnshojder(self) -> tuple[float | None, float | None]:
+        """Filens höjd vid start- och slutbrunn (flödesriktning): PROFILADM i första hand,
+        annars inklinometerprofilens ändpunkter."""
+        zs, ze = self.profil_start_z, self.profil_slut_z
+        if (zs is None or ze is None) and len(self.profil) >= 2:
+            z0, z1 = self.profil[0][2], self.profil[-1][2]
+            if self.fran_brunn != self.startbrunn:
+                z0, z1 = z1, z0
+            zs = z0 if zs is None else zs
+            ze = z1 if ze is None else ze
+        return zs, ze
+
+    @property
+    def hojdanpassning(self) -> dict | None:
+        """Hur filens höjder hängs upp på GIS-vattengången (RH2000). None om markprofil saknas
+        eller filen inte har några höjder alls. Nycklar: status, offset (m), k (m/m i
+        flödesriktningen), z_start/z_slut (korrigerade brunnshöjder)."""
+        if "hojd" not in self._cache:
+            self._cache["hojd"] = self._hojdanpassning()
+        return self._cache["hojd"]
+
+    def _hojdanpassning(self) -> dict | None:
+        zs, ze = self._filens_brunnshojder()
+        gs, ge = self.gis_vg_start, self.gis_vg_slut
+        if zs is None or ze is None:
+            if gs is not None and ge is not None:
+                return {"status": "GIS-vattengång, rät linje", "offset": None, "k": 0.0,
+                        "z_start": gs, "z_slut": ge}
+            return None
+        if gs is None or ge is None:
+            if self.langd_karta is None:
+                return None
+            return {"status": "okänt nollplan (GIS-vattengång saknas)", "offset": 0.0, "k": 0.0,
+                    "z_start": zs, "z_slut": ze}
+        ds, de = gs - zs, ge - ze
+        if abs(ds) <= HOJD_SAMMA_M and abs(de) <= HOJD_SAMMA_M:
+            return {"status": "RH2000 ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
+        L = self.langd
+        if abs(ds - de) <= HOJD_FALL_TOL_M or L <= 0:
+            return {"status": "förskjuten till GIS", "offset": ds, "k": 0.0,
+                    "z_start": zs + ds, "z_slut": ze + ds}
+        return {"status": "förskjuten och lutningskorrigerad", "offset": ds, "k": (de - ds) / L,
+                "z_start": gs, "z_slut": ge}
+
+    def _korr(self, x: float, z: float) -> float:
+        """Korrigerad höjd för en punkt vid kamerans position x med filens höjd z."""
+        h = self.hojdanpassning
+        if not h or h["offset"] is None:
+            return z
+        d = x if self.fran_brunn == self.startbrunn else self.langd - x     # m från startbrunn
+        return z + h["offset"] + h["k"] * d
+
+    def profil_korrigerad(self) -> list[tuple[float, float]]:
+        """Inklinometerprofilen [(kamerans position, höjd)] upphängd på GIS-nivåerna."""
+        if "prof" not in self._cache:
+            self._cache["prof"] = [(x, self._korr(x, z)) for x, _, z in self.profil]
+        return self._cache["prof"]
+
+    def ledningshojd(self, x: float) -> float | None:
+        """Vattengångens höjd vid kamerans position x: ur den korrigerade profilen, annars rät
+        linje mellan (korrigerade) brunnshöjderna."""
+        prof = self.profil_korrigerad()
+        if len(prof) >= 2:
+            import bisect
+            if "prof_x" not in self._cache:
+                self._cache["prof_x"] = [px for px, _ in prof]
+            xs = self._cache["prof_x"]
+            if x <= xs[0]:
+                return prof[0][1]
+            if x >= xs[-1]:
+                return prof[-1][1]
+            i = bisect.bisect_right(xs, x)
+            (x0, z0), (x1, z1) = prof[i - 1], prof[i]
+            return z0 if x1 == x0 else z0 + (z1 - z0) * (x - x0) / (x1 - x0)
+        h = self.hojdanpassning
+        if not h or self.langd <= 0:
+            return None
+        d = x if self.fran_brunn == self.startbrunn else self.langd - x
+        return h["z_start"] + (h["z_slut"] - h["z_start"]) * d / self.langd
+
+    def mark_i_filmens_axel(self) -> list[tuple[float, float]]:
+        """Markhöjderna omräknade till kamerans positioner: kartlinjens meter från startbrunnen
+        skalas till filmens längd och vänds om kameran gick motströms."""
+        if not self.mark or self.langd <= 0:
+            return []
+        sk = (self.langd_karta / self.langd) if self.langd_karta else 1.0
+        ut = []
+        for pos, z in self.mark:
+            d = pos / sk if sk else pos
+            x = d if self.fran_brunn == self.startbrunn else self.langd - d
+            ut.append((x, z))
+        return sorted(ut)
+
+    @property
+    def tackning(self) -> dict | None:
+        """Täckning = mark − hjässa (vattengång + innerdiameter) per markpunkt.
+        {min, max, pos_min (kamerans position), n} eller None."""
+        if "tack" not in self._cache:
+            self._cache["tack"] = self._tackning()
+        return self._cache["tack"]
+
+    def _tackning(self) -> dict | None:
+        mark = self.mark_i_filmens_axel()
+        if not mark or self.hojdanpassning is None:
+            return None
+        try:
+            dia = float(self.dimension) / 1000
+        except ValueError:
+            dia = 0.0
+        # Är inklinometerprofilen osäker (driftar mot brunnshöjderna) räknas täckningen mot
+        # rät linje mellan de korrigerade brunnshöjderna i stället för mot profilen.
+        pa = self.profil_analys
+        h = self.hojdanpassning
+        rat_linje = (pa is None or pa["osaker"]) and h is not None and self.langd > 0
+        varden = []
+        for x, zm in mark:
+            if rat_linje:
+                d = x if self.fran_brunn == self.startbrunn else self.langd - x
+                zl = h["z_start"] + (h["z_slut"] - h["z_start"]) * d / self.langd
+            else:
+                zl = self.ledningshojd(x)
+            if zl is not None:
+                varden.append((zm - (zl + dia), x))
+        if not varden:
+            return None
+        lagst = min(varden)
+        return {"min": lagst[0], "max": max(v for v, _ in varden), "pos_min": lagst[1], "n": len(varden)}
+
+    @property
+    def hojdflagga(self) -> str:
+        t = self.tackning
+        if not t:
+            return ""
+        if t["min"] < 0:
+            return "Ledning över mark – höjdfel"
+        if t["min"] < TACKNING_MIN_M:
+            return f"Liten täckning ({t['min']:.1f} m)"
+        return ""
 
     def _profil_i_flodesriktning(self) -> list[tuple[float, float]] | None:
         """Profilen (position, höjd) ordnad i flödesriktningen uppströms → nedströms,
-        glesad till ca 0,25 m mellan punkterna för att dämpa mätbrus."""
+        glesad till ca 0,25 m mellan punkterna för att dämpa mätbrus. Höjderna är
+        korrigerade mot GIS när markprofil finns (påverkar bara svackan vid lutningskorrigering)."""
         if len(self.profil) < 3:
             return None
-        pts = [(x, z) for x, _, z in self.profil]
+        pts = self.profil_korrigerad()
         if self.fran_brunn != self.startbrunn:      # kameran gick motströms
             pts = pts[::-1]
         ut = [pts[0]]
@@ -399,6 +554,11 @@ class Stracka:
 
     @property
     def profil_analys(self) -> dict | None:
+        if "pa" not in self._cache:
+            self._cache["pa"] = self._profil_analys()
+        return self._cache["pa"]
+
+    def _profil_analys(self) -> dict | None:
         """Svackor och bakfall ur inklinometerprofilen.
         svackdjup  – största stående vattendjup (m). Vattnet kan bara lämna ledningen
                      nedströms, så vattenytan i varje punkt ligger på den högsta punkten
@@ -427,7 +587,11 @@ class Stracka:
                 bakfall += dx
         osaker = self.profil_start_z is None or self.profil_slut_z is None
         if not osaker:
-            fall_brunnar = self.profil_start_z - self.profil_slut_z
+            h = self.hojdanpassning
+            if h and h["offset"] is not None:
+                fall_brunnar = h["z_start"] - h["z_slut"]
+            else:
+                fall_brunnar = self.profil_start_z - self.profil_slut_z
             fall_inkl = z[0] - z[-1]
             if abs(fall_inkl - fall_brunnar) > max(0.3, 0.5 * abs(fall_brunnar)):
                 osaker = True
@@ -455,7 +619,14 @@ class Stracka:
 
     @property
     def lutning_promille(self) -> float | None:
-        if self.profil_start_z is None or self.profil_slut_z is None or self.langd <= 0:
+        """Fall i flödesriktningen (‰) ur brunnshöjderna – de korrigerade när filen hängts upp
+        på GIS-vattengången."""
+        if self.langd <= 0:
+            return None
+        h = self.hojdanpassning
+        if h and h["offset"] is not None:
+            return (h["z_start"] - h["z_slut"]) / self.langd * 1000
+        if self.profil_start_z is None or self.profil_slut_z is None:
             return None
         return (self.profil_start_z - self.profil_slut_z) / self.langd * 1000
 
@@ -824,6 +995,43 @@ def koppla_media(strackor: list[Stracka], extra_kataloger: list[str],
     return vh, vt, bh, bt
 
 
+def las_markprofil(path: str) -> dict:
+    """Läser markprofil.json från ArcMap-verktyget Markprofil. Returnerar {"poster": [...],
+    "hojdsystem": str, "fil": path}."""
+    import json
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return {"poster": data.get("strackor", []), "hojdsystem": data.get("hojdsystem", ""), "fil": path}
+
+
+def koppla_markprofil(strackor: list[Stracka], filer: list[dict]) -> tuple[int, int]:
+    """Kopplar markhöjder och GIS-vattengång till sträckorna: på TV3-fil + sträcknummer i
+    första hand, annars på brunnspar. Returnerar (sträckor med markhöjder, med GIS-vattengång)."""
+    pa_nr: dict[tuple[str, int], dict] = {}
+    pa_par: dict[frozenset, dict] = {}
+    for mf in filer:
+        for post in mf["poster"]:
+            fil = os.path.basename(str(post.get("fil") or "")).lower()
+            if post.get("nr") is not None and fil:
+                pa_nr.setdefault((fil, int(post["nr"])), post)
+            par = frozenset((_normlittera(post.get("startbrunn")), _normlittera(post.get("slutbrunn"))))
+            pa_par.setdefault(par, post)
+    n_mark = n_vg = 0
+    for s in strackor:
+        post = pa_nr.get((os.path.basename(s.fil).lower(), s.nr)) or \
+            pa_par.get(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))))
+        if not post:
+            continue
+        s.mark = [(float(m), float(z)) for m, z, *_ in post.get("mark", []) if z is not None]
+        s.gis_vg_start = post.get("vg_start")
+        s.gis_vg_slut = post.get("vg_slut")
+        s.langd_karta = post.get("langd_karta_m")
+        s._cache.clear()
+        n_mark += bool(s.mark)
+        n_vg += s.gis_vg_start is not None and s.gis_vg_slut is not None
+    return n_mark, n_vg
+
+
 def fil_url(sokvag: str) -> str:
     """Absolut sökväg -> file:///-URL som Excel kan öppna."""
     from urllib.parse import quote
@@ -903,6 +1111,10 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         ["Antal skadeobservationer", sum(len(s.skador()) for s in strackor)],
         ["Sträckor med avbruten inspektion (hinder)", sum(1 for s in strackor if s.avbruten)],
         ["Relinade sträckor", sum(1 for s in strackor if s.relinad)],
+        ["Markprofil (från ArcMap)", (f"{sum(1 for s in strackor if s.mark)} sträckor med markhöjder, "
+                                     f"{sum(1 for s in strackor if s.hojdanpassning and s.hojdanpassning['offset'] is not None and s.gis_vg_start is not None)} "
+                                     f"med GIS-vattengång, {sum(1 for s in strackor if s.hojdflagga)} flaggade")
+         if any(s.mark or s.gis_vg_start is not None for s in strackor) else "saknas"],
         ["", ""],
         ["Prioritetsklass", "Antal sträckor", "Andel sträckor", "Längd (m)", "Andel längd"],
     ]
@@ -967,12 +1179,14 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Antal anslutningar", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
+           "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
            "Manuell bedömning", "Kommentar", "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
     rader = []
     for rang, s in enumerate(sorterade, 1):
         pa = s.profil_analys
         lut = s.lutning_promille
+        h, tk = s.hojdanpassning, s.tackning
         rader.append([rang, KLASS_TEXT[s.klass], s.fil, s.nr, s.startbrunn, s.slutbrunn, s.omrade,
                       s.ledningstyp.capitalize(), s.material, s.dimension + (f"/{s.dimension2}" if s.dimension2 else ""),
                       round(s.langd, 1), s.datum, round(s.index("K"), 1), round(s.index("D"), 1),
@@ -986,11 +1200,14 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(pa["bakfall"], 1) if pa else None,
                       round(lut, 1) if lut is not None else None,
                       ("Ja" if pa["osaker"] else "") if pa else "",
+                      h["status"] if h else "",
+                      round(tk["min"], 2) if tk else None, round(tk["max"], 2) if tk else None,
+                      s.hojdflagga,
                       "", "", "Öppna rapport" if s.rapport_fil else "", s.videofil])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
-                            "Manuell bedömning": 18, "Kommentar": 30},
+                            "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26},
            klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls})
     ci = kol.index("Svackdjup/diameter") + 1
     for r in range(2, ws.max_row + 1):
@@ -1147,6 +1364,14 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "rapport": s.rapport_fil.replace("\\", "/") if s.rapport_fil else None,
             "videofil": s.videofil,
             "video_sokvag": s.video_sokvag,
+            "hojdanpassning": s.hojdanpassning["status"] if s.hojdanpassning else None,
+            "hojd_offset_m": (round(s.hojdanpassning["offset"], 2)
+                              if s.hojdanpassning and s.hojdanpassning["offset"] is not None else None),
+            "gis_vg_start": s.gis_vg_start,
+            "gis_vg_slut": s.gis_vg_slut,
+            "tackning_min_m": round(s.tackning["min"], 2) if s.tackning else None,
+            "tackning_max_m": round(s.tackning["max"], 2) if s.tackning else None,
+            "hojdflagga": s.hojdflagga,
         })
 
     data = {
@@ -1427,27 +1652,32 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    x = [p[0] for p in s.profil]
-    z = [p[2] for p in s.profil]
+    prof = s.profil_korrigerad()
+    x = [p[0] for p in prof]
+    z = [p[1] for p in prof]
+    mark = s.mark_i_filmens_axel()
     vanster, hoger = s.fran_brunn, s.till_brunn
-    if z[-1] > z[0]:                       # spegla så att den höga änden hamnar till vänster
+    speglad = z[-1] > z[0]
+    if speglad:                            # spegla så att den höga änden hamnar till vänster
         L = x[-1]
         x = [L - xi for xi in x][::-1]
         z = z[::-1]
+        mark = [(L - xm, zm) for xm, zm in mark][::-1]
         vanster, hoger = hoger, vanster
     x0, z0, x1, z1 = x[0], z[0], x[-1], z[-1]
+    zalla = z + [zm for _, zm in mark]
 
     # fysisk storlek på axeln när bilden skrivs ut med bredden bild_bredd_mm
     bild_hojd_mm = bild_bredd_mm * PROFIL_FIG[1] / PROFIL_FIG[0]
     ax_w_mm = bild_bredd_mm * PROFIL_AX[2]
     ax_h_mm = bild_hojd_mm * PROFIL_AX[3]
     xspann = max(x1 - x0, 0.5) * 1.03
-    zspann = max(max(z) - min(z), 0.05) * 1.15
+    zspann = max(max(zalla) - min(zalla), 0.05) * 1.15
     langdskala = next((k for k in LANGDSKALOR if xspann * 1000 / k <= ax_w_mm), LANGDSKALOR[-1])
     hojdskala = next((k for k in HOJDSKALOR if zspann * 1000 / k <= ax_h_mm), HOJDSKALOR[-1])
     xvidd = ax_w_mm * langdskala / 1000    # m som ryms i axeln
     zvidd = ax_h_mm * hojdskala / 1000
-    zmitt = (max(z) + min(z)) / 2
+    zmitt = (max(zalla) + min(zalla)) / 2
 
     fig = plt.figure(figsize=PROFIL_FIG)
     ax = fig.add_axes(PROFIL_AX)
@@ -1465,7 +1695,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     pa = s.profil_analys
     if pa and pa["svackdjup"] is not None and pa["svackdjup"] > 0.01:
         xs = pa["svackpos"]
-        if s.profil[-1][2] > s.profil[0][2]:
+        if speglad:
             xs = s.profil[-1][0] - xs                       # speglad axel
         j = min(range(len(x)), key=lambda i: abs(x[i] - xs))   # höjd i profilen vid svackans position
         zi = z[j]
@@ -1475,6 +1705,17 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     if pa and pa["osaker"]:
         ax.text(0.99, 0.03, "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
                 ha="right", va="bottom", fontsize=7, color="#d03b3b")
+    if mark:
+        ax.plot([xm for xm, _ in mark], [zm for _, zm in mark], color="#8c6d46", lw=1.4,
+                label="markyta (GIS)")
+        ax.fill_between([xm for xm, _ in mark], [zm for _, zm in mark], zmitt - zvidd,
+                        color="#8c6d46", alpha=0.06, lw=0)
+        tk = s.tackning
+        if tk:
+            xt = s.profil[-1][0] - tk["pos_min"] if speglad else tk["pos_min"]
+            zm = min(mark, key=lambda p: abs(p[0] - xt))[1]
+            ax.annotate(f"täckning {tk['min']:.2f} m", (xt, zm), xytext=(0, 6), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=7.5, color="#8c6d46")
     ax.plot([x0, x1], [zj[0], zj[-1]], "o", ms=5, color="#4d4d4d")
     ax.annotate(f"{vanster}  {z0:.2f}", (x0, z0), xytext=(4, 6), textcoords="offset points", fontsize=7.5, fontweight="bold")
     ax.annotate(f"{hoger}  {z1:.2f}", (x1, z1), xytext=(-4, -12), textcoords="offset points", ha="right",
@@ -1484,6 +1725,10 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     if lut is not None:
         titel += f"   ·   lutning {abs(lut):.1f} ‰"
     titel += f"   ·   höjdskala 1:{hojdskala}   ·   längdskala 1:{langdskala}"
+    h = s.hojdanpassning
+    if h and h["offset"] is not None:
+        ax.text(0.01, 0.03, "höjdläge: " + h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else ""),
+                transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color="#52514e")
     ax.set_title(titel, fontsize=8.5, loc="left", fontweight="bold")
     ax.set_xlabel(f"position (m), 0 = {vanster}", fontsize=7.5)
     ax.set_ylabel("höjd (m)", fontsize=7.5)
@@ -1567,6 +1812,12 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
         ("Videofil", s.videofil or "–", "TV3-fil", s.fil),
     ]
+    h, tk = s.hojdanpassning, s.tackning
+    if h:
+        info.append(("Höjdläge", h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else ""),
+                     "Täckning (min / max)",
+                     (f"{tk['min']:.2f} / {tk['max']:.2f} m" + (f"  ·  {s.hojdflagga}" if s.hojdflagga else ""))
+                     if tk else "–"))
     if s.littera_rattat:
         info.append(("Littera rättat", s.littera_rattat, "", ""))
     rader = [[P(a, st_fet), P(b), P(c, st_fet), P(d)] for a, b, c, d in info]
@@ -1755,6 +2006,7 @@ Listpost = tuple[str, list[str], list[str]]      # (tv3-sökväg, filmkataloger,
 Globala = dict[str, list[str]]                    # {"media": [...], "bild": [...], "littera": [...]}
 _BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
 _MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
+_MARK_NYCKLAR = ("markprofil", "mark")
 
 
 def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
@@ -1779,11 +2031,11 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         p = p.strip().strip('"').strip("'")
         return p if os.path.isabs(p) else os.path.normpath(os.path.join(bas, p))
 
-    nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR
+    nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR + _MARK_NYCKLAR
                                                              + ("littera", "brunnslittera", "brunnar")),
                            re.IGNORECASE)
     poster: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": []}
     for rad in las_text(path).splitlines():
         rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
@@ -1791,7 +2043,8 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         m = nyckel_re.match(rad)
         if m:
             nyckel = m.group(1).lower()
-            slag = "bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR else "littera"
+            slag = ("bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR
+                    else "markprofil" if nyckel in _MARK_NYCKLAR else "littera")
             globala[slag] += [abs_(d) for d in m.group(2).split(";") if d.strip()]
             continue
         delar = rad.split(";")
@@ -1819,7 +2072,7 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Lis
     och littera-CSV:erna från listfilerna."""
     import glob
     kandidater: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": []}
 
     def lagg_till_lista(lf: str) -> None:
         p, g = las_listfil(lf)
@@ -1882,6 +2135,9 @@ def main(argv=None):
     ap.add_argument("--media", action="append", default=[], metavar="KATALOG",
                     help="extra katalog att söka videofiler i, och bilder om ingen bildkatalog angetts "
                          "(kan anges flera gånger); TV3-filens egen katalog söks alltid")
+    ap.add_argument("--markprofil", action="append", default=[], metavar="FIL.JSON",
+                    help="markprofil.json från ArcMap-verktyget Markprofil (markhöjder och GIS-vattengång); "
+                         "kan även anges i listfilen som 'markprofil: FIL'")
     ap.add_argument("--bilder", action="append", default=[], metavar="KATALOG",
                     help="katalog att söka bilder i (kan anges flera gånger); anges ingen söks "
                          "bilderna i videokatalogerna; kan även anges i listfilen som 'bild: KATALOG'")
@@ -1953,6 +2209,24 @@ def main(argv=None):
         if not os.path.isdir(m):
             print(f"  VARNING mediakatalog saknas: {m}")
     vh, vt, bh, bt = koppla_media(strackor, globala_media + a.media, globala_bild + a.bilder)
+    markfiler = []
+    for mf in globala["markprofil"] + a.markprofil:
+        if not os.path.isfile(mf):
+            fel.append(f"{mf}: markprofilen finns inte")
+            print(f"  VARNING markprofil saknas: {mf}")
+            continue
+        markfiler.append(las_markprofil(mf))
+    if markfiler:
+        n_mark, n_vg = koppla_markprofil(strackor, markfiler)
+        status = Counter(s.hojdanpassning["status"] for s in strackor if s.hojdanpassning)
+        print(f"Markprofil: {n_mark} sträckor med markhöjder, {n_vg} med GIS-vattengång"
+              + (f" ({markfiler[0]['hojdsystem']})" if markfiler[0]["hojdsystem"] else ""))
+        for st_, n in status.most_common():
+            print(f"  {n:>4} {st_}")
+        flaggade = [s for s in strackor if s.hojdflagga]
+        if flaggade:
+            print(f"  {len(flaggade)} sträckor med höjdflagga, t.ex. "
+                  + ", ".join(f"{s.id} ({s.hojdflagga})" for s in flaggade[:3]))
     print(f"\nVideofiler hittade: {vh} av {vt}   Bilder hittade: {bh} av {bt}")
     if vt and vh < vt:
         print("  (ange katalogen med filmerna i listfilen – 'media: KATALOG' eller 'fil.TV3 ; KATALOG' –\n"

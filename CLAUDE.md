@@ -48,9 +48,10 @@ littera: brunnslittera.csv             # ersättningslittera (kan upprepas)
 DUF 701.TV3                            # media söks alltid även i TV3-filens egen mapp (rekursivt)
 DUF 702.TV3 ; D:\Filmer\DUF702 ; bild: E:\Foton   # egen film- och bildmapp för just den filen
 C:\Inspektioner\2022\                  # katalog: alla .TV3 i den
+markprofil: Karta\markprofil.json      # från ArcMap-verktyget Markprofil (sep 2026), alias mark:
 ```
 Internt: `las_listfil` → `(poster, globala)` med poster `(tv3, filmkataloger, bildkataloger)` och
-`globala = {"media", "bild", "littera"}`; `Stracka.media_kataloger`/`bild_kataloger`;
+`globala = {"media", "bild", "littera", "markprofil"}`; `Stracka.media_kataloger`/`bild_kataloger`;
 `koppla_media(strackor, media, bild)` söker bilder i bildkataloger + TV3-mappen om några angetts,
 annars i filmkatalogerna.
 
@@ -127,6 +128,26 @@ skickas som text → "does not exist". Namnen slås upp till lagerobjekt via `ar
 Brunnar i SVOA-kartan: nedstigningsbrunnar (xNB/xNBL) i `A Nedstign och övriga brunnar`,
 rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn`, plus `A Platsgjuten brunnspunkt` –
 alla tre är standard.
+**Markprofil** (sep 2026, `arcmap/markprofil.py` + verktyget Markprofil i .pyt, oprövat i riktig ArcMap):
+läser bedömda-lagret (fält `NR` tillagt i EGNA_FALT för kopplingen), hämtar vattengång vid start-/
+slutbrunn ur ursprungliga ledningslagret (fält vid ledningens start-/slutvertex, valda i dialogen,
+gissas VG_UPP/VG_NED; ändpunkt inom tolerans från sträckans ände och grannvertex på linjen), samplar
+markhöjd var 1 m längs kartlinjen ur ett punktlager (Z eller fält; IDW av ≤ 8 punkter inom 5 m,
+rutnätsindex `Markpunkter`) och skriver `markprofil.json` (`strackor[]`: fil, nr, brunnar,
+langd_karta_m, vg_start, vg_slut, mark [[m från startbrunn, z, avstånd]]). I `tv3_analys.py`:
+`markprofil:`/`--markprofil`, `koppla_markprofil` (fil+nr, annars brunnspar), `Stracka.hojdanpassning`
+(status: "RH2000 ur filen" |diff| ≤ `HOJD_SAMMA_M` 0,3; "förskjuten till GIS" om fallet stämmer inom
+`HOJD_FALL_TOL_M` 0,3; "förskjuten och lutningskorrigerad" annars, offset + k·d från startbrunn;
+"okänt nollplan" utan GIS; "GIS-vattengång, rät linje" utan filhöjder), `profil_korrigerad()`
+(används av svacka och profilbild), `mark_i_filmens_axel()` (kartmeter skalas med langd_karta/langd
+och vänds vid motströms), `tackning` (mark − (vattengång + dimension); rät linje mellan brunnshöjder
+om profilen är osäker), `hojdflagga` ("Liten täckning" < `TACKNING_MIN_M` 1,0, "Ledning över mark –
+höjdfel"), `lutning_promille` ur korrigerade höjder. Excel: Höjdanpassning, Täckning min/max,
+Höjdflagga (före Manuell bedömning) + rad i Sammanfattning; JSON: hojdanpassning, hojd_offset_m,
+gis_vg_*, tackning_*, hojdflagga; PDF: rad Höjdläge/Täckning, brun markyta i profilen, täckning
+utsatt, höjdläge som text nere till vänster. Beräkningar cachas i `Stracka._cache` (rensas i
+koppla_markprofil). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
+markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 Kodgranskning sep 2026 (rättat, testat med låtsas-arcpy): diagnos skiljer på för många brunnar och
 för många bitar; tolerans ≤ 0 stoppas i verktyget och `Natverk`; shapefil/geodatabas avgörs med
@@ -289,5 +310,7 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 - Kostnadsuppskattning per sträcka (kr/m per metod).
 - Konsekvensfaktor (ledningens betydelse) som separat dimension – klassen beskriver bara
   tillstånd, inte risk.
-- Sträckor med "profil osäker": eventuellt möjlighet att korrigera inklinometern linjärt mot
-  brunnshöjderna i stället för att bara flagga.
+- Sträckor med "profil osäker": linjär korrigering mot GIS-brunnshöjder finns nu via markprofilen
+  (hojdanpassning); utan GIS-nivåer flaggas fortfarande bara.
+- Markprofil ur raster (höjdmodell) i stället för punktlager; locknivåer från brunnslagret;
+  datumtransformation vid GeoJSON-export för RT90-data.
