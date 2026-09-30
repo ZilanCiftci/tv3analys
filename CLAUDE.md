@@ -58,7 +58,13 @@ annars i filmkatalogerna.
 Utdata i `tv3_resultat/` (eller `-o`):
 - `prioritering.xlsx` – flikar **Sammanfattning** (nyckeltal, klassfördelning, metodparametrar,
   inbäddade diagram), **Prioritering** (en rad per sträcka, rankad; klassceller färgade;
-  hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut `file:///`-länk)),
+  hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut `file:///`-länk);
+  **dolda kolumner** sep 2026: `DOLDA_KOLUMNER` i KONFIG per flik, varje dold kolumn får
+  `hidden=True` + `outlineLevel=1` (kolumngrupp med plustecken, `summaryRight=False`) – synliga i
+  Prioritering: Rang, Klass, Nr, brunnar, Material, Dim, Längd, Konstruktionsindex, Konstr. maxgrad,
+  Antal anslutningar, Skador, Driftåtgärd, Avbruten, Relinad, Svackdjup, Höjdflagga, Manuell
+  bedömning, Kommentar, Rapport, Videofil; Observationer döljer Fil, Typ, Löpande, Klocka till,
+  Vattennivå),
   **Observationer** (alla observationer i klartext, länk till bild och video),
   **Kodstatistik**, **Per fil**, **Material** (relinade sträckor redovisas som eget material
   `Relinad` med ursprungsmaterialet i egen kolumn – styrs av `RELINAD_SOM_MATERIAL` i KONFIG;
