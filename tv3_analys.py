@@ -168,6 +168,8 @@ HOJD_SAMMA_M = 0.3      # m – avviker filens brunnshöjder mindre än så frå
 HOJD_FALL_TOL_M = 0.3   # m – skiljer sig fallet mellan brunnarna mer än så från GIS korrigeras
                         #     lutningen linjärt (inklinometerdrift), annars bara en förskjutning
 TACKNING_MIN_M = 1.0    # m – mindre täckning (mark − hjässa) än så flaggas
+OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartlängden nådde kameran inte
+                           # fram – profilen hängs då bara upp i den brunn kameran startade i
 
 # Relinade (infodrade) sträckor redovisas som ett eget material i fliken Material och i
 # diagrammet "Prioritetsklass per material", i stället för som rörets ursprungsmaterial.
@@ -398,6 +400,15 @@ class Stracka:
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     # ---- höjdläge: filmens höjder mot GIS ----
+    @property
+    def ofullstandig(self) -> bool:
+        """Kameran nådde inte fram till den andra brunnen: avbruten inspektion (KAM/HINDE) eller
+        filmad längd klart kortare än ledningen i kartan. Filens 'sluthöjd' är då höjden där
+        kameran stannade, inte slutbrunnens."""
+        if self.avbruten:
+            return True
+        return bool(self.langd_karta) and self.langd < OFULLSTANDIG_ANDEL * self.langd_karta
+
     def _filens_brunnshojder(self) -> tuple[float | None, float | None]:
         """Filens höjd vid start- och slutbrunn (flödesriktning): PROFILADM i första hand,
         annars inklinometerprofilens ändpunkter."""
@@ -423,10 +434,25 @@ class Stracka:
         zs, ze = self._filens_brunnshojder()
         gs, ge = self.gis_vg_start, self.gis_vg_slut
         if zs is None or ze is None:
-            if gs is not None and ge is not None:
+            if gs is not None and ge is not None and not self.ofullstandig:
                 return {"status": "GIS-vattengång, rät linje", "offset": None, "k": 0.0,
                         "z_start": gs, "z_slut": ge}
             return None
+        if self.ofullstandig:
+            # Bara brunnen kameran startade i är nådd: förskjut så att den änden hamnar på
+            # GIS-nivån, ingen lutningskorrigering (den andra änden är inte en brunn)
+            fran_start = self.fran_brunn == self.startbrunn
+            g, z = (gs, zs) if fran_start else (ge, ze)
+            if g is None:
+                if self.langd_karta is None:
+                    return None
+                return {"status": "okänt nollplan (GIS-vattengång saknas)", "offset": 0.0, "k": 0.0,
+                        "z_start": zs, "z_slut": ze}
+            d = g - z
+            if abs(d) <= HOJD_SAMMA_M:
+                return {"status": "RH2000 ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
+            return {"status": f"förskjuten till GIS vid {self.fran_brunn} (avbruten inspektion)",
+                    "offset": d, "k": 0.0, "z_start": zs + d, "z_slut": ze + d}
         if gs is None or ge is None:
             if self.langd_karta is None:
                 return None
@@ -483,11 +509,21 @@ class Stracka:
         skalas till filmens längd och vänds om kameran gick motströms."""
         if not self.mark or self.langd <= 0:
             return []
-        sk = (self.langd_karta / self.langd) if self.langd_karta else 1.0
+        fran_start = self.fran_brunn == self.startbrunn
         ut = []
+        if self.ofullstandig:
+            # Kameran nådde inte fram: ingen skalning, kartmeter från kamerans brunn = filmens
+            # position, och bara den filmade delen tas med
+            Lk = self.langd_karta or max(p for p, _ in self.mark)
+            for pos, z in self.mark:
+                x = pos if fran_start else Lk - pos
+                if -0.5 <= x <= self.langd + 1.0:
+                    ut.append((max(0.0, x), z))
+            return sorted(ut)
+        sk = (self.langd_karta / self.langd) if self.langd_karta else 1.0
         for pos, z in self.mark:
             d = pos / sk if sk else pos
-            x = d if self.fran_brunn == self.startbrunn else self.langd - d
+            x = d if fran_start else self.langd - d
             ut.append((x, z))
         return sorted(ut)
 
@@ -1656,7 +1692,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     x = [p[0] for p in prof]
     z = [p[1] for p in prof]
     mark = s.mark_i_filmens_axel()
-    vanster, hoger = s.fran_brunn, s.till_brunn
+    vanster, hoger = s.fran_brunn, ("avbrott" if s.ofullstandig else s.till_brunn)
     speglad = z[-1] > z[0]
     if speglad:                            # spegla så att den höga änden hamnar till vänster
         L = x[-1]
@@ -1683,7 +1719,8 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     ax = fig.add_axes(PROFIL_AX)
     ax.set_xlim(x0 - (xvidd - (x1 - x0)) / 2, x0 - (xvidd - (x1 - x0)) / 2 + xvidd)
     ax.set_ylim(zmitt - zvidd / 2, zmitt + zvidd / 2)
-    ax.plot([x0, x1], [z0, z1], color="#4d4d4d", lw=0.9, ls="--", label="rät linje mellan brunnarna")
+    ax.plot([x0, x1], [z0, z1], color="#4d4d4d", lw=0.9, ls="--",
+            label="rät linje mellan ändpunkterna" if s.ofullstandig else "rät linje mellan brunnarna")
     # Höjderna i TV3-filen är avrundade till hela cm, vilket ger en trappstegsformad linje på flacka
     # ledningar. Linjen jämnas ut med ett glidande medelvärde (±0,3 m) enbart för uppritningen;
     # svacka, bakfall och lutning beräknas på rådata.
