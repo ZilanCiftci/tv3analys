@@ -67,10 +67,18 @@ Utdata i `tv3_resultat/` (eller `-o`):
   i en temporär katalog och bäddas enbart in i fliken Sammanfattning (KONFIG: `SPARA_DIAGRAM`).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.
   `--behall-rapporter` (KONFIG `BEHALL_RAPPORTER`) hoppar över PDF:er som redan finns – länken sätts
-  ändå; kör utan flaggan när layouten ändrats.
+  ändå; kör utan flaggan när layouten ändrats. `rensa_gamla_rapporter` tar alltid bort PDF:er med
+  samma `<fil>_<nr>_`-prefix men annat namn (gammal klassbokstav/littera).
 - `kartunderlag.json` – en post per sträcka (brunnspar, maskinell bedömning, index, material,
   flaggor) för ArcMap-skriptet. Stängs av med `--karta nej` (KONFIG: `SKRIV_KARTUNDERLAG`).
-- `fel.txt` – bara om TV3-filer eller mediamappar saknades.
+- `fel.txt` – bara om TV3-filer eller mediamappar saknades (tas bort vid felfri omkörning).
+- Kodgranskning sep 2026 rättade: tom Kodstatistik kraschade `tabell()`; diagram 4 delade med noll
+  för material utan längd; hårdkodade radnummer i Sammanfattning (nu söks "Prioritetsklass"/
+  "Poängmodell"); `fran_brunn` faller tillbaka på Riktning när utgångsbrunnen inte är en av
+  sträckans brunnar (felstavning vände annars profilen); litterafilens rubrikrad matchas på
+  nyckelord ("Felaktigt littera" → fel) med varning om fel/ratt saknas; Per fil/Material visar
+  konstruktionsindex; två TV3-filer med samma namn får `mapp/namn` som `fil`; mediaindexet
+  sorterar `os.walk` för determinism.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).
 
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
@@ -84,8 +92,10 @@ mellan brunnarna ur `A Ledning`. Matchningen är **grafbaserad** (`Natverk` i sk
 JSON-filens brunnar är noder; varje ledningsdel delas där en sökt brunn ligger inom toleransen
 (2 m) från *linjen* (vertex eller mitt på ett segment), fria ledningsändar blir noder och ändar
 inom toleransen slås ihop. Vägen brunn→brunn söks med BFS (färst bitar, högst `MAX_HOPP−1`
-andra sökta brunnar emellan, högst 8 bitar) – så hittas sträckor uppdelade i flera
-ledningsobjekt (fältet `ANT_DELAR`) och brunnar utan egen vertex. Geometrin orienteras
+andra sökta brunnar emellan, högst `MAX_DELAR` = 8 bitar; BFS:en håller bästa antal
+mellanbrunnar per nod och får återbesöka en nod med färre – annars blockerade en slinga i nätet
+den enda tillåtna vägen, rättat sep 2026) – så hittas sträckor uppdelade i flera
+ledningsobjekt (fältet `ANT_DELAR` = antal ledningsobjekt, inte bitar) och brunnar utan egen vertex. Geometrin orienteras
 startbrunn→slutbrunn. Första körningen med gamla vertex-metoden (steg2-skriptets) gav 136/180;
 CSV:n över omatchade har kolumner med avstånd brunn→närmaste ledning samt `diagnos`
 (`Natverk.diagnos`: "hoj max hopp till N", "glapp X m vid (x, y)", "annat lager", "brunnen … finns
@@ -118,6 +128,19 @@ Brunnar i SVOA-kartan: nedstigningsbrunnar (xNB/xNBL) i `A Nedstign och övriga 
 rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn`, plus `A Platsgjuten brunnspunkt` –
 alla tre är standard.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
+Kodgranskning sep 2026 (rättat, testat med låtsas-arcpy): diagnos skiljer på för många brunnar och
+för många bitar; tolerans ≤ 0 stoppas i verktyget och `Natverk`; shapefil/geodatabas avgörs med
+`Describe(ut_ws).dataType == 'Folder'` (feature dataset/.mdb/.sde funkade inte; domänen läggs i
+geodatabasen ovanför ett feature dataset); befintligt utdatalager tas bort ur kartan
+(`RemoveLayer`) och raderas före `CreateFeatureclass` (schemalås vid omkörning); manuella
+bedömningar som inte matchas igen loggas och skrivs i CSV:n (kolumn `manuell_bedomning`);
+`kopiera_falt` läses per ledningslager (saknat fält → NULL) och utdatanamnet tas från
+`ListFields` efter `AddField` (shapefil kortar >10 tecken); DATE-fält behåller NULL i shapefil
+och GeoJSON serialiserar datum som text; brunnar i annat koordinatsystem projiceras till
+ledningslagrets; brunns-id på flera ställen (> tolerans isär) varnas; `logg`/`txt` tål stdout
+utan teckenkodning och undantag med cp1252-bytes; sträckor utan brunnspar räknas i loggen.
+Verktygsetiketten säger nu "inkl. slutbrunnen (2 = en mellanbrunn)". Kvar: ingen
+datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för RT90).
 
 ## 3. TV3-formatet (Svenskt Vatten TV-fil v3.0, P93-koder) – det vi lärt oss
 
