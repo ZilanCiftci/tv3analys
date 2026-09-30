@@ -34,6 +34,9 @@ STANDARD_LEDNING = ['A Ledning']
 STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbrunn',
                   'A Platsgjuten brunnspunkt']
 STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
+STANDARD_MARKPROFIL = 'markprofil.json'  # foreslas bredvid kartunderlag.json
+STANDARD_VG_FRAN = ['VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
+STANDARD_VG_TILL = ['VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
 
 def _ladda_modul(namn='skapa_ledningslager'):
@@ -119,6 +122,27 @@ def _lagerobjekt(namn):
     return None
 
 
+def _faltnamn(param):
+    """Faltnamnen i det (forsta) lager som en lagerparameter pekar pa, annars []."""
+    namn = _lagerlista(param)
+    if not namn:
+        return []
+    l = _lagerobjekt(namn[0])
+    try:
+        return [f.name for f in arcpy.ListFields(l.dataSource if l else namn[0])]
+    except Exception:
+        return []
+
+
+def _forsta_traff(kandidater, faltnamn):
+    """Forsta kandidaten som finns bland faltnamnen (skiftlage spelar ingen roll)."""
+    upp = dict((f.upper(), f) for f in faltnamn)
+    for k in kandidater:
+        if k.upper() in upp:
+            return upp[k.upper()]
+    return None
+
+
 def _kolla_geometri(param, tillatna, vad):
     """Varnar om nagot valt lager har fel geometrityp eller inte finns i kartan."""
     if not param.valueAsText:
@@ -146,7 +170,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning]
+        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil]
 
 
 class SkapaLedningslager(object):
@@ -326,4 +350,127 @@ class UppdateraBedomning(object):
             arcpy.RefreshActiveView()
         except Exception:
             pass
+        return
+
+
+class Markprofil(object):
+    def __init__(self):
+        self.label = 'Markprofil'
+        self.description = (
+            'Tar ut markh\u00f6jden l\u00e4ngs varje str\u00e4cka i ledningslagret fr\u00e5n "Skapa '
+            'ledningslager" ur ett punktlager med markh\u00f6jder, och vatteng\u00e5ngsniv\u00e5erna i '
+            'b\u00e5da \u00e4ndarna ur det ursprungliga ledningslagret. Skriver markprofil.json som '
+            'tv3_analys.py anv\u00e4nder f\u00f6r att rita mark mot ledning i protokollen och '
+            'r\u00e4kna t\u00e4ckning.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+
+        bedomda = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager"', 'bedomda',
+                              False, kartlager)
+        ledning = _lagerparam('Ursprungligt ledningslager (med vatteng\u00e5ng)', 'ledningslager',
+                              True, kartlager)
+        vg_fran = arcpy.Parameter(
+            displayName='F\u00e4lt med vatteng\u00e5ng vid ledningens startpunkt (uppstr\u00f6ms)',
+            name='vg_fran', datatype='GPString', parameterType='Required', direction='Input')
+        vg_till = arcpy.Parameter(
+            displayName='F\u00e4lt med vatteng\u00e5ng vid ledningens slutpunkt (nedstr\u00f6ms)',
+            name='vg_till', datatype='GPString', parameterType='Required', direction='Input')
+        mark = _lagerparam('Markh\u00f6jder (punktlager)', 'marklager', False, kartlager)
+        z_falt = arcpy.Parameter(
+            displayName='F\u00e4lt med markh\u00f6jd (tomt = punkternas Z)', name='z_falt',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        json_ut = arcpy.Parameter(
+            displayName='Utdata (markprofil.json, l\u00e4ggs bredvid kartunderlag.json)',
+            name='json_ut', datatype='DEFile', parameterType='Required', direction='Output')
+        _filter(json_ut, ['json'])
+
+        intervall = arcpy.Parameter(
+            displayName='Avst\u00e5nd mellan markh\u00f6jdsproven l\u00e4ngs ledningen (m)',
+            name='intervall', datatype='GPDouble', parameterType='Required', direction='Input',
+            category='Inst\u00e4llningar')
+        intervall.value = 1.0
+        sokradie = arcpy.Parameter(
+            displayName='S\u00f6kradie f\u00f6r markh\u00f6jdspunkter (m)', name='sokradie',
+            datatype='GPDouble', parameterType='Required', direction='Input',
+            category='Inst\u00e4llningar')
+        sokradie.value = 5.0
+        tolerans = arcpy.Parameter(
+            displayName='Tolerans mellan str\u00e4ckans \u00e4nde och ledningens \u00e4nde (m)',
+            name='tolerans', datatype='GPDouble', parameterType='Required', direction='Input',
+            category='Inst\u00e4llningar')
+        tolerans.value = 2.0
+        hojdsystem = arcpy.Parameter(
+            displayName='H\u00f6jdsystem i kartan (skrivs i filen)', name='hojdsystem',
+            datatype='GPString', parameterType='Required', direction='Input',
+            category='Inst\u00e4llningar')
+        hojdsystem.value = 'RH2000'
+
+        _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
+        return [bedomda, ledning, vg_fran, vg_till, mark, z_falt, json_ut,
+                intervall, sokradie, tolerans, hojdsystem]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        # Faltlistor ur valda lager, och gissning pa vattengangsfalten
+        if parameters[1].altered and parameters[1].valueAsText:
+            falt = _faltnamn(parameters[1])
+            if falt:
+                _filter(parameters[2], falt)
+                _filter(parameters[3], falt)
+                if not parameters[2].altered:
+                    parameters[2].value = _forsta_traff(STANDARD_VG_FRAN, falt)
+                if not parameters[3].altered:
+                    parameters[3].value = _forsta_traff(STANDARD_VG_TILL, falt)
+        if parameters[4].altered and parameters[4].valueAsText:
+            falt = _faltnamn(parameters[4])
+            if falt:
+                _filter(parameters[5], [''] + falt)
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[6].altered:
+            l = _lagerobjekt(parameters[0].valueAsText)
+            try:
+                mapp = os.path.dirname(l.dataSource if l else parameters[0].valueAsText)
+                if mapp:
+                    parameters[6].value = os.path.join(mapp, STANDARD_MARKPROFIL)
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslagret')
+        _kolla_geometri(parameters[1], ('Polyline',), 'Ledningslager')
+        _kolla_geometri(parameters[4], ('Point',), 'Markh\u00f6jder')
+        if parameters[0].valueAsText:
+            namn = [f.upper() for f in _faltnamn(parameters[0])]
+            if namn and 'FRAN_BRUNN' not in namn:
+                parameters[0].setErrorMessage(
+                    'Lagret saknar faltet FRAN_BRUNN - valj lagret fran "Skapa ledningslager".')
+            elif namn and 'NR' not in namn:
+                parameters[0].setWarningMessage(
+                    'Lagret saknar faltet NR (skapat med en aldre version) - kor "Skapa '
+                    'ledningslager" igen for saker koppling till TV3-filen.')
+        for i in (7, 8, 9):
+            if parameters[i].value is not None and not parameters[i].value > 0:
+                parameters[i].setErrorMessage('Storre an 0')
+        return
+
+    def execute(self, parameters, messages):
+        m = _ladda_modul('markprofil')
+        _ladda_modul('skapa_ledningslager')
+        m.markprofil(
+            parameters[0].valueAsText.strip("'"),
+            _lagerlista(parameters[1]),
+            parameters[2].valueAsText,
+            parameters[3].valueAsText,
+            parameters[4].valueAsText.strip("'"),
+            parameters[6].valueAsText,
+            z_falt=(parameters[5].valueAsText or '').strip() or None,
+            intervall=float(parameters[7].value),
+            sokradie=float(parameters[8].value),
+            tolerans=float(parameters[9].value),
+            hojdsystem=parameters[10].valueAsText or 'RH2000',
+        )
         return
