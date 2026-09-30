@@ -192,6 +192,16 @@ KARTUNDERLAG_FIL = "kartunderlag.json"
 # utan flaggan när layouten ändrats.
 BEHALL_RAPPORTER = False
 
+# Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
+# kolumnrubrikerna, eller Data > Dela upp grupp). Allt finns kvar i filen. Tom lista = visa allt.
+DOLDA_KOLUMNER = {
+    "Prioritering": ["Fil", "Område", "Ledningstyp", "Datum", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
+                     "Drift maxgrad", "Antal skador", "Inspekterad flera ggr", "Littera rättat",
+                     "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
+                     "Höjdanpassning", "Täckning min (m)", "Täckning max (m)"],
+    "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
+}
+
 
 # ----------------------------------------------------------------------------
 # Datamodell
@@ -1095,8 +1105,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
 
     lank = Font(color="0563C1", underline="single")
 
-    def tabell(ws, kolumner, rader, bredder=None, klasskol=None, lankar=None):
-        """lankar: {kolumnindex: [url eller None per rad]} – gör cellerna klickbara."""
+    def tabell(ws, kolumner, rader, bredder=None, klasskol=None, lankar=None, dolda=None):
+        """lankar: {kolumnindex: [url eller None per rad]} – gör cellerna klickbara.
+        dolda: kolumnrubriker som döljs (grupperade, så de kan fällas ut med plustecknet)."""
         ws.append(kolumner)
         for c in ws[1]:
             c.font, c.fill, c.border = rubrik, rubrikfyll, kant
@@ -1124,6 +1135,22 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                               default=0)
                 b = min(45, max(10, langsta + 2, len(kol) + 2))
             ws.column_dimensions[get_column_letter(i)].width = b
+        # Dolda kolumner: sammanhängande block grupperas med outline så att Excel visar ett
+        # plustecken ovanför rubrikraden där de kan fällas ut
+        index = sorted(i for i, kol in enumerate(kolumner, 1) if kol in set(dolda or []))
+        block: list[list[int]] = []
+        for i in index:
+            if block and i == block[-1][-1] + 1:
+                block[-1].append(i)
+            else:
+                block.append([i])
+        for b in block:
+            for i in b:                      # per kolumn: bredden är redan satt på samma objekt
+                cd = ws.column_dimensions[get_column_letter(i)]
+                cd.hidden = True
+                cd.outlineLevel = 1
+        if block:
+            ws.sheet_properties.outlinePr.summaryRight = False
 
     # ---- Sammanfattning ----
     ws = wb.active
@@ -1244,7 +1271,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
                             "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26},
-           klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls})
+           klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
+           dolda=DOLDA_KOLUMNER.get("Prioritering"))
     ci = kol.index("Svackdjup/diameter") + 1
     for r in range(2, ws.max_row + 1):
         ws.cell(r, ci).number_format = "0%"
@@ -1268,7 +1296,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                           o.grad, o.poang or None, o.lopande, o.lopande_langd,
                           o.klocka_fran, o.klocka_till, o.vattenniva, o.bild or o.bild_b, o.kommentar, s.videofil])
     tabell(ws, kol, rader, {"Beskrivning": 50, "Kommentar": 30, "Prioritetsklass": 24}, klasskol=4,
-           lankar={kol.index("Bild"): bild_urls, kol.index("Videofil"): video_urls})
+           lankar={kol.index("Bild"): bild_urls, kol.index("Videofil"): video_urls},
+           dolda=DOLDA_KOLUMNER.get("Observationer"))
 
     # ---- Kodstatistik ----
     ws = wb.create_sheet("Kodstatistik")
