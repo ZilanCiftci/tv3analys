@@ -201,7 +201,8 @@ class SkapaLedningslager(object):
         tolerans.value = 2.0
 
         max_hopp = arcpy.Parameter(
-            displayName='Max antal brunnar en str\u00e4cka f\u00e5r passera', name='max_hopp',
+            displayName='Max antal brunnar en str\u00e4cka f\u00e5r passera, inkl. slutbrunnen (2 = en mellanbrunn)',
+            name='max_hopp',
             datatype='GPLong', parameterType='Required', direction='Input',
             category='Matchning')
         max_hopp.value = 2
@@ -256,6 +257,8 @@ class SkapaLedningslager(object):
         _kolla_geometri(parameters[1], ('Polyline',), 'Ledningslager')
         _kolla_geometri(parameters[2], ('Point',), 'Brunnslager')
         _kolla_geometri(parameters[5], ('Polygon',), 'Omradeslager')
+        if parameters[8].value is not None and not parameters[8].value > 0:
+            parameters[8].setErrorMessage('Storre an 0')
         if parameters[9].value is not None and parameters[9].value < 1:
             parameters[9].setErrorMessage('Minst 1')
         return

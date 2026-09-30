@@ -10,12 +10,13 @@ Tva satt att kora:
   2. I ArcMaps Python-fonster med kartan oppen, med installningarna i KONFIG nedan:
          execfile(r'H:\PY\tv3analys\arcmap\skapa_ledningslager.py')
 
-Indata ar kartunderlag.json fran tv3_analys.py. For varje stracka i JSON-filen
-(ett brunnspar) letas ledningen mellan brunnarna upp: alla vertexpunkter i
-ledningslagret gas igenom, narmaste brunn inom TOLERANS soks upp, och det
-stycke som ligger mellan de tva brunnarna klipps ut som ett eget objekt.
-Detta hanterar complex edges som passerar flera brunnar utan att vara fysiskt
-uppdelade.
+Indata ar kartunderlag.json fran tv3_analys.py. Ledningslagret byggs om till en graf
+(Natverk): varje ledningsdel delas dar en brunn ur JSON-filen ligger inom TOLERANS fran
+linjen, fria ledningsandar blir noder och andar inom toleransen slas ihop. For varje
+stracka (brunnspar) soks vagen med farst bitar mellan brunnarna, med hogst MAX_HOPP - 1
+andra sokta brunnar emellan och hogst MAX_DELAR bitar, och den klipps ut som ett eget
+objekt. Det hanterar bade ledningar som passerar flera brunnar utan att vara fysiskt
+uppdelade och strackor som bestar av flera ledningsobjekt.
 
 Varje objekt far tva bedomningsfalt:
     MASK_BED  "Maskinell bedomning" - prioritetsklass A-E fran poangmodellen
@@ -63,7 +64,8 @@ LYR_FIL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bedomda_ledn
 
 TOLERANS = 2.0     # meter mellan ledningens vertex och brunnen
 MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLAGER anges)
-MAX_HOPP = 2       # hur manga brunnar en filmad stracka far passera
+MAX_HOPP = 2       # brunnar en filmad stracka far passera, inkl. slutbrunnen (2 = en mellanbrunn)
+MAX_DELAR = 8      # hogsta antal ledningsbitar en stracka far besta av
 URVAL    = 'INTERSECT'     # 'WITHIN' om ledningen maste ligga helt inom omradet
 
 # Falt fran ledningslagret som ska folja med till resultatet.
@@ -118,13 +120,16 @@ def txt(v):
     if isinstance(v, TEXTTYP):
         return v
     if isinstance(v, bytes):
-        for enc in ('utf-8', 'cp1252', 'latin-1'):
+        for enc in ('utf-8', 'cp1252'):
             try:
                 return v.decode(enc)
             except UnicodeDecodeError:
                 continue
         return v.decode('latin-1', 'replace')
-    return TEXTTYP(v)
+    try:
+        return TEXTTYP(v)
+    except UnicodeDecodeError:          # t.ex. IOError med cp1252-sokvag i Python 2
+        return txt(str(v))
 
 
 def normalisera(littera):
@@ -141,8 +146,11 @@ def logg(*args):
         arcpy.AddMessage(rad)
     except Exception:
         pass
-    print(rad)
-    sys.stdout.flush()
+    try:
+        print(rad)
+        sys.stdout.flush()
+    except (UnicodeEncodeError, IOError, AttributeError):
+        pass                             # stdout utan teckenkodning eller flush (ArcMap-dialog)
 
 
 # ------------------------------------------------ lager och falt
@@ -252,6 +260,8 @@ class Natverk(object):
 
     def __init__(self, sokta, tol, sokradie=25.0):
         self.tol = float(tol)
+        if not self.tol > 0:
+            raise RuntimeError('Toleransen maste vara storre an 0 m')
         self.sokradie = max(float(sokradie), self.tol)
         self.cell = self.sokradie
         self.rutnat = {}
@@ -353,7 +363,10 @@ class Natverk(object):
         if start not in self.kanter or mal not in self.kanter:
             return None
         ko = deque([(start, [], 0)])
-        sedda = set([start])
+        # Farsta antal mellanbrunnar som noden natts med. En nod far besokas igen om den
+        # nas med farre mellanbrunnar - annars kan en kortare vag via en brunn blockera
+        # den enda tillatna vagen runt en slinga i natet.
+        basta_hopp = {start: 0}
         while ko:
             nod, vagen, hopp = ko.popleft()
             if len(vagen) >= max_delar:
@@ -361,14 +374,14 @@ class Natverk(object):
             for annan, pts, lager, oid in self.kanter.get(nod, ()):
                 if annan == mal:
                     return vagen + [(annan, pts, lager, oid)]
-                if annan in sedda:
-                    continue
                 h = hopp
                 if annan[0] == 'B':
                     h += 1
                     if h > max_hopp - 1:
                         continue
-                sedda.add(annan)
+                if h >= basta_hopp.get(annan, 999):
+                    continue
+                basta_hopp[annan] = h
                 ko.append((annan, vagen + [(annan, pts, lager, oid)], h))
         return None
 
@@ -385,7 +398,7 @@ class Natverk(object):
                     ko.append(annan)
         return sedda
 
-    def diagnos(self, a, b, max_hopp):
+    def diagnos(self, a, b, max_hopp, max_delar=8):
         """Varfor hittades ingen vag mellan a och b? Returnerar en forklaring."""
         start, mal = ('B', a), ('B', b)
         if start not in self.kanter or mal not in self.kanter:
@@ -393,13 +406,17 @@ class Natverk(object):
         v = self.vag(a, b, 999, 200)
         if v:
             n_br = sum(1 for nod, pts, lager, oid in v[:-1] if nod[0] == 'B')
-            return ('vag finns via %d bitar och %d andra brunnar - hoj max hopp till %d'
-                    % (len(v), n_br, n_br + 1))
+            if n_br + 1 > max_hopp:
+                return ('vag finns via %d bitar och %d andra brunnar - hoj max hopp till %d'
+                        % (len(v), n_br, n_br + 1))
+            return ('vag finns men via %d bitar (max %d) - hoj max delar'
+                    % (len(v), max_delar))
         ka = self.komponent(start)
         kb = self.komponent(mal)
         if ka == kb:
             return 'samma natverk men vagen ar orimligt lang'
-        # Narmaste avstand mellan de tva natverksdelarna (rutnat over den mindre delen)
+        # Narmaste avstand mellan de tva natverksdelarna (rutnat over den storre delen,
+        # sokning fran den mindre)
         if len(kb) < len(ka):
             ka, kb = kb, ka
         c = self.cell
@@ -558,7 +575,8 @@ def skriv_geojson(fc, falt, geojson_ut, decimaler=7):
                     v = None
                 egenskaper[namn] = v
             poster.append({'type': 'Feature', 'geometry': geometri, 'properties': egenskaper})
-    text = json.dumps({'type': 'FeatureCollection', 'features': poster}, ensure_ascii=False)
+    text = json.dumps({'type': 'FeatureCollection', 'features': poster}, ensure_ascii=False,
+                      default=txt)                  # datum m.m. som text
     with io.open(geojson_ut, 'w', encoding='utf-8') as f:
         f.write(txt(text))
     return len(poster)
@@ -594,9 +612,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           omradeslager=None, csv_ut=None, lyr_fil=None,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
           kopiera_falt=None, lagg_till_i_kartan=True,
-          rapportmapp=None, filmmapp=None, geojson_ut=None):
+          rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=8):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen."""
     kopiera_falt = kopiera_falt or []
+    if not float(tolerans) > 0:
+        raise RuntimeError('Toleransen maste vara storre an 0 m')
     if isinstance(ledningslager, (TEXTTYP, bytes)):
         ledningslager = [ledningslager]
     if isinstance(brunnslager, (TEXTTYP, bytes)):
@@ -621,19 +641,40 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         raise RuntimeError('Inga brunnspar kunde lasas ur JSON-filen')
 
     # ---------------------------------------------------- 3. Brunnar
+    # Allt raknas i ledningslagrets koordinatsystem; brunnar i ett annat system projiceras.
+    d0 = arcpy.Describe(kalla(led_lager[0])[0])
+    sr = d0.spatialReference
+
+    def _sr_namn(d):
+        try:
+            return txt(d.spatialReference.name)
+        except Exception:
+            return ''
+
     brunnar = []
     for lyr in brunn_lager:
         idfalt = hitta_falt(lyr, brunn_id)
         src, dq = kalla(lyr)
+        projicera = _sr_namn(arcpy.Describe(src)) not in ('', _sr_namn(d0))
+        if projicera:
+            logg('  %s har annat koordinatsystem an ledningslagret - projiceras'
+                 % txt(getattr(lyr, 'name', lyr)))
         arcpy.MakeFeatureLayer_management(src, 'lyr_br', dq)
         if omrade is not None:
             arcpy.SelectLayerByLocation_management(
                 'lyr_br', 'INTERSECT', omrade, '%s Meters' % marginal, 'NEW_SELECTION')
         n = 0
-        with arcpy.da.SearchCursor('lyr_br', [idfalt, 'SHAPE@XY']) as mark:
-            for bid, xy in mark:
+        with arcpy.da.SearchCursor('lyr_br', [idfalt, 'SHAPE@' if projicera else 'SHAPE@XY']) as mark:
+            for bid, geom in mark:
                 nid = normalisera(bid)
-                if nid and xy and xy[0] is not None:
+                if not nid or geom is None:
+                    continue
+                if projicera:
+                    pt = geom.projectAs(sr).firstPoint
+                    xy = (pt.X, pt.Y) if pt is not None else None
+                else:
+                    xy = geom
+                if xy and xy[0] is not None:
                     brunnar.append((nid, xy[0], xy[1]))
                     n += 1
         logg('  %s: %d brunnar' % (txt(getattr(lyr, 'name', lyr)), n))
@@ -668,29 +709,48 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         elif len(saknade) <= 20:
             logg('  saknade: %s' % ', '.join(saknade))
 
-    # Bara JSON-filens brunnar behovs for matchningen (forsta forekomsten vinner)
+    # Bara JSON-filens brunnar behovs for matchningen (forsta forekomsten vinner).
+    # Samma id pa flera stallen (t.ex. i tva brunnslager) langre isar an toleransen loggas.
     sokta = {}
+    dubbla = []
     for bid, x, y in brunnar:
-        if bid in json_brunnar and bid not in sokta:
+        if bid not in json_brunnar:
+            continue
+        if bid not in sokta:
             sokta[bid] = (x, y)
+        elif _avst(sokta[bid], (x, y)) > tolerans:
+            dubbla.append('%s (%.0f m)' % (bid, _avst(sokta[bid], (x, y))))
+    if dubbla:
+        logg('  VARNING: %d brunnar finns pa flera stallen i brunnslagren, forsta anvands: %s'
+             % (len(dubbla), ', '.join(dubbla[:10]) + (' ...' if len(dubbla) > 10 else '')))
 
     # ---------------------------------------------------- 4. Utdata
-    d0 = arcpy.Describe(kalla(led_lager[0])[0])
-    sr = d0.spatialReference
     # Utdata skrivs alltid i 2D: Z i ledningsnatverket ar odefinierat (-9999) och
     # 3D-shapefiler/GeoJSON med fyra koordinater stoppar de flesta webb-GIS.
     har_z = False
 
     ut_ws = os.path.dirname(ut_fc)
     ut_namn = os.path.basename(ut_fc)
-    ar_shapefil = not ut_ws.lower().endswith('.gdb')
+    if not os.path.isdir(ut_ws) and not arcpy.Exists(ut_ws):
+        raise RuntimeError('Utdatamappen finns inte: %s' % ut_ws)
+    # Vanlig mapp = shapefil. Geodatabas (.gdb/.mdb/.sde) och feature dataset i en sadan
+    # = featureklass med alias, NULL och vardelista.
+    try:
+        ar_shapefil = txt(arcpy.Describe(ut_ws).dataType) == 'Folder'
+    except Exception:
+        ar_shapefil = os.path.isdir(ut_ws) and not re.search(r'\.(gdb|mdb|sde)(\\|/|$)', ut_ws.lower())
     if ar_shapefil and not ut_namn.lower().endswith('.shp'):
         ut_namn = ut_namn + '.shp'
     ut_fil = os.path.join(ut_ws, ut_namn)
     max_text = 254 if ar_shapefil else 400
-
-    if not os.path.isdir(ut_ws) and not arcpy.Exists(ut_ws):
-        raise RuntimeError('Utdatamappen finns inte: %s' % ut_ws)
+    # Domanen ligger i geodatabasen, aven nar utdata skrivs i ett feature dataset
+    doman_ws = ut_ws
+    if not ar_shapefil:
+        try:
+            if txt(arcpy.Describe(ut_ws).dataType) == 'FeatureDataset':
+                doman_ws = os.path.dirname(ut_ws)
+        except Exception:
+            pass
 
     # Manuella bedomningar per brunnspar fran en tidigare korning bevaras
     tidigare_manuella = {}
@@ -709,6 +769,25 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         logg('  utdata blir en shapefil - textfalt kapas till %d tecken' % max_text)
         logg('  (skapa en filgeodatabas om du vill ha faltalias som "Maskinell bedomning")')
 
+    # Finns utdata redan: ta bort lagret ur kartan (ArcMap haller annars schemalas pa
+    # featureklassen) och radera den innan den skapas pa nytt.
+    if arcpy.Exists(ut_fil):
+        mxd = _mxd()
+        if mxd is not None:
+            try:
+                for l in arcpy.mapping.ListLayers(mxd):
+                    if getattr(l, 'supports', lambda x: False)('DATASOURCE') and \
+                            os.path.normcase(txt(l.dataSource)) == os.path.normcase(txt(ut_fil)):
+                        arcpy.mapping.RemoveLayer(arcpy.mapping.ListDataFrames(mxd)[0], l)
+                        logg('  lagret "%s" togs bort ur kartan infor omkorningen' % txt(l.name))
+            except Exception as e:
+                logg('  kunde inte ta bort det gamla lagret ur kartan: %s' % txt(e))
+        try:
+            arcpy.Delete_management(ut_fil)
+        except Exception as e:
+            raise RuntimeError('Kan inte skriva over %s - ta bort lagret ur kartan och kor igen (%s)'
+                               % (ut_fil, txt(e)))
+
     arcpy.CreateFeatureclass_management(
         ut_ws, ut_namn, 'POLYLINE', '', 'DISABLED',
         'ENABLED' if har_z else 'DISABLED', sr)
@@ -722,12 +801,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     if not ar_shapefil:
         try:
-            if 'TV3_BEDOMNING' not in [d.name for d in arcpy.da.ListDomains(ut_ws)]:
-                arcpy.CreateDomain_management(ut_ws, 'TV3_BEDOMNING', 'Prioritetsklass A-E',
+            if 'TV3_BEDOMNING' not in [d.name for d in arcpy.da.ListDomains(doman_ws)]:
+                arcpy.CreateDomain_management(doman_ws, 'TV3_BEDOMNING', 'Prioritetsklass A-E',
                                               'TEXT', 'CODED')
                 for k in KLASSER:
                     arcpy.AddCodedValueToDomain_management(
-                        ut_ws, 'TV3_BEDOMNING', k, data.get('klasser', {}).get(k, k))
+                        doman_ws, 'TV3_BEDOMNING', k, data.get('klasser', {}).get(k, k))
             arcpy.AssignDomainToField_management(ut_fil, 'MAN_BED', 'TV3_BEDOMNING')
             logg('  vardelista TV3_BEDOMNING kopplad till MAN_BED')
         except Exception as e:
@@ -736,27 +815,39 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     typkarta = {'String': 'TEXT', 'Integer': 'LONG', 'SmallInteger': 'SHORT',
                 'Double': 'DOUBLE', 'Single': 'FLOAT', 'Date': 'DATE',
                 'GUID': 'GUID', 'Blob': 'BLOB'}
-    kopiera = []
-    kallfalt = dict((f.name.upper(), f) for f in arcpy.ListFields(kalla(led_lager[0])[0]))
+    # Falt att kopiera fran ledningslagren: typen tas fran forsta lagret som har faltet.
+    # Per lager laser vi bara de falt som finns dar; ovriga blir NULL.
+    kallfalt_per_lager = {}
+    for lyr in led_lager:
+        kallfalt_per_lager[txt(getattr(lyr, 'name', lyr))] = dict(
+            (f.name.upper(), f) for f in arcpy.ListFields(kalla(lyr)[0]))
+    kopiera = []          # (kallnamn versalt, utdatanamn, typ)
     for namn in kopiera_falt:
-        f = kallfalt.get(txt(namn).upper())
+        f = None
+        for kf in kallfalt_per_lager.values():
+            f = kf.get(txt(namn).upper())
+            if f:
+                break
         if not f:
-            logg('  VARNING: faltet %s finns inte i ledningslagret - hoppas over' % txt(namn))
+            logg('  VARNING: faltet %s finns inte i nagot ledningslager - hoppas over' % txt(namn))
             continue
         typ = typkarta.get(f.type)
         if not typ:
             logg('  VARNING: falttypen %s stods inte (%s) - hoppas over' % (f.type, f.name))
             continue
+        fore = set(x.name.upper() for x in arcpy.ListFields(ut_fil))
         if typ == 'TEXT':
             arcpy.AddField_management(ut_fil, f.name, typ,
                                       field_length=min(f.length or 255, max_text))
         else:
             arcpy.AddField_management(ut_fil, f.name, typ)
-        kopiera.append(f.name)
+        # Shapefiler kortar namn over 10 tecken - lasa vad faltet faktiskt heter i utdata
+        nya = [x.name for x in arcpy.ListFields(ut_fil) if x.name.upper() not in fore]
+        utnamn = nya[0] if len(nya) == 1 else f.name
+        kopiera.append((f.name.upper(), utnamn, typ))
 
-    ut_falt = ['SHAPE@'] + [n for n, t, l, a in EGNA_FALT] + kopiera
-    ut_typer = ['SHAPE@'] + [t for n, t, l, a in EGNA_FALT] + \
-               [typkarta.get(kallfalt[k.upper()].type, 'TEXT') for k in kopiera]
+    ut_falt = ['SHAPE@'] + [n for n, t, l, a in EGNA_FALT] + [u for k, u, typ in kopiera]
+    ut_typer = ['SHAPE@'] + [t for n, t, l, a in EGNA_FALT] + [typ for k, u, typ in kopiera]
 
     def klipp(v, langd):
         return txt(v)[:min(langd, max_text)] if v is not None else ''
@@ -768,7 +859,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             return rad
         ut = []
         for v, typ in zip(rad, ut_typer):
-            if v is None:
+            if v is None and typ not in ('DATE', 'SHAPE@'):
                 v = '' if typ == 'TEXT' else 0
             ut.append(v)
         return ut
@@ -790,7 +881,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         antal = int(arcpy.GetCount_management('lyr_led').getOutput(0))
         logg('  %s: %d ledningar att ga igenom' % (namn, antal))
 
-        with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + kopiera) as mark:
+        # Bara de kopierade falt som finns i just detta lager lases; ovriga blir NULL
+        har = kallfalt_per_lager.get(namn, {})
+        lasbara = [(i, har[k].name) for i, (k, u, typ) in enumerate(kopiera) if k in har]
+        with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + [n for i, n in lasbara]) as mark:
             for rad in mark:
                 oid, geom = rad[0], rad[1]
                 n_lednkoll += 1
@@ -804,7 +898,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 except Exception:
                     pass
                 n_nara += 1
-                extra_per_oid[(namn, oid)] = list(rad[2:])
+                extra = [None] * len(kopiera)
+                for (i, n), v in zip(lasbara, rad[2:]):
+                    extra[i] = v
+                extra_per_oid[(namn, oid)] = extra
                 for del_ in geom:
                     punkter = [(p.X, p.Y, p.Z if har_z else None) for p in del_ if p is not None]
                     n_bitar += nat.lagg_till(punkter, namn, oid)
@@ -848,12 +945,13 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     try:
         for par, s in bedomda.items():
             a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
-            vagen = nat.vag(a, b, max_hopp)
+            vagen = nat.vag(a, b, max_hopp, max_delar)
             if not vagen:
                 continue
             pts = sla_ihop(vagen)
             if len(pts) < 2:
                 continue
+            n_objekt = len(set((lager, oid) for nod, p, lager, oid in vagen))
 
             arr = arcpy.Array()
             for x, y, z in pts:
@@ -881,12 +979,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
                 klipp(rapport_sokvag(s), 254), klipp(video_sokvag(s), 254),
-                antal_per_par.get(par, 1), len(vagen),
+                antal_per_par.get(par, 1), n_objekt,
                 lager0[:100], oid0,
             ] + extra))
             traffade.add(par)
             n_skrivna += 1
-            if len(vagen) > 1:
+            if n_objekt > 1:
                 n_flerdelade += 1
     finally:
         del insert
@@ -894,9 +992,19 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
     logg('  %d av %d brunnspar matchade (%d sammansatta av flera ledningsobjekt)'
          % (len(traffade), len(bedomda), n_flerdelade))
+    n_hoppade = len(data.get('strackor', [])) - sum(antal_per_par.values())
+    if n_hoppade:
+        logg('  %d stracker i JSON-filen saknar brunnspar (tomt littera eller samma brunn i bada'
+             ' andar) och kan inte laggas i kartan' % n_hoppade)
+    tappade_manuella = {}
     if tidigare_manuella:
+        tappade_manuella = dict((par, m) for par, m in tidigare_manuella.items() if par not in traffade)
         logg('  %d manuella bedomningar aterstallda'
              % sum(1 for par in traffade if par in tidigare_manuella))
+        if tappade_manuella:
+            logg('  VARNING: %d manuella bedomningar fran forra korningen hor till par som inte'
+                 ' matchades nu - de finns i CSV:n over omatchade (kolumn manuell_bedomning)'
+                 % len(tappade_manuella))
 
     # ---------------------------------------------------- 7. Omatchade
     def avst(bid):
@@ -912,7 +1020,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             continue
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
         if a in brunns_id and b in brunns_id:
-            diagnos = nat.diagnos(a, b, max_hopp)
+            diagnos = nat.diagnos(a, b, max_hopp, max_delar)
         elif a in brunns_id or b in brunns_id:
             diagnos = 'brunnen %s finns inte i brunnslagren' % (b if a in brunns_id else a)
         else:
@@ -923,13 +1031,20 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                           'JA' if (a in brunns_id or b in brunns_id) else 'NEJ',
                           avst(a), avst(b),
                           txt(s.get('maskinell_bedomning')),
-                          txt(s.get('fil')), diagnos])
+                          txt(s.get('fil')), diagnos, tappade_manuella.get(par, '')])
+    # Manuellt bedomda par som inte finns i JSON-filen langre (t.ex. annat urval)
+    for par, m in tappade_manuella.items():
+        if par not in bedomda:
+            a, b = sorted(par)
+            omatchade.append([a, b, '', '', '', '', '', '', '',
+                              'paret finns inte i JSON-filen', m])
     omatchade.sort(key=lambda r: (r[4] != 'JA', KLASSORDNING.get(r[7], 9), r[0]))
 
     if csv_ut:
         with io.open(csv_ut, 'w', encoding='cp1252', errors='replace') as f:
             f.write('fran;till;fran_finns;till_finns;nagon_finns;'
-                    'fran_avstand_m;till_avstand_m;maskinell_bedomning;kallfil;diagnos\n')
+                    'fran_avstand_m;till_avstand_m;maskinell_bedomning;kallfil;diagnos;'
+                    'manuell_bedomning\n')
             for r in omatchade:
                 f.write(';'.join(txt(v).replace(';', ',') for v in r) + '\n')
         logg('  %d omatchade par -> %s' % (len(omatchade), csv_ut))
@@ -951,6 +1066,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     nara = [r for r in bada_brunnar if r not in pa_ledning
             and _tal(r[5]) is not None and _tal(r[6]) is not None
             and max(_tal(r[5]), _tal(r[6])) <= 3 * tolerans]
+    bada_brunnar = [r for r in bada_brunnar if r[9] != 'paret finns inte i JSON-filen']
     logg('  varav %d har bada brunnarna i kartan%s' % (len(bada_brunnar), ':' if bada_brunnar else ''))
     if pa_ledning:
         logg('    %d dar bada brunnarna ligger pa en ledning men ingen vag hittades'
@@ -1008,4 +1124,4 @@ if __name__ == '__main__':
               omradeslager=OMRADESLAGER, csv_ut=CSV_UT, lyr_fil=LYR_FIL,
               tolerans=TOLERANS, marginal=MARGINAL, max_hopp=MAX_HOPP, urval=URVAL,
               kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP,
-              geojson_ut=GEOJSON_UT)
+              geojson_ut=GEOJSON_UT, max_delar=MAX_DELAR)
