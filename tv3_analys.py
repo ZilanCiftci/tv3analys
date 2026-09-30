@@ -461,9 +461,10 @@ class Stracka:
 
     @property
     def fran_brunn(self) -> str:
-        """Brunnen där kameran startade (position 0 m). Saknas utgångsbrunn i filen används
-        Riktning: Motströms = kameran startade i slutbrunnen."""
-        if self.utgangsbrunn:
+        """Brunnen där kameran startade (position 0 m). Är utgångsbrunnen inte en av sträckans
+        brunnar (saknas eller felstavad) används Riktning: Motströms = kameran startade i
+        slutbrunnen."""
+        if self.utgangsbrunn in (self.startbrunn, self.slutbrunn) and self.utgangsbrunn:
             return self.utgangsbrunn
         return self.slutbrunn if self.riktning.strip().lower().startswith("mot") else self.startbrunn
 
@@ -520,12 +521,12 @@ def _i(s: str) -> int | None:
 
 def las_text(path: str) -> str:
     raw = open(path, "rb").read()
-    for enc in ("utf-8-sig", "cp1252", "latin-1"):
+    for enc in ("utf-8-sig", "cp1252"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:
             continue
-    return raw.decode("latin-1", errors="replace")
+    return raw.decode("latin-1")            # kan inte misslyckas
 
 
 def _normlittera(t: str) -> str:
@@ -543,6 +544,19 @@ LITTERA_KOLUMNER = {
     "andrabrunn": "motbrunn",
     "kommentar": "kommentar", "anm": "kommentar", "anmarkning": "kommentar", "anmärkning": "kommentar",
 }
+
+
+def _litterakolumn(rubrik: str) -> str:
+    """Rubriktext -> kolumnnamn (fel/ratt/fil/nr/motbrunn/kommentar). Exakt träff först, annars
+    första nyckelord som ingår i texten ('Felaktigt littera' -> fel, 'Rätt littera' -> ratt)."""
+    r = rubrik.strip().lower()
+    if r in LITTERA_KOLUMNER:
+        return LITTERA_KOLUMNER[r]
+    ord_ = re.findall(r"[a-zåäö0-9_]+", r)
+    for o in ord_:
+        if o in LITTERA_KOLUMNER and o != "littera":
+            return LITTERA_KOLUMNER[o]
+    return r
 
 
 def las_littera(path: str) -> list[dict]:
@@ -567,9 +581,14 @@ def las_littera(path: str) -> list[dict]:
         delar = [d.strip().strip('"').strip("'") for d in re.split(r"[;,\t]", rad)]
         if kolumner is None:
             kolumner = ["fel", "ratt", "kommentar"]
-            if delar and delar[0].lower() in LITTERA_KOLUMNER and LITTERA_KOLUMNER[delar[0].lower()] == "fel":
-                kolumner = [LITTERA_KOLUMNER.get(d.lower(), d.lower()) for d in delar]
-                continue                                    # rubrikrad
+            rubriker = [_litterakolumn(d) for d in delar]
+            if "fel" in rubriker or "ratt" in rubriker:       # rubrikrad
+                if "fel" not in rubriker or "ratt" not in rubriker:
+                    print(f"  VARNING {os.path.basename(path)}: rubrikraden saknar kolumnen "
+                          f"{'fel' if 'fel' not in rubriker else 'ratt'} – antar ordningen fel;ratt;kommentar")
+                else:
+                    kolumner = rubriker
+                continue
         post = {k: (delar[i] if i < len(delar) else "") for i, k in enumerate(kolumner)}
         if not post.get("fel") or not post.get("ratt"):
             continue
@@ -728,8 +747,9 @@ def indexera_katalog(katalog: str) -> dict[str, str]:
         return _media_cache[katalog]
     idx: dict[str, str] = {}
     if os.path.isdir(katalog):
-        for rot, _, namn in os.walk(katalog):
-            for n in namn:
+        for rot, kataloger, namn in os.walk(katalog):
+            kataloger.sort()                      # samma ordning oavsett filsystem
+            for n in sorted(namn):
                 stam, and_ = os.path.splitext(n)
                 if and_.lower() in MEDIA_ANDELSER:
                     idx.setdefault(n.lower(), os.path.join(rot, n))          # första träffen vinner
@@ -856,8 +876,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         for i, kol in enumerate(kolumner, 1):
             b = (bredder or {}).get(kol)
             if b is None:
-                b = min(45, max(10, max(len(str(r[i - 1])) if i - 1 < len(r) and r[i - 1] is not None else 0
-                                        for r in rader[:200]) + 2, len(kol) + 2))
+                langsta = max((len(str(r[i - 1])) for r in rader[:200] if i - 1 < len(r) and r[i - 1] is not None),
+                              default=0)
+                b = min(45, max(10, langsta + 2, len(kol) + 2))
             ws.column_dimensions[get_column_letter(i)].width = b
 
     # ---- Sammanfattning ----
@@ -916,10 +937,12 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     for r in rader:
         ws.append(r)
     ws["A1"].font = Font(bold=True, size=14)
-    for r in (11, 22):
+    rubrikrader = [i for i, r in enumerate(rader, 1) if r[0] in ("Prioritetsklass", "Poängmodell")]
+    for r in rubrikrader:
         for c in ws[r]:
             c.font = Font(bold=True)
-    for r in range(12, 17):
+    klassrad = rubrikrader[0] + 1
+    for r in range(klassrad, klassrad + 5):
         ws.cell(r, 3).number_format = "0%"
         ws.cell(r, 5).number_format = "0%"
         ws.cell(r, 1).fill = PatternFill("solid", fgColor=KLASS_FARG[ws.cell(r, 1).value[0]])
@@ -928,7 +951,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     ws.column_dimensions["B"].width = 40
     for col in "CDE":
         ws.column_dimensions[col].width = 14
-    rad = 34
+    rad = len(rader) + 3
     for namn in ("klasser", "topp"):
         if namn in diagram and os.path.exists(diagram[namn]):
             img = XLImage(diagram[namn])
@@ -1019,7 +1042,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         g = grpf[s.fil]
         g["n"] += 1
         g["m"] += s.langd
-        g["p"] += s.poang()
+        g["p"] += s.poang("K")
         g[s.klass] += 1
         g["skador"] += len(s.skador())
         g["avbr"] += s.avbruten
@@ -1030,7 +1053,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         if s.datum:
             g["datum"].append(s.datum)
     kol = ["Fil", "Projekt", "Område", "Period", "Sträckor", "Längd (m)", "Skadeobservationer",
-           "Index (p/100 m)", "Klass A", "Klass B", "Klass C", "Klass D", "Klass E",
+           "Konstruktionsindex (p/100 m)", "Klass A", "Klass B", "Klass C", "Klass D", "Klass E",
            "Andel A+B (sträckor)", "Längd A+B (m)", "Avbrutna inspektioner"]
     rader = []
     for fil, g in sorted(grpf.items()):
@@ -1052,7 +1075,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         g = grp[(s.material_grupp, s.ledningstyp.capitalize())]
         g["n"] += 1
         g["m"] += s.langd
-        g["p"] += s.poang()
+        g["p"] += s.poang("K")
         g["urspr"][s.material or "Okänt"] += 1
         if s.klass in "AB":
             g[s.klass] += 1
@@ -1064,7 +1087,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         return ", ".join(f"{m} ({n})" for m, n in g["urspr"].most_common())
 
     kol = ["Material", "Ursprungsmaterial", "Ledningstyp", "Sträckor", "Längd (m)",
-           "Index (p/100 m)", "Klass A", "Klass B", "Andel A+B"]
+           "Konstruktionsindex (p/100 m)", "Klass A", "Klass B", "Andel A+B"]
     rader = [[m, ursprung(m, g), t, g["n"], round(g["m"]), round(g["p"] / g["m"] * 100, 1) if g["m"] else 0,
               g["A"], g["B"], (g["A"] + g["B"]) / g["n"]] for (m, t), g in sorted(grp.items())]
     tabell(ws, kol, rader)
@@ -1244,8 +1267,8 @@ def rita_diagram(strackor: list[Stracka], katalog: str, topp: int) -> dict[str, 
     grp = defaultdict(lambda: defaultdict(float))
     for s in strackor:
         grp[s.material_grupp or "Okänt"][s.klass] += s.langd
-    mats = sorted(grp, key=lambda m: -sum(grp[m].values()))
-    fig, ax = plt.subplots(figsize=(8, 0.6 * len(mats) + 1.8))
+    mats = sorted((m for m in grp if sum(grp[m].values()) > 0), key=lambda m: -sum(grp[m].values()))
+    fig, ax = plt.subplots(figsize=(8, 0.6 * max(len(mats), 1) + 1.8))
     left = [0.0] * len(mats)
     for k in "ABCD":
         v = [grp[m][k] / sum(grp[m].values()) for m in mats]
@@ -1442,11 +1465,9 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     pa = s.profil_analys
     if pa and pa["svackdjup"] is not None and pa["svackdjup"] > 0.01:
         xs = pa["svackpos"]
-        if z[-1] > z[0] if False else (s.profil[-1][2] > s.profil[0][2]):
+        if s.profil[-1][2] > s.profil[0][2]:
             xs = s.profil[-1][0] - xs                       # speglad axel
-        # höjd i profilen vid svackans position
-        zi = min(z, key=lambda v: v)  # fallback
-        j = min(range(len(x)), key=lambda i: abs(x[i] - xs))
+        j = min(range(len(x)), key=lambda i: abs(x[i] - xs))   # höjd i profilen vid svackans position
         zi = z[j]
         ax.plot([xs, xs], [zi, zi + pa["svackdjup"]], color="#d03b3b", lw=1.5)
         ax.annotate(f"svacka {pa['svackdjup'] * 100:.0f} cm", (xs, zi), xytext=(0, -14), textcoords="offset points",
@@ -1666,8 +1687,28 @@ def _saker_filnamn(t: str) -> str:
     return re.sub(r"[^A-Za-z0-9ÅÄÖåäö._-]+", "_", t).strip("_")
 
 
+def rapport_prefix(s: Stracka) -> str:
+    """Början på rapportens filnamn, oberoende av klass och brunnar: '<fil>_<nr>_'."""
+    return _saker_filnamn(f"{os.path.splitext(s.fil)[0]}_{s.nr:03d}") + "_"
+
+
 def rapport_filnamn(s: Stracka) -> str:
-    return _saker_filnamn(f"{os.path.splitext(s.fil)[0]}_{s.nr:03d}_{s.klass}_{s.startbrunn}-{s.slutbrunn}") + ".pdf"
+    return rapport_prefix(s) + _saker_filnamn(f"{s.klass}_{s.startbrunn}-{s.slutbrunn}") + ".pdf"
+
+
+def rensa_gamla_rapporter(strackor: list[Stracka], katalog: str) -> int:
+    """Tar bort PDF:er i katalogen som hör till en sträcka men har ett annat namn än det
+    aktuella (t.ex. gammal klassbokstav efter ändrade parametrar, eller rättat littera)."""
+    if not os.path.isdir(katalog):
+        return 0
+    aktuella = {rapport_filnamn(s) for s in strackor}
+    prefix = {rapport_prefix(s) for s in strackor}
+    n = 0
+    for namn in os.listdir(katalog):
+        if namn.lower().endswith(".pdf") and namn not in aktuella and any(namn.startswith(p) for p in prefix):
+            os.remove(os.path.join(katalog, namn))
+            n += 1
+    return n
 
 
 def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
@@ -1682,6 +1723,9 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
         print("  reportlab saknas – inga PDF-rapporter skapas (pip install reportlab)")
         return 0, 0
     os.makedirs(katalog, exist_ok=True)
+    gamla = rensa_gamla_rapporter(strackor, katalog)
+    if gamla:
+        print(f"  {gamla} inaktuella rapporter borttagna (annan klass eller littera än nu)")
     valda = [s for s in strackor if urval == "alla" or s.klass in urval]
     n = behallna = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -1892,6 +1936,16 @@ def main(argv=None):
         strackor += st
     if not strackor:
         sys.exit("Inga sträckor hittades.")
+    # Två TV3-filer med samma namn i olika mappar: skilj dem åt med mappnamnet, annars blandas
+    # de ihop i Excel, rapportnamnen och kartunderlaget (som matchar på fil + sträcknummer).
+    per_namn: dict[str, set[str]] = defaultdict(set)
+    for s in strackor:
+        per_namn[s.fil].add(s.tv3_sokvag)
+    for s in strackor:
+        if len(per_namn[s.fil]) > 1:
+            s.fil = os.path.basename(os.path.dirname(s.tv3_sokvag)) + "/" + s.fil
+            for o in s.observationer:
+                o.fil = s.fil
     if fel:
         print(f"\n{len(fel)} varning(ar) – se {os.path.join(a.utdata, 'fel.txt')}")
 
@@ -1929,9 +1983,12 @@ def main(argv=None):
         print(f"\n{n_poster} sträckor skrivna till {kartfil} (underlag för ArcMap)")
     if not a.diagram:
         shutil.rmtree(diagramkatalog, ignore_errors=True)
+    felfil = os.path.join(a.utdata, "fel.txt")
     if fel:
-        with open(os.path.join(a.utdata, "fel.txt"), "w", encoding="utf-8") as f:
+        with open(felfil, "w", encoding="utf-8") as f:
             f.write("\n".join(fel) + "\n")
+    elif os.path.exists(felfil):
+        os.remove(felfil)                 # ingen gammal fellista ska ligga kvar från förra körningen
 
     klasser = Counter(s.klass for s in strackor)
     print("\nPrioritetsklasser: " + ", ".join(f"{KLASS_TEXT[k]}: {klasser.get(k, 0)}" for k in "ABCDE"))

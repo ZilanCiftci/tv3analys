@@ -67,10 +67,18 @@ Utdata i `tv3_resultat/` (eller `-o`):
   i en temporär katalog och bäddas enbart in i fliken Sammanfattning (KONFIG: `SPARA_DIAGRAM`).
 - `rapporter/<tv3>_<nr>_<klass>_<startbrunn>-<slutbrunn>.pdf` – inspektionsprotokoll per sträcka.
   `--behall-rapporter` (KONFIG `BEHALL_RAPPORTER`) hoppar över PDF:er som redan finns – länken sätts
-  ändå; kör utan flaggan när layouten ändrats.
+  ändå; kör utan flaggan när layouten ändrats. `rensa_gamla_rapporter` tar alltid bort PDF:er med
+  samma `<fil>_<nr>_`-prefix men annat namn (gammal klassbokstav/littera).
 - `kartunderlag.json` – en post per sträcka (brunnspar, maskinell bedömning, index, material,
   flaggor) för ArcMap-skriptet. Stängs av med `--karta nej` (KONFIG: `SKRIV_KARTUNDERLAG`).
-- `fel.txt` – bara om TV3-filer eller mediamappar saknades.
+- `fel.txt` – bara om TV3-filer eller mediamappar saknades (tas bort vid felfri omkörning).
+- Kodgranskning sep 2026 rättade: tom Kodstatistik kraschade `tabell()`; diagram 4 delade med noll
+  för material utan längd; hårdkodade radnummer i Sammanfattning (nu söks "Prioritetsklass"/
+  "Poängmodell"); `fran_brunn` faller tillbaka på Riktning när utgångsbrunnen inte är en av
+  sträckans brunnar (felstavning vände annars profilen); litterafilens rubrikrad matchas på
+  nyckelord ("Felaktigt littera" → fel) med varning om fel/ratt saknas; Per fil/Material visar
+  konstruktionsindex; två TV3-filer med samma namn får `mapp/namn` som `fil`; mediaindexet
+  sorterar `os.walk` för determinism.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).
 
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
