@@ -143,6 +143,22 @@ def _forsta_traff(kandidater, faltnamn):
     return None
 
 
+def _rasterlager():
+    """Rasterlagren i kartan (namn), for markhojder ur en hojdmodell."""
+    ut = []
+    try:
+        mxd = arcpy.mapping.MapDocument('CURRENT')
+        for l in arcpy.mapping.ListLayers(mxd):
+            try:
+                if l.isRasterLayer:
+                    ut.append(l.longName)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return ut
+
+
 def _kolla_geometri(param, tillatna, vad):
     """Varnar om nagot valt lager har fel geometrityp eller inte finns i kartan."""
     if not param.valueAsText:
@@ -170,7 +186,8 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil]
+        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil,
+                      SkapaProjekteringslager, Projekteringsprofil]
 
 
 class SkapaLedningslager(object):
@@ -473,4 +490,158 @@ class Markprofil(object):
             tolerans=float(parameters[9].value),
             hojdsystem=parameters[10].valueAsText or 'RH2000',
         )
+        return
+
+
+class SkapaProjekteringslager(object):
+    def __init__(self):
+        self.label = 'Skapa projekteringslager'
+        self.description = (
+            'Skapar tomma ritlager f\u00f6r ett nytt VA-str\u00e5k i en filgeodatabas: <prefix>_Ledning '
+            '(linje, med vatteng\u00e5ng uppstr\u00f6ms/nedstr\u00f6ms, typ, dimension, material) och '
+            '<prefix>_Brunn (punkt, med lockniv\u00e5 och bottenniv\u00e5). Rita sedan med vanlig '
+            'redigering och k\u00f6r "Projekteringsprofil".')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        gdb = arcpy.Parameter(
+            displayName='Filgeodatabas (skapas om den inte finns)', name='gdb',
+            datatype='DEWorkspace', parameterType='Required', direction='Input')
+        prefix = arcpy.Parameter(
+            displayName='Prefix p\u00e5 lagernamnen', name='prefix',
+            datatype='GPString', parameterType='Required', direction='Input')
+        prefix.value = 'Proj'
+        sr_lager = _lagerparam('Lager att ta koordinatsystemet fr\u00e5n (tomt = kartans)', 'sr_lager',
+                               False, kartlager, 'Optional')
+        _satt_varden(sr_lager, _langa_namn(STANDARD_LEDNING, kartlager)[:1])
+        return [gdb, prefix, sr_lager]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        if parameters[1].valueAsText and not parameters[1].valueAsText.replace('_', '').isalnum():
+            parameters[1].setErrorMessage('Bara bokstaver, siffror och understreck')
+        return
+
+    def execute(self, parameters, messages):
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('projektering')
+        m.skapa_projekteringslager(
+            parameters[0].valueAsText, prefix=parameters[1].valueAsText or 'Proj',
+            sr_lager=(parameters[2].valueAsText or '').strip("'") or None,
+            lagg_till_i_kartan=True)
+        return
+
+
+class Projekteringsprofil(object):
+    def __init__(self):
+        self.label = 'Projekteringsprofil'
+        self.description = (
+            'Ritar profilen l\u00e4ngs ett ritat VA-str\u00e5k: markyta, vatteng\u00e5ng och hj\u00e4ssa per '
+            'ledning, brunnar fr\u00e5n botten till lock, fall i promille och sektioner. Alla '
+            'ledningstyper i samma diagram. \u00c4r n\u00e5gra ledningar valda i kartan ritas bara de. '
+            'Utdata: PDF, PNG, CSV och JSON per str\u00e5k.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        ledning = _lagerparam('Ledningslager (<prefix>_Ledning)', 'ledningslager', False, kartlager)
+        brunn = _lagerparam('Brunnslager (<prefix>_Brunn)', 'brunnslager', False, kartlager, 'Optional')
+        mark = _lagerparam('Markh\u00f6jder (punktlager eller raster)', 'marklager', False, kartlager, 'Optional')
+        _filter(mark, [langt for langt, l in kartlager] + _rasterlager())
+        z_falt = arcpy.Parameter(
+            displayName='F\u00e4lt med markh\u00f6jd (tomt = punkternas Z / rastrets v\u00e4rde)', name='z_falt',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        ut_mapp = arcpy.Parameter(
+            displayName='Utdatamapp', name='ut_mapp', datatype='DEFolder',
+            parameterType='Required', direction='Input')
+        namn = arcpy.Parameter(
+            displayName='Namn p\u00e5 str\u00e5ket (filnamn)', name='namn',
+            datatype='GPString', parameterType='Required', direction='Input')
+        namn.value = 'profil'
+        startbrunn = arcpy.Parameter(
+            displayName='Startbrunn (valfritt, annars uppstr\u00f6ms \u00e4nde)', name='startbrunn',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        bara_valda = arcpy.Parameter(
+            displayName='Bara valda ledningar (om n\u00e5got \u00e4r valt)', name='bara_valda',
+            datatype='GPBoolean', parameterType='Optional', direction='Input')
+        bara_valda.value = True
+        intervall = arcpy.Parameter(
+            displayName='Avst\u00e5nd mellan markh\u00f6jdsproven (m)', name='intervall',
+            datatype='GPDouble', parameterType='Required', direction='Input', category='Inst\u00e4llningar')
+        intervall.value = 1.0
+        sokradie = arcpy.Parameter(
+            displayName='S\u00f6kradie f\u00f6r markh\u00f6jdspunkter (m)', name='sokradie',
+            datatype='GPDouble', parameterType='Required', direction='Input', category='Inst\u00e4llningar')
+        sokradie.value = 5.0
+        tolerans = arcpy.Parameter(
+            displayName='Tolerans ledning\u00e4nde mot brunn/annan ledning (m)', name='tolerans',
+            datatype='GPDouble', parameterType='Required', direction='Input', category='Inst\u00e4llningar')
+        tolerans.value = 1.0
+        hojdsystem = arcpy.Parameter(
+            displayName='H\u00f6jdsystem (skrivs p\u00e5 ritningen)', name='hojdsystem',
+            datatype='GPString', parameterType='Required', direction='Input', category='Inst\u00e4llningar')
+        hojdsystem.value = 'RH2000'
+        return [ledning, brunn, mark, z_falt, ut_mapp, namn, startbrunn, bara_valda,
+                intervall, sokradie, tolerans, hojdsystem]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[2].altered and parameters[2].valueAsText:
+            falt = _faltnamn(parameters[2])
+            if falt:
+                _filter(parameters[3], [''] + falt)
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[4].altered:
+            l = _lagerobjekt(parameters[0].valueAsText)
+            try:
+                ds = l.dataSource if l else parameters[0].valueAsText
+                mapp = os.path.dirname(ds)
+                if mapp.lower().endswith('.gdb'):
+                    mapp = os.path.dirname(mapp)
+                if mapp:
+                    parameters[4].value = mapp
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslagret')
+        _kolla_geometri(parameters[1], ('Point',), 'Brunnslagret')
+        if parameters[0].valueAsText:
+            namn = [f.upper() for f in _faltnamn(parameters[0])]
+            if namn and ('VG_UPP' not in namn or 'VG_NED' not in namn):
+                parameters[0].setErrorMessage('Lagret saknar VG_UPP/VG_NED - skapa lagren med '
+                                              '"Skapa projekteringslager".')
+        for i in (8, 9, 10):
+            if parameters[i].value is not None and not parameters[i].value > 0:
+                parameters[i].setErrorMessage('Storre an 0')
+        return
+
+    def execute(self, parameters, messages):
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('projektering')
+        filer = m.profil(
+            parameters[0].valueAsText.strip("'"),
+            (parameters[1].valueAsText or '').strip("'") or None,
+            (parameters[2].valueAsText or '').strip("'") or None,
+            parameters[4].valueAsText,
+            namn=parameters[5].valueAsText or 'profil',
+            z_falt=(parameters[3].valueAsText or '').strip() or None,
+            startbrunn=parameters[6].valueAsText or None,
+            intervall=float(parameters[8].value),
+            sokradie=float(parameters[9].value),
+            tolerans=float(parameters[10].value),
+            hojdsystem=parameters[11].valueAsText or 'RH2000',
+            bara_valda=bool(parameters[7].value),
+        )
+        for f in filer:
+            if f.lower().endswith('.pdf'):
+                try:
+                    os.startfile(f)          # oppna ritningen (Windows)
+                except Exception:
+                    pass
         return

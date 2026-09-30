@@ -162,6 +162,23 @@ lutningskorrigering, ingen skalning (kartmeter från kamerans brunn = filmpositi
 hållet hängs upp i sin egen brunn. Beräkningar cachas i `Stracka._cache` (rensas i
 koppla_markprofil). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
 markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
+**Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
+Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
+`skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med
+domän PROJ_LEDNTYP S/D/V/K/T/O, DIM, MATERIAL, VG_UPP, VG_NED, KOMMENTAR) och `<prefix>_Brunn`
+(BRUNN_ID, TYP, LOCKNIVA, BOTTENNIVA, DIAM, KOMMENTAR); ritas med vanlig redigering i
+flödesriktningen. `profil(...)`: ledningar (valda om urval finns – lagerobjektets
+`getSelectionSet`), brunnar, `Noder` (ändpunkt → brunn inom tolerans 1 m, annars fri ände),
+`_kedjor` per typ (start = angiven brunn, annars nod utan inkommande med högst VG_UPP;
+förgrening → längsta grenen, resten egna kedjor), längsta kedjan = referensaxel, andra typer
+projiceras med `_station` (båda ändar inom 3×tol+2 m, annars eget stråk), `Markhojd` (punkter
+IDW som Markprofil, eller raster via `GetCellValue_management` med cache), täckning per ledning,
+CSV (anmärkning: bakfall / ledning ovan mark / vattengång saknas), JSON, och `rita_profil`
+(matplotlib i ArcMaps Python, A3 liggande, exakta skalor ur LANGDSKALOR/HOJDSKALOR, typfärger
+S röd D grön V blå K lila, hjässa streckad, brunnar som rektanglar lock→botten med lyft etikett
+när brunnar ligger < 4 m isär, nivåtabell under diagrammet med sektioner inom 1 m hopslagna).
+Användarens val: alla ledningstyper i samma diagram, inga minimikrav. Testad med låtsas-arcpy
+(scratchpad/test_projektering.py) och renderad PNG.
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 Kodgranskning sep 2026 (rättat, testat med låtsas-arcpy): diagnos skiljer på för många brunnar och
 för många bitar; tolerans ≤ 0 stoppas i verktyget och `Natverk`; shapefil/geodatabas avgörs med
