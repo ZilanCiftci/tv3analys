@@ -160,7 +160,14 @@ bara i kamerans startbrunn (status "förskjuten till GIS vid X (avbruten inspekt
 lutningskorrigering, ingen skalning (kartmeter från kamerans brunn = filmposition), mark bara
 över filmad del, "avbrott" i stället för brunnsnamn i profilbilden; syskon filmade från andra
 hållet hängs upp i sin egen brunn. Beräkningar cachas i `Stracka._cache` (rensas i
-koppla_markprofil). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
+koppla_markprofil). Granskning okt 2026: vid avbrott tas filens brunnshöjder ur inklinometerns
+ändpunkter, inte PROFILADM (kopierade/opålitliga); klass E (langd < 1) får ingen hojdanpassning;
+bara en GIS-nivå → förskjutning mot den brunnen ("förskjuten till GIS vid X (bara en brunn har
+GIS-nivå)"); statustexten använder `Stracka.hojdsystem` ur markprofil.json; `diameter_m` tolkar
+"225/300"/"Ø 400"; `koppla_markprofil` matchar fil+nr, sedan fil+brunnspar, sist brunnspar
+(syskon till avbrutna får syskonets post – bedömda-lagret har ett objekt per brunnspar);
+hojdflagga "Filmad längd X m mot Y m i kartan – fel sträcka?" när langd > 1,25 × langd_karta;
+profilbilden ritas även utan inklinometer när GIS-vattengång och mark finns (rät linje). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
 markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
@@ -179,6 +186,20 @@ S röd D grön V blå K lila, hjässa streckad, brunnar som rektanglar lock→bo
 när brunnar ligger < 4 m isär, nivåtabell under diagrammet med sektioner inom 1 m hopslagna).
 Användarens val: alla ledningstyper i samma diagram, inga minimikrav. Testad med låtsas-arcpy
 (scratchpad/test_projektering.py) och renderad PNG.
+Granskning okt 2026 (rättat): **Markprofil** – `Ledningar` ersätter `Ledningsandar`: vattengången
+interpoleras linjärt längs hela ledningsobjektet (brunnar mitt på en ledning, Natverk-klippta
+sträckor, fick annars ingen nivå; riktningskontroll = punkt 1 m bort längs ledningen ligger på
+sträckans linje); OBS-logg när vattengången stiger i ritad riktning på > 50 % av ledningarna
+(fält/ritriktning); `hasZ`-kontroll och Multipoint-stöd (SHAPE@) för markhöjder; JSON-förslaget
+hamnar inte inuti .gdb-mappen. **Projektering** – `Noder.nod(p, typ)` föredrar brunn av samma typ
+(S-ledning → S-brunn) och snappar fria ändar mot redan matchade ändpunkter; `_station(forlang=True)`
+låter parallella ledningar sticka ut förbi referensaxeln (station < 0 / > L, mark samplas längs
+förlängningen med `_langs_forlangd`); rasterlager slås upp via `isRasterLayer` före featurelager
+och läses en gång med `RasterToNumPyArray` över stråkets bbox (bilinjär), `GetCellValue` bara som
+reserv; `cursor_kalla` behåller definitionsfrågan (tillfälligt lager utan urval, lagerobjekt med);
+brunnar läses alltid utan urval; vg 0,0 räknas som värde; startbrunn utan utgående ledning loggas;
+CSV med decimalkomma; matplotlib 1.x: `'_nolegend_'`, `set_title(loc=)` i try, `legend(prop=)`;
+gdb-parametern är Output (får skapas), prefix A-Z/0-9/_ .
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 Kodgranskning sep 2026 (rättat, testat med låtsas-arcpy): diagnos skiljer på för många brunnar och
 för många bitar; tolerans ≤ 0 stoppas i verktyget och `Natverk`; shapefil/geodatabas avgörs med

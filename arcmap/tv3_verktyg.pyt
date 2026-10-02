@@ -450,6 +450,8 @@ class Markprofil(object):
             l = _lagerobjekt(parameters[0].valueAsText)
             try:
                 mapp = os.path.dirname(l.dataSource if l else parameters[0].valueAsText)
+                if mapp.lower().endswith('.gdb'):          # inte inuti geodatabasmappen
+                    mapp = os.path.dirname(mapp)
                 if mapp:
                     parameters[6].value = os.path.join(mapp, STANDARD_MARKPROFIL)
             except Exception:
@@ -507,7 +509,7 @@ class SkapaProjekteringslager(object):
         kartlager = _kartlager()
         gdb = arcpy.Parameter(
             displayName='Filgeodatabas (skapas om den inte finns)', name='gdb',
-            datatype='DEWorkspace', parameterType='Required', direction='Input')
+            datatype='DEWorkspace', parameterType='Required', direction='Output')
         prefix = arcpy.Parameter(
             displayName='Prefix p\u00e5 lagernamnen', name='prefix',
             datatype='GPString', parameterType='Required', direction='Input')
@@ -521,8 +523,9 @@ class SkapaProjekteringslager(object):
         return True
 
     def updateMessages(self, parameters):
-        if parameters[1].valueAsText and not parameters[1].valueAsText.replace('_', '').isalnum():
-            parameters[1].setErrorMessage('Bara bokstaver, siffror och understreck')
+        import re
+        if parameters[1].valueAsText and not re.match(r'^[A-Za-z][A-Za-z0-9_]*$', parameters[1].valueAsText):
+            parameters[1].setErrorMessage('Bara A-Z, siffror och understreck, borja med en bokstav')
         return
 
     def execute(self, parameters, messages):
