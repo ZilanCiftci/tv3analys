@@ -160,7 +160,14 @@ bara i kamerans startbrunn (status "förskjuten till GIS vid X (avbruten inspekt
 lutningskorrigering, ingen skalning (kartmeter från kamerans brunn = filmposition), mark bara
 över filmad del, "avbrott" i stället för brunnsnamn i profilbilden; syskon filmade från andra
 hållet hängs upp i sin egen brunn. Beräkningar cachas i `Stracka._cache` (rensas i
-koppla_markprofil). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
+koppla_markprofil). Granskning okt 2026: vid avbrott tas filens brunnshöjder ur inklinometerns
+ändpunkter, inte PROFILADM (kopierade/opålitliga); klass E (langd < 1) får ingen hojdanpassning;
+bara en GIS-nivå → förskjutning mot den brunnen ("förskjuten till GIS vid X (bara en brunn har
+GIS-nivå)"); statustexten använder `Stracka.hojdsystem` ur markprofil.json; `diameter_m` tolkar
+"225/300"/"Ø 400"; `koppla_markprofil` matchar fil+nr, sedan fil+brunnspar, sist brunnspar
+(syskon till avbrutna får syskonets post – bedömda-lagret har ett objekt per brunnspar);
+hojdflagga "Filmad längd X m mot Y m i kartan – fel sträcka?" när langd > 1,25 × langd_karta;
+profilbilden ritas även utan inklinometer när GIS-vattengång och mark finns (rät linje). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
 markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):

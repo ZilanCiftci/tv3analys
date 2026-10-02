@@ -408,7 +408,14 @@ class Stracka:
     gis_vg_start: float | None = None
     gis_vg_slut: float | None = None
     langd_karta: float | None = None
+    hojdsystem: str = "RH2000"           # kartans höjdsystem enligt markprofil.json
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def diameter_m(self) -> float:
+        """Innerdiameter i m ur dimensionsfältet ('225', '225/300', 'Ø 400' …), 0 om otolkbart."""
+        m = re.search(r"\d+(?:[.,]\d+)?", self.dimension or "")
+        return float(m.group(0).replace(",", ".")) / 1000 if m else 0.0
 
     # ---- höjdläge: filmens höjder mot GIS ----
     @property
@@ -424,6 +431,10 @@ class Stracka:
         """Filens höjd vid start- och slutbrunn (flödesriktning): PROFILADM i första hand,
         annars inklinometerprofilens ändpunkter."""
         zs, ze = self.profil_start_z, self.profil_slut_z
+        if self.ofullstandig and len(self.profil) >= 2:
+            # Vid avbrott är PROFILADM:s värden opålitliga (höjden där kameran stannade, eller
+            # kopierade från syskonfilmen) – ta ändpunkterna ur inklinometern
+            zs = ze = None
         if (zs is None or ze is None) and len(self.profil) >= 2:
             z0, z1 = self.profil[0][2], self.profil[-1][2]
             if self.fran_brunn != self.startbrunn:
@@ -442,6 +453,8 @@ class Stracka:
         return self._cache["hojd"]
 
     def _hojdanpassning(self) -> dict | None:
+        if self.langd < 1:                   # ej bedömd sträcka – inget att hänga upp
+            return None
         zs, ze = self._filens_brunnshojder()
         gs, ge = self.gis_vg_start, self.gis_vg_slut
         if zs is None or ze is None:
@@ -461,17 +474,24 @@ class Stracka:
                         "z_start": zs, "z_slut": ze}
             d = g - z
             if abs(d) <= HOJD_SAMMA_M:
-                return {"status": "RH2000 ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
+                return {"status": f"{self.hojdsystem} ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
             return {"status": f"förskjuten till GIS vid {self.fran_brunn} (avbruten inspektion)",
                     "offset": d, "k": 0.0, "z_start": zs + d, "z_slut": ze + d}
-        if gs is None or ge is None:
+        if gs is None and ge is None:
             if self.langd_karta is None:
                 return None
             return {"status": "okänt nollplan (GIS-vattengång saknas)", "offset": 0.0, "k": 0.0,
                     "z_start": zs, "z_slut": ze}
+        if gs is None or ge is None:
+            # Bara en brunn har GIS-nivå: förskjut mot den, ingen lutningskorrigering
+            brunn, d = (self.startbrunn, gs - zs) if gs is not None else (self.slutbrunn, ge - ze)
+            if abs(d) <= HOJD_SAMMA_M:
+                return {"status": f"{self.hojdsystem} ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
+            return {"status": f"förskjuten till GIS vid {brunn} (bara en brunn har GIS-nivå)",
+                    "offset": d, "k": 0.0, "z_start": zs + d, "z_slut": ze + d}
         ds, de = gs - zs, ge - ze
         if abs(ds) <= HOJD_SAMMA_M and abs(de) <= HOJD_SAMMA_M:
-            return {"status": "RH2000 ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
+            return {"status": f"{self.hojdsystem} ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
         L = self.langd
         if abs(ds - de) <= HOJD_FALL_TOL_M or L <= 0:
             return {"status": "förskjuten till GIS", "offset": ds, "k": 0.0,
@@ -550,10 +570,7 @@ class Stracka:
         mark = self.mark_i_filmens_axel()
         if not mark or self.hojdanpassning is None:
             return None
-        try:
-            dia = float(self.dimension) / 1000
-        except ValueError:
-            dia = 0.0
+        dia = self.diameter_m
         # Är inklinometerprofilen osäker (driftar mot brunnshöjderna) räknas täckningen mot
         # rät linje mellan de korrigerade brunnshöjderna i stället för mot profilen.
         pa = self.profil_analys
@@ -575,6 +592,8 @@ class Stracka:
 
     @property
     def hojdflagga(self) -> str:
+        if self.langd_karta and not self.ofullstandig and self.langd > 1.25 * self.langd_karta:
+            return f"Filmad längd {self.langd:.0f} m mot {self.langd_karta:.0f} m i kartan – fel sträcka?"
         t = self.tackning
         if not t:
             return ""
@@ -635,7 +654,7 @@ class Stracka:
         osaker = self.profil_start_z is None or self.profil_slut_z is None
         if not osaker:
             h = self.hojdanpassning
-            if h and h["offset"] is not None:
+            if h and h["offset"] is not None and not self.ofullstandig:
                 fall_brunnar = h["z_start"] - h["z_slut"]
             else:
                 fall_brunnar = self.profil_start_z - self.profil_slut_z
@@ -653,10 +672,7 @@ class Stracka:
     def svacka_andel(self) -> float | None:
         """Svackdjup i förhållande till rördiametern (0–1)."""
         a = self.profil_analys
-        try:
-            d = float(self.dimension) / 1000
-        except ValueError:
-            return None
+        d = self.diameter_m
         return round(a["svackdjup"] / d, 2) if a and a["svackdjup"] is not None and d > 0 else None
 
     @property
@@ -1055,24 +1071,30 @@ def koppla_markprofil(strackor: list[Stracka], filer: list[dict]) -> tuple[int, 
     """Kopplar markhöjder och GIS-vattengång till sträckorna: på TV3-fil + sträcknummer i
     första hand, annars på brunnspar. Returnerar (sträckor med markhöjder, med GIS-vattengång)."""
     pa_nr: dict[tuple[str, int], dict] = {}
+    pa_filpar: dict[tuple[str, frozenset], dict] = {}
     pa_par: dict[frozenset, dict] = {}
+    system: dict[int, str] = {}
     for mf in filer:
         for post in mf["poster"]:
+            system[id(post)] = mf["hojdsystem"] or "RH2000"
             fil = os.path.basename(str(post.get("fil") or "")).lower()
+            par = frozenset((_normlittera(post.get("startbrunn")), _normlittera(post.get("slutbrunn"))))
             if post.get("nr") is not None and fil:
                 pa_nr.setdefault((fil, int(post["nr"])), post)
-            par = frozenset((_normlittera(post.get("startbrunn")), _normlittera(post.get("slutbrunn"))))
+            pa_filpar.setdefault((fil, par), post)
             pa_par.setdefault(par, post)
     n_mark = n_vg = 0
     for s in strackor:
-        post = pa_nr.get((os.path.basename(s.fil).lower(), s.nr)) or \
-            pa_par.get(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))))
+        fil = os.path.basename(s.fil).lower()
+        par = frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))
+        post = pa_nr.get((fil, s.nr)) or pa_filpar.get((fil, par)) or pa_par.get(par)
         if not post:
             continue
         s.mark = [(float(m), float(z)) for m, z, *_ in post.get("mark", []) if z is not None]
         s.gis_vg_start = post.get("vg_start")
         s.gis_vg_slut = post.get("vg_slut")
         s.langd_karta = post.get("langd_karta_m")
+        s.hojdsystem = system[id(post)]
         s._cache.clear()
         n_mark += bool(s.mark)
         n_vg += s.gis_vg_start is not None and s.gis_vg_slut is not None
@@ -1731,13 +1753,20 @@ HOJDSKALOR = [1, 2, 5, 10, 20, 25, 50, 100, 200]
 def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     """Inklinometerprofil ritad i exakt skala. Höjdpunkten läggs alltid till vänster så att
     profilen lutar ned mot höger. Returnerar False om profil saknas."""
-    if len(s.profil) < 3:
-        return False
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    prof = s.profil_korrigerad()
+    if len(s.profil) >= 3:
+        prof = s.profil_korrigerad()
+    elif s.hojdanpassning and s.mark and s.langd > 0:
+        # ingen inklinometer men GIS-vattengång och markyta: rät linje mellan brunnarna
+        prof = [(0.0, s.ledningshojd(0.0)), (s.langd, s.ledningshojd(s.langd))]
+        if any(zz is None for _, zz in prof):
+            return False
+    else:
+        return False
+    L_prof = prof[-1][0]
     x = [p[0] for p in prof]
     z = [p[1] for p in prof]
     mark = s.mark_i_filmens_axel()
@@ -1777,12 +1806,14 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     for i, xi in enumerate(x):
         grannar = [zk for xk, zk in zip(x, z) if abs(xk - xi) <= 0.3]
         zj.append(sum(grannar) / len(grannar))
-    ax.plot(x, zj, color="#2a78d6", lw=1.6, label="uppmätt profil (utjämnad, cm-upplösning i filen)")
+    ax.plot(x, zj, color="#2a78d6", lw=1.6,
+            label="uppmätt profil (utjämnad, cm-upplösning i filen)" if len(s.profil) >= 3
+            else "vattengång enligt GIS (rät linje, ingen inklinometer)")
     pa = s.profil_analys
     if pa and pa["svackdjup"] is not None and pa["svackdjup"] > 0.01:
         xs = pa["svackpos"]
         if speglad:
-            xs = s.profil[-1][0] - xs                       # speglad axel
+            xs = L_prof - xs                                # speglad axel
         j = min(range(len(x)), key=lambda i: abs(x[i] - xs))   # höjd i profilen vid svackans position
         zi = z[j]
         ax.plot([xs, xs], [zi, zi + pa["svackdjup"]], color="#d03b3b", lw=1.5)
@@ -1798,7 +1829,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
                         color="#8c6d46", alpha=0.06, lw=0)
         tk = s.tackning
         if tk:
-            xt = s.profil[-1][0] - tk["pos_min"] if speglad else tk["pos_min"]
+            xt = L_prof - tk["pos_min"] if speglad else tk["pos_min"]
             zm = min(mark, key=lambda p: abs(p[0] - xt))[1]
             ax.annotate(f"täckning {tk['min']:.2f} m", (xt, zm), xytext=(0, 6), textcoords="offset points",
                         ha="center", va="bottom", fontsize=7.5, color="#8c6d46")
