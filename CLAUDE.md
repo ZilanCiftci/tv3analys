@@ -186,6 +186,20 @@ S röd D grön V blå K lila, hjässa streckad, brunnar som rektanglar lock→bo
 när brunnar ligger < 4 m isär, nivåtabell under diagrammet med sektioner inom 1 m hopslagna).
 Användarens val: alla ledningstyper i samma diagram, inga minimikrav. Testad med låtsas-arcpy
 (scratchpad/test_projektering.py) och renderad PNG.
+Granskning okt 2026 (rättat): **Markprofil** – `Ledningar` ersätter `Ledningsandar`: vattengången
+interpoleras linjärt längs hela ledningsobjektet (brunnar mitt på en ledning, Natverk-klippta
+sträckor, fick annars ingen nivå; riktningskontroll = punkt 1 m bort längs ledningen ligger på
+sträckans linje); OBS-logg när vattengången stiger i ritad riktning på > 50 % av ledningarna
+(fält/ritriktning); `hasZ`-kontroll och Multipoint-stöd (SHAPE@) för markhöjder; JSON-förslaget
+hamnar inte inuti .gdb-mappen. **Projektering** – `Noder.nod(p, typ)` föredrar brunn av samma typ
+(S-ledning → S-brunn) och snappar fria ändar mot redan matchade ändpunkter; `_station(forlang=True)`
+låter parallella ledningar sticka ut förbi referensaxeln (station < 0 / > L, mark samplas längs
+förlängningen med `_langs_forlangd`); rasterlager slås upp via `isRasterLayer` före featurelager
+och läses en gång med `RasterToNumPyArray` över stråkets bbox (bilinjär), `GetCellValue` bara som
+reserv; `cursor_kalla` behåller definitionsfrågan (tillfälligt lager utan urval, lagerobjekt med);
+brunnar läses alltid utan urval; vg 0,0 räknas som värde; startbrunn utan utgående ledning loggas;
+CSV med decimalkomma; matplotlib 1.x: `'_nolegend_'`, `set_title(loc=)` i try, `legend(prop=)`;
+gdb-parametern är Output (får skapas), prefix A-Z/0-9/_ .
 Testas utan ArcMap med en låtsas-arcpy (se sessionshistorik) – arcpy-körningen i sig är oprövad.
 Kodgranskning sep 2026 (rättat, testat med låtsas-arcpy): diagnos skiljer på för många brunnar och
 för många bitar; tolerans ≤ 0 stoppas i verktyget och `Natverk`; shapefil/geodatabas avgörs med

@@ -86,7 +86,10 @@ def skapa_projekteringslager(gdb, prefix='Proj', sr=None, sr_lager=None, lagg_ti
     """Skapar <prefix>_Ledning och <prefix>_Brunn i filgeodatabasen gdb (skapas om den
     inte finns). Koordinatsystem: sr, annars fran sr_lager, annars fran kartans dataram.
     Returnerar (ledning_fc, brunn_fc)."""
+    import re as _re
     gdb = txt(gdb)
+    if not _re.match(r'^[A-Za-z][A-Za-z0-9_]*$', txt(prefix)):
+        raise RuntimeError('Prefixet far bara innehalla A-Z, 0-9 och understreck')
     if not gdb.lower().endswith('.gdb'):
         gdb = gdb + '.gdb'
     if not arcpy.Exists(gdb):
@@ -152,27 +155,55 @@ def skapa_projekteringslager(gdb, prefix='Proj', sr=None, sr_lager=None, lagg_ti
 # 2. Markhojd
 # =====================================================================
 
-class Markhojd(object):
-    """Markhojd ur ett punktlager (IDW av narmaste punkter inom sokradien) eller ett raster."""
+def _rasterlager_i_kartan(namn):
+    """Datakallan for ett rasterlager i kartan med detta (korta eller langa) namn, annars None."""
+    sokt = txt(namn).strip().strip("'").lower()
+    try:
+        mxd = arcpy.mapping.MapDocument('CURRENT')
+        for l in arcpy.mapping.ListLayers(mxd):
+            try:
+                if l.isRasterLayer and (txt(l.name).strip().lower() == sokt
+                                        or txt(getattr(l, 'longName', '')).strip().lower() == sokt):
+                    return l.dataSource
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
 
-    def __init__(self, lager, z_falt=None, sokradie=5.0, omrade_lager=None):
+
+class Markhojd(object):
+    """Markhojd ur ett punktlager (IDW av narmaste punkter inom sokradien) eller ett raster
+    (cellerna over straket lases in en gang med RasterToNumPyArray; bilinjar interpolation)."""
+
+    def __init__(self, lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None):
         self.sokradie = float(sokradie)
         self.raster = None
         self.rutnat = {}
         self.n = 0
-        src = None
-        try:
-            src, dq = kalla(hitta_lager(lager))
-        except Exception:
-            src = txt(lager)
+        src = _rasterlager_i_kartan(lager)       # rasterlager i kartan hittas fore featurelager
+        dq = None
+        if src is None:
+            try:
+                src, dq = kalla(hitta_lager(lager))
+            except Exception:
+                src = txt(lager)
         d = arcpy.Describe(src)
         typ = txt(getattr(d, 'dataType', ''))
         if typ in ('RasterDataset', 'RasterLayer', 'MosaicDataset', 'MosaicLayer') or \
                 txt(getattr(d, 'datasetType', '')) in ('RasterDataset', 'MosaicDataset'):
             self.raster = src
             self.cache = {}
+            self.arr = None
             logg('  markhojd ur raster %s' % txt(getattr(d, 'name', src)))
+            if bbox is not None:
+                self._las_raster(d, bbox)
             return
+        if txt(getattr(d, 'shapeType', '')) == 'Multipoint':
+            raise RuntimeError('Markhojdslagret ar ett multipunktlager - anvand verktyget Markprofil'
+                               ' eller konvertera till punkter (Multipart To Singlepart)')
+        if not z_falt and not getattr(d, 'hasZ', True):
+            raise RuntimeError('Markhojdslagret saknar Z i geometrin - ange faltet med hojden')
         arcpy.MakeFeatureLayer_management(src, 'lyr_mark_p', dq)
         if omrade_lager is not None:
             arcpy.SelectLayerByLocation_management('lyr_mark_p', 'INTERSECT', omrade_lager,
@@ -194,7 +225,53 @@ class Markhojd(object):
         arcpy.Delete_management('lyr_mark_p')
         logg('  %d markhojdspunkter nara straket' % self.n)
 
+    def _las_raster(self, d, bbox):
+        """Laser rastercellerna over straket (bbox + sokradie) till en numpy-array."""
+        try:
+            import numpy
+            cw, ch = float(d.meanCellWidth), float(d.meanCellHeight)
+            e = d.extent
+            m = self.sokradie + 2 * max(cw, ch)
+            x0 = max(float(e.XMin), bbox[0] - m)
+            y0 = max(float(e.YMin), bbox[1] - m)
+            x1 = min(float(e.XMax), bbox[2] + m)
+            y1 = min(float(e.YMax), bbox[3] + m)
+            ncols = int(math.ceil((x1 - x0) / cw)) + 1
+            nrows = int(math.ceil((y1 - y0) / ch)) + 1
+            if ncols <= 0 or nrows <= 0 or ncols * nrows > 25000000:
+                return
+            arr = arcpy.RasterToNumPyArray(self.raster, arcpy.Point(x0, y0), ncols, nrows,
+                                           nodata_to_value=float('nan'))
+            self.arr = numpy.array(arr, dtype=float)
+            self.x0, self.y0, self.cw, self.ch = x0, y0, cw, ch
+            self.nrows, self.ncols = self.arr.shape[-2], self.arr.shape[-1]
+            if self.arr.ndim == 3:
+                self.arr = self.arr[0]
+            logg('  %d x %d rasterceller inlasta over straket' % (self.ncols, self.nrows))
+        except Exception as e:
+            logg('  rastret lases cell for cell (%s)' % txt(e))
+            self.arr = None
+
     def hojd(self, x, y):
+        if self.raster is not None and getattr(self, 'arr', None) is not None:
+            # bilinjar interpolation mellan cellmitterna; rad 0 ar overst (norr)
+            fx = (x - self.x0) / self.cw - 0.5
+            fy = (self.y0 + self.nrows * self.ch - y) / self.ch - 0.5
+            if fx < -0.5 or fy < -0.5 or fx > self.ncols - 0.5 or fy > self.nrows - 0.5:
+                return None
+            i0, j0 = int(math.floor(fy)), int(math.floor(fx))
+            ty, tx = fy - i0, fx - j0
+            v = []
+            for (i, j, w) in ((i0, j0, (1 - ty) * (1 - tx)), (i0, j0 + 1, (1 - ty) * tx),
+                              (i0 + 1, j0, ty * (1 - tx)), (i0 + 1, j0 + 1, ty * tx)):
+                if 0 <= i < self.nrows and 0 <= j < self.ncols:
+                    z = float(self.arr[i, j])
+                    if z == z:
+                        v.append((w, z))
+            if not v:
+                return None
+            ws = sum(w for w, z in v)
+            return sum(w * z for w, z in v) / ws if ws > 0 else v[0][1]
         if self.raster is not None:
             nyckel = (round(x, 1), round(y, 1))
             if nyckel not in self.cache:
@@ -240,16 +317,45 @@ def _langd(pts):
     return sum(_avst(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
 
 
-def _station(pts, p):
-    """(station langs pts for narmaste punkt, avstand dit)."""
+def _station(pts, p, forlang=False):
+    """(station langs pts for narmaste punkt, avstand dit). forlang=True later forsta och
+    sista segmentet fortsatta utanfor linjen, sa att en parallell ledning som stracker sig
+    forbi referensaxelns ande far station < 0 eller > L i stallet for att klammas."""
     bast, st, m = None, 0.0, 0.0
-    for i in range(len(pts) - 1):
-        d, t, q = _punkt_segment(p[0], p[1], pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+    n = len(pts) - 1
+    for i in range(n):
+        ax, ay, bx, by = pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]
         seg = _avst(pts[i], pts[i + 1])
+        d, t, q = _punkt_segment(p[0], p[1], ax, ay, bx, by)
+        if forlang and seg > 0 and (i == 0 or i == n - 1):
+            tt = ((p[0] - ax) * (bx - ax) + (p[1] - ay) * (by - ay)) / (seg * seg)
+            if (i == 0 and tt < 0) or (i == n - 1 and tt > 1):
+                qx, qy = ax + tt * (bx - ax), ay + tt * (by - ay)
+                d, t = _avst(p, (qx, qy)), tt
         if bast is None or d < bast:
             bast, st = d, m + t * seg
         m += seg
     return st, (bast if bast is not None else 1e30)
+
+
+def _langs_forlangd(pts, intervall, st_min, st_max):
+    """Som _langs men fran st_min (<= 0) till st_max (>= L) langs forlangda andsegment."""
+    ut = []
+    L = _langd(pts)
+    (ax, ay), (bx, by) = pts[0], pts[1]
+    s0 = _avst(pts[0], pts[1]) or 1.0
+    m = st_min
+    while m < -1e-9:
+        ut.append((m, ax + m / s0 * (bx - ax), ay + m / s0 * (by - ay)))
+        m += intervall
+    ut += _langs(pts, intervall)
+    (ax, ay), (bx, by) = pts[-2], pts[-1]
+    s1 = _avst(pts[-2], pts[-1]) or 1.0
+    m = L + intervall
+    while m <= st_max + 1e-9:
+        ut.append((m, bx + (m - L) / s1 * (bx - ax), by + (m - L) / s1 * (by - ay)))
+        m += intervall
+    return ut
 
 
 def _langs(pts, intervall):
@@ -268,26 +374,38 @@ def _langs(pts, intervall):
 
 
 class Noder(object):
-    """Andpunkter -> noder: brunn inom toleransen, annars fri ande (andar inom toleransen delas)."""
+    """Andpunkter -> noder: brunn inom toleransen (helst en brunn av samma typ som ledningen,
+    t.ex. S-ledning till S-brunn nar spill- och dagbrunn ligger nara varandra), annars fri
+    ande. Andar inom toleransen fran en redan matchad andpunkt far samma nod."""
 
     def __init__(self, brunnar, tol):
         self.tol = float(tol)
         self.brunnar = brunnar          # id -> (x, y, post)
         self.fria = []                  # [(x, y)]
+        self.matchade = []              # [(x, y, nod)] - alla andpunkter som fatt en nod
 
-    def nod(self, p):
-        bast = None
+    def nod(self, p, typ=None):
+        kand = []
         for bid, (x, y, post) in self.brunnar.items():
             d = _avst(p, (x, y))
-            if d <= self.tol and (bast is None or d < bast[1]):
-                bast = (('B', bid), d)
-        if bast:
-            return bast[0]
-        for i, (x, y) in enumerate(self.fria):
-            if _avst(p, (x, y)) <= self.tol:
-                return ('P', i)
-        self.fria.append(p)
-        return ('P', len(self.fria) - 1)
+            if d <= self.tol:
+                btyp = txt(post.get('typ') or '').strip().upper()
+                samma = 1 if typ and btyp and btyp[:1] == typ[:1] else 0
+                kand.append((-samma, d, bid))
+        if kand:
+            kand.sort()
+            nod = ('B', kand[0][2])
+        else:
+            nod = None
+            for x, y, n in self.matchade:
+                if _avst(p, (x, y)) <= self.tol:
+                    nod = n
+                    break
+            if nod is None:
+                self.fria.append(p)
+                nod = ('P', len(self.fria) - 1)
+        self.matchade.append((p[0], p[1], nod))
+        return nod
 
 
 def _kedjor(ledningar, start_nod=None):
@@ -306,7 +424,8 @@ def _kedjor(ledningar, start_nod=None):
         if start_nod is not None and start_nod in utg:
             start = start_nod
         elif kandidater:
-            start = max(kandidater, key=lambda n: max(_tal(l['vg_upp']) or -1e9 for l in utg[n]))
+            start = max(kandidater, key=lambda n: max((_tal(l['vg_upp']) if _tal(l['vg_upp']) is not None else -1e9)
+                                                         for l in utg[n]))
         else:
             start = kvar[0]['fran']
         kedja = []
@@ -348,15 +467,23 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
     brl = hitta_lager(brunnslager) if brunnslager else None
 
     # ---------------------------------------------------- ledningar (valda om nagra ar valda)
-    def cursor_kalla(lyr):
-        # Lagerobjekt i kartan respekterar urvalet; sokvag gor det inte
-        if bara_valda and not isinstance(lyr, (type(''), bytes)):
+    tillfalliga = []
+
+    def cursor_kalla(lyr, namn, urval=True):
+        """Nagot att lasa med SearchCursor: lagerobjektet sjalvt nar urvalet ska galla (det
+        respekterar bade urval och definitionsfraga), annars ett tillfalligt lager med
+        lagrets definitionsfraga men utan urval."""
+        ar_lager = not isinstance(lyr, (type(''), bytes))
+        if urval and bara_valda and ar_lager:
             try:
                 if lyr.getSelectionSet():
                     return lyr
             except Exception:
                 pass
-        return kalla(lyr)[0]
+        src, dq = kalla(lyr)
+        arcpy.MakeFeatureLayer_management(src, namn, dq)
+        tillfalliga.append(namn)
+        return namn
 
     falt = [f.name.upper() for f in arcpy.ListFields(kalla(led)[0])]
     for f in ('VG_UPP', 'VG_NED'):
@@ -364,7 +491,8 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
             raise RuntimeError('Ledningslagret saknar faltet %s - skapa lagren med "Skapa projekteringslager"' % f)
     lasfalt = ['OID@', 'SHAPE@'] + [f for f in ('LEDN_ID', 'TYP', 'DIM', 'MATERIAL', 'VG_UPP', 'VG_NED') if f in falt]
     ledningar = []
-    with arcpy.da.SearchCursor(cursor_kalla(led), lasfalt) as mark:
+    led_kalla = cursor_kalla(led, 'lyr_proj_led')
+    with arcpy.da.SearchCursor(led_kalla, lasfalt) as mark:
         for rad in mark:
             post = dict(zip(lasfalt, rad))
             geom = post['SHAPE@']
@@ -390,7 +518,7 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
     if brl is not None:
         bf = [f.name.upper() for f in arcpy.ListFields(kalla(brl)[0])]
         bfalt = ['OID@', 'SHAPE@XY'] + [f for f in ('BRUNN_ID', 'TYP', 'LOCKNIVA', 'BOTTENNIVA', 'DIAM') if f in bf]
-        with arcpy.da.SearchCursor(kalla(brl)[0], bfalt) as mark:
+        with arcpy.da.SearchCursor(cursor_kalla(brl, 'lyr_proj_br', urval=False), bfalt) as mark:
             for rad in mark:
                 post = dict(zip(bfalt, rad))
                 xy = post['SHAPE@XY']
@@ -405,8 +533,8 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
 
     noder = Noder(brunnar, tolerans)
     for l in ledningar:
-        l['fran'] = noder.nod(l['pts'][0])
-        l['till'] = noder.nod(l['pts'][-1])
+        l['fran'] = noder.nod(l['pts'][0], l['typ'])
+        l['till'] = noder.nod(l['pts'][-1], l['typ'])
 
     start_nod = None
     if startbrunn:
@@ -416,6 +544,10 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
                 start_nod = ('B', bid)
         if start_nod is None:
             logg('  VARNING: startbrunnen %s finns inte i brunnslagret' % txt(startbrunn))
+        elif not any(l['fran'] == start_nod for l in ledningar):
+            logg('  VARNING: startbrunnen %s har inga utgaende ledningar (ritade i flodesriktningen?)'
+                 ' - uppstroms ande anvands i stallet' % txt(startbrunn))
+            start_nod = None
 
     # ---------------------------------------------------- kedjor per typ, referensaxel
     per_typ = {}
@@ -441,7 +573,7 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
             ok = True
             for l in k:
                 for p in (l['pts'][0], l['pts'][-1]):
-                    if _station(s['axel'], p)[1] > 3 * tolerans + 2.0:
+                    if _station(s['axel'], p, forlang=True)[1] > 3 * tolerans + 2.0:
                         ok = False
             if ok:
                 s['kedjor'].append((typ, k))
@@ -452,16 +584,21 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
     logg('  %d strak' % len(strak))
 
     # ---------------------------------------------------- markhojd
-    mark = Markhojd(marklager, z_falt, sokradie, omrade_lager=led if bara_valda else None) if marklager else None
+    xs_alla = [p[0] for l in ledningar for p in l['pts']]
+    ys_alla = [p[1] for l in ledningar for p in l['pts']]
+    bbox = (min(xs_alla) - 50, min(ys_alla) - 50, max(xs_alla) + 50, max(ys_alla) + 50)
+    mark = Markhojd(marklager, z_falt, sokradie, omrade_lager=led_kalla, bbox=bbox) if marklager else None
 
     ut_filer = []
     for s in strak:
         axel = s['axel']
         L = _langd(axel)
-        # mark
+        # mark - aven langs forlangningen om nagon ledning stracker sig forbi axelns andar
+        st_alla = [_station(axel, l['pts'][i], forlang=True)[0] for typ, k in s['kedjor'] for l in k for i in (0, -1)]
+        s['st_min'], s['st_max'] = min([0.0] + st_alla), max([L] + st_alla)
         s['mark'] = []
         if mark is not None:
-            for m, x, y in _langs(axel, intervall):
+            for m, x, y in _langs_forlangd(axel, intervall, s['st_min'], s['st_max']):
                 z = mark.hojd(x, y)
                 if z is not None:
                     s['mark'].append((m, z))
@@ -469,8 +606,8 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
         s['ledningar'] = []
         for typ, k in s['kedjor']:
             for l in k:
-                st0 = _station(axel, l['pts'][0])[0]
-                st1 = _station(axel, l['pts'][-1])[0]
+                st0 = _station(axel, l['pts'][0], forlang=True)[0]
+                st1 = _station(axel, l['pts'][-1], forlang=True)[0]
                 if abs(st1 - st0) < 0.01:
                     st1 = st0 + l['langd']
                 post = dict(l)
@@ -508,7 +645,8 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
                     anm.append('ledning ovan mark')
                 if p['vg_upp'] is None or p['vg_ned'] is None:
                     anm.append('vattengang saknas')
-                f.write(';'.join(txt(v) if v is not None else '' for v in [
+                f.write(';'.join((txt(v).replace('.', ',') if isinstance(v, (type(''), bytes)) and _tal(v) is not None
+                                  else txt(v)) if v is not None else '' for v in [
                     p['typ'], p['id'], _nodnamn(p['fran']), _nodnamn(p['till']),
                     '%.1f' % p['st0'], '%.1f' % p['st1'], '%.1f' % p['langd'], '%g' % p['dim'], p['material'],
                     _fmt(p['vg_upp']), _fmt(p['vg_ned']), _fmt(p['fall']),
@@ -541,6 +679,11 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
         except Exception as e:
             logg('  kunde inte rita profilen: %s' % txt(e))
 
+    for namn_ in tillfalliga:
+        try:
+            arcpy.Delete_management(namn_)
+        except Exception:
+            pass
     logg('KLART')
     return ut_filer
 
@@ -634,7 +777,7 @@ def rita_profil(s, bas, hojdsystem='RH2000'):
         hj = [v + d for v in vg]
         ax.fill_between(xs, vg, hj, color=farg, alpha=0.25, linewidth=0)
         ax.plot(xs, vg, color=farg, linewidth=1.8,
-                label=None if p['typ'] in ritade_typer else _typnamn(p['typ']))
+                label='_nolegend_' if p['typ'] in ritade_typer else _typnamn(p['typ']))
         ax.plot(xs, hj, color=farg, linewidth=0.8, linestyle='--')
         ritade_typer.add(p['typ'])
         etik = '%s %s %g %s' % (p['typ'], p['id'], p['dim'], p['material'])
@@ -672,11 +815,14 @@ def rita_profil(s, bas, hojdsystem='RH2000'):
     ax.set_xlabel('sektion (m)', fontsize=9)
     ax.set_ylabel('h\u00f6jd (m, %s)' % txt(hojdsystem), fontsize=9)
     ax.tick_params(labelsize=8)
-    ax.set_title('Profil %s   \u00b7   l\u00e4ngdskala 1:%d   \u00b7   h\u00f6jdskala 1:%d   \u00b7   %s' % (
-        s['namn'], langdskala, hojdskala, datetime.datetime.now().strftime('%Y-%m-%d')),
-        fontsize=11, loc='left')
+    titel = 'Profil %s   \u00b7   l\u00e4ngdskala 1:%d   \u00b7   h\u00f6jdskala 1:%d   \u00b7   %s' % (
+        s['namn'], langdskala, hojdskala, datetime.datetime.now().strftime('%Y-%m-%d'))
     try:
-        ax.legend(loc='upper right', fontsize=8, frameon=False)
+        ax.set_title(titel, fontsize=11, loc='left')
+    except Exception:                      # matplotlib < 1.3 saknar loc
+        ax.set_title(titel, fontsize=11)
+    try:
+        ax.legend(loc='upper right', prop={'size': 8}, frameon=False)
     except Exception:
         pass
 

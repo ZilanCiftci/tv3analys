@@ -123,40 +123,78 @@ def _avst_till_linje(p, pts):
     return bast if bast is not None else 1e30
 
 
-class Ledningsandar(object):
-    """Index over ledningsobjektens andpunkter med vattengangsniva: for att hitta
-    GIS-nivan i en strackans start- och slutbrunn."""
+class Ledningar(object):
+    """Ledningsobjekt med vattengang i bada andarna. Ger GIS-nivan i en punkt pa en ledning,
+    linjart interpolerad mellan andarna - sa att aven brunnar mitt pa en ledning (strackor
+    som Natverk klippt ur ett langre ledningsobjekt) far en niva."""
 
-    def __init__(self, cell):
-        self.cell = float(cell)
-        self.rutnat = {}      # cell -> [(x, y, niva, granne, lager, oid)]
+    def __init__(self):
+        self.ledningar = []    # (pts, langd, vg_fran, vg_till, lager, oid, bbox)
         self.n = 0
+        self.n_stigande = 0    # ledningar dar vg_fran < vg_till (ritad mot flodet?)
+        self.n_bada = 0
 
     def lagg_till(self, pts, vg_fran, vg_till, lager, oid):
         if len(pts) < 2:
             return
-        for (x, y), niva, granne in ((pts[0], vg_fran, pts[1]), (pts[-1], vg_till, pts[-2])):
-            self.rutnat.setdefault((int(x // self.cell), int(y // self.cell)), []).append(
-                (x, y, niva, granne, lager, oid))
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        self.ledningar.append((pts, _langd(pts), vg_fran, vg_till, lager, oid,
+                               (min(xs), min(ys), max(xs), max(ys))))
         self.n += 1
+        if vg_fran is not None and vg_till is not None:
+            self.n_bada += 1
+            if vg_fran < vg_till - 0.005:
+                self.n_stigande += 1
 
     def niva(self, x, y, tol, linje):
-        """Vattengangsnivan i ledningsanden narmast (x, y) inom tol, dar ledningen dessutom
-        foljer linjen (grannvertexet ligger inom tol fran den). (niva, avstand) eller (None, None)."""
-        c = self.cell
-        cx, cy = int(x // c), int(y // c)
+        """Vattengangsnivan vid (x, y): narmaste ledning inom tol som dessutom foljer
+        strackans linje (en punkt 1 m bort langs ledningen ligger inom tol fran linjen).
+        Nivan interpoleras efter laget langs ledningen. (niva, avstand) eller (None, None)."""
         bast = None
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for ex, ey, niva, granne, lager, oid in self.rutnat.get((cx + dx, cy + dy), ()):
-                    d = _avst((x, y), (ex, ey))
-                    if d > tol or niva is None:
-                        continue
-                    if _avst_till_linje(granne, linje) > tol:
-                        continue
-                    if bast is None or d < bast[1]:
-                        bast = (niva, d)
+        for pts, L, vf, vt, lager, oid, (x0, y0, x1, y1) in self.ledningar:
+            if x < x0 - tol or x > x1 + tol or y < y0 - tol or y > y1 + tol:
+                continue
+            if vf is None and vt is None:
+                continue
+            st, d = _station(pts, (x, y))
+            if d > tol or (bast is not None and d >= bast[1]):
+                continue
+            # foljer ledningen strackans linje har? kolla en punkt 1 m at vardera hallet
+            steg = min(1.0, L / 2.0)
+            if steg > 0 and not any(_avst_till_linje(_punkt_vid(pts, st + r), linje) <= tol
+                                    for r in (-steg, steg) if 0 <= st + r <= L):
+                continue
+            if vf is None or vt is None or L <= 0:
+                niva = vf if vf is not None else vt
+            else:
+                niva = vf + (vt - vf) * st / L
+            bast = (niva, d)
         return bast if bast else (None, None)
+
+
+def _station(pts, p):
+    """(matt langs linjen for narmaste punkt, avstand dit)."""
+    bast, st, m = None, 0.0, 0.0
+    for i in range(len(pts) - 1):
+        d, tt, q = _punkt_segment(p[0], p[1], pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+        seg = _avst(pts[i], pts[i + 1])
+        if bast is None or d < bast:
+            bast, st = d, m + tt * seg
+        m += seg
+    return st, (bast if bast is not None else 1e30)
+
+
+def _punkt_vid(pts, st):
+    """Punkten pa linjen vid mattet st (klamms till linjens andar)."""
+    m = 0.0
+    for i in range(len(pts) - 1):
+        seg = _avst(pts[i], pts[i + 1])
+        if seg > 0 and st <= m + seg:
+            tt = max(0.0, (st - m) / seg)
+            return (pts[i][0] + tt * (pts[i + 1][0] - pts[i][0]), pts[i][1] + tt * (pts[i + 1][1] - pts[i][1]))
+        m += seg
+    return pts[-1]
 
 
 def markprofil(bedomda_lager, ledningslager, vg_fran_falt, vg_till_falt, marklager, json_ut,
@@ -200,7 +238,7 @@ def markprofil(bedomda_lager, ledningslager, vg_fran_falt, vg_till_falt, marklag
         raise RuntimeError('Inga strackor i lagret')
 
     # ---------------------------------------------------- 2. Vattengang ur ledningslagren
-    andar = Ledningsandar(max(tolerans, 5.0))
+    andar = Ledningar()
     for lyr in led:
         src, dq = kalla(lyr)
         f_fran = hitta_falt(lyr, vg_fran_falt)
@@ -219,28 +257,59 @@ def markprofil(bedomda_lager, ledningslager, vg_fran_falt, vg_till_falt, marklag
         arcpy.Delete_management('lyr_led')
         logg('  %s: %d ledningar nara strackorna (vattengang: %s / %s)'
              % (txt(getattr(lyr, 'name', lyr)), n, f_fran, f_till))
+    # 3. Rimlighet: vattengangen ska normalt falla i ritad riktning. Stiger den pa de flesta
+    # ledningar betyder faltet nagot annat (uppstroms/nedstroms efter flode?) eller ledningarna
+    # ar ritade mot flodet.
+    if andar.n_bada and andar.n_stigande > 0.5 * andar.n_bada:
+        logg('  OBS: vattengangen stiger i ritad riktning pa %d av %d ledningar - kontrollera att'
+             ' faltet "vid startpunkt" verkligen galler ledningens forsta vertex'
+             % (andar.n_stigande, andar.n_bada))
 
     # ---------------------------------------------------- 3. Markhojder
     msrc, mdq = kalla(mark)
+    md = arcpy.Describe(msrc)
+    multipunkt = txt(getattr(md, 'shapeType', '')) == 'Multipoint'
+    if not z_falt and not getattr(md, 'hasZ', True):
+        raise RuntimeError('Markhojdslagret saknar Z i geometrin - ange faltet med hojden')
     arcpy.MakeFeatureLayer_management(msrc, 'lyr_mark', mdq)
     arcpy.SelectLayerByLocation_management('lyr_mark', 'INTERSECT', 'lyr_bed',
                                            '%s Meters' % sokradie, 'NEW_SELECTION')
     punkter = Markpunkter(sokradie)
+    n_utan = 0
     if z_falt:
         zf = hitta_falt(mark, z_falt)
-        falt = ['SHAPE@XY', zf]
         logg('  markhojd ur faltet %s' % zf)
+        with arcpy.da.SearchCursor('lyr_mark', ['SHAPE@XY', zf]) as mark_:
+            for xy, z in mark_:
+                z = _tal(z)
+                if not xy or xy[0] is None or z is None:
+                    n_utan += 1
+                    continue
+                punkter.lagg_till(xy[0], xy[1], z)
+    elif multipunkt:
+        logg('  markhojd ur Z i multipunktlagret (t.ex. laserdata)')
+        with arcpy.da.SearchCursor('lyr_mark', ['SHAPE@']) as mark_:
+            for (geom,) in mark_:
+                if geom is None:
+                    continue
+                for del_ in geom:
+                    for pt in (del_ if hasattr(del_, '__iter__') else [del_]):
+                        if pt is None:
+                            continue
+                        z = _tal(getattr(pt, 'Z', None))
+                        if z is None:
+                            n_utan += 1
+                            continue
+                        punkter.lagg_till(pt.X, pt.Y, z)
     else:
-        falt = ['SHAPE@XY', 'SHAPE@Z']
         logg('  markhojd ur punkternas Z')
-    n_utan = 0
-    with arcpy.da.SearchCursor('lyr_mark', falt) as mark_:
-        for xy, z in mark_:
-            z = _tal(z)
-            if not xy or xy[0] is None or z is None:
-                n_utan += 1
-                continue
-            punkter.lagg_till(xy[0], xy[1], z)
+        with arcpy.da.SearchCursor('lyr_mark', ['SHAPE@XY', 'SHAPE@Z']) as mark_:
+            for xy, z in mark_:
+                z = _tal(z)
+                if not xy or xy[0] is None or z is None:
+                    n_utan += 1
+                    continue
+                punkter.lagg_till(xy[0], xy[1], z)
     arcpy.Delete_management('lyr_mark')
     arcpy.Delete_management('lyr_bed')
     logg('  %d markhojdspunkter inom %.0f m fran strackorna%s'
