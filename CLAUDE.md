@@ -150,6 +150,22 @@ kartlängd/filmlängd, ingen skalning vid avbruten, vänd när utgångsbrunnen �
 skrivs som `<stam>_svackor/_bakfall.geojson` när geojson_ut anges (skriv_geojson kan nu punkter).
 Symbologi: `arcmap/svackor.lyr`/`bakfall.lyr` när användaren sparat dem. Testat med låtsas-arcpy
 (scratchpad/test_svackor.py: skalning 1,25, avbruten utan skalning, motströms vändning).
+**Uppströmsanalys** (okt 2026, steg 2, `arcmap/natverk.py` + verktyget Uppströms i .pyt, oprövat i
+riktig ArcMap): `Graf(Natverk)` med ALLA brunnar som noder, `fram` = kanter i ritad riktning, bitar utan
+längd (fri ände + brunn på samma ställe) tas bort i `_kant`; `riktning(lager, oid)` → attribut
+(med/mot-värden ur dialogen, F6) → vattengång (vg_upp > vg_ned = MED) → ritad (loggas som antagen,
+OBS om > 50 %); `uppstroms(start)` BFS bakåt, stoppfält (t.ex. tryckledning) och stoppbrunnar
+(pumpstationer); serviser = eget lager eller fält i ledningslagret, ingår inte i grafen utan räknas
+när en ände ligger inom toleransen från en uppströmskant (`Segmentindex`); `vald_ledning` ger start
+från markerad ledning (nedströmsnod). Utdatalager UPPSTROMS_FALT (AVSTAND_M, NIVA, LANGD_M, SERVIS,
+RIKTN_UR). `uppstroms_batch(bedomda, ...)`: start = slutbrunn per sträcka, skriver ANT_SERV_U/L_UPPSTR
+till lagret + CSV `fil;nr;startbrunn;slutbrunn;serviser_uppstroms;langd_uppstroms_m;antal_ledningar;
+antal_brunnar;serviser_kalla;stoppade`; utan serviser summeras ANT_ANSL (nytt fält i EGNA_FALT) för
+inspekterade sträckor uppströms = "skattning (ANT_ANSL)". I `tv3_analys.py`: `uppstroms:`/`--uppstroms`,
+`las_uppstroms`/`koppla_uppstroms` (fil+nr, annars brunnspar), `Stracka.serviser_uppstroms`,
+`langd_uppstroms`, `serviser_kalla`; Excel-kolumner "Serviser uppströms", "Längd uppströms (m)"
+(dolda), JSON `serviser_uppstroms`, `langd_uppstroms_m`. Test: scratchpad/test_natverk.py
+(förgrening, slinga, attribut MOT, vattengång, tryckledning, serviser, batch + skattning).
 **Markprofil** (sep 2026, `arcmap/markprofil.py` + verktyget Markprofil i .pyt, oprövat i riktig ArcMap):
 läser bedömda-lagret (fält `NR` tillagt i EGNA_FALT för kopplingen), hämtar vattengång vid start-/
 slutbrunn ur ursprungliga ledningslagret (fält vid ledningens start-/slutvertex, valda i dialogen,

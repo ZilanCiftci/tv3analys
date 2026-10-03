@@ -1,6 +1,7 @@
 # Implementeringsplan: fyra nya verktyg
 
-Status: plan, oktober 2026. Beslut och svar på frågorna förs in under respektive avsnitt.
+Status: oktober 2026. Steg 1 (svackkarta) och steg 2 (uppströmsanalys) är implementerade (PR #54, #55);
+steg 3 och 4 pågår. Beslut och svar på frågorna står under respektive avsnitt.
 
 Ordning (varje steg bygger på det föregående):
 

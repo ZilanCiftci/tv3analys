@@ -35,6 +35,7 @@ STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbru
                   'A Platsgjuten brunnspunkt']
 STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
 STANDARD_MARKPROFIL = 'markprofil.json'  # foreslas bredvid kartunderlag.json
+STANDARD_UPPSTROMS = 'uppstroms.csv'     # batchresultat fran Uppstroms, foreslas bredvid lagret
 STANDARD_VG_FRAN = ['VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
 STANDARD_VG_TILL = ['VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
@@ -186,7 +187,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil,
+        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
                       SkapaProjekteringslager, Projekteringsprofil]
 
 
@@ -508,6 +509,191 @@ class Markprofil(object):
             tolerans=float(parameters[9].value),
             hojdsystem=parameters[10].valueAsText or 'RH2000',
         )
+        return
+
+
+class Uppstroms(object):
+    def __init__(self):
+        self.label = 'Uppstr\u00f6ms'
+        self.description = (
+            'Allt som ligger uppstr\u00f6ms om en brunn eller en markerad ledning: ledningar, '
+            'brunnar, serviser, total l\u00e4ngd och l\u00e4ngsta gren. Fl\u00f6desriktningen tas ur '
+            'ett riktningsattribut i ledningslagret, med vatteng\u00e5ngsf\u00e4lten och ritad '
+            'riktning som reserv. I batchl\u00e4get r\u00e4knas serviser och l\u00e4ngd uppstr\u00f6ms '
+            'f\u00f6r varje str\u00e4cka i lagret fr\u00e5n "Skapa ledningslager" och skrivs till '
+            'lagret (ANT_SERV_U, L_UPPSTR) och en CSV f\u00f6r tv3_analys.py.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        K_RIKT = 'Fl\u00f6desriktning'
+        K_SERV = 'Serviser'
+        K_STOPP = 'Stopp (passeras inte)'
+        K_BEGR = 'Begr\u00e4nsning'
+        K_BATCH = 'Batch: per bed\u00f6md str\u00e4cka'
+
+        ledning = _lagerparam('Ledningslager', 'ledningslager', True, kartlager)
+        brunn = _lagerparam('Brunnslager (alla lager d\u00e4r brunnar kan ligga)', 'brunnslager',
+                            True, kartlager)
+        brunn_id = arcpy.Parameter(
+            displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
+            datatype='GPString', parameterType='Required', direction='Input')
+        brunn_id.value = 'EntityID'
+        startbrunn = arcpy.Parameter(
+            displayName='Startbrunn (tomt = den markerade ledningen i kartan)', name='startbrunn',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        ut_fc = arcpy.Parameter(
+            displayName='Utdata: lager med allt uppstr\u00f6ms (valfritt)', name='ut_fc',
+            datatype='DEFeatureClass', parameterType='Optional', direction='Output')
+        csv_ut = arcpy.Parameter(
+            displayName='Sammanfattning / batchresultat (.csv, valfritt)', name='csv_ut',
+            datatype='DEFile', parameterType='Optional', direction='Output')
+        _filter(csv_ut, ['csv'])
+
+        riktn = arcpy.Parameter(
+            displayName='F\u00e4lt med fl\u00f6desriktning (valfritt)', name='riktningsfalt',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_RIKT)
+        med = arcpy.Parameter(
+            displayName='V\u00e4rde(n) som betyder med ritad riktning (flera med ;)', name='med_varden',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_RIKT)
+        med.value = 'MED'
+        mot = arcpy.Parameter(
+            displayName='V\u00e4rde(n) som betyder mot ritad riktning (flera med ;)', name='mot_varden',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_RIKT)
+        mot.value = 'MOT'
+        vg_fran = arcpy.Parameter(
+            displayName='F\u00e4lt med vatteng\u00e5ng vid startpunkten (reserv, valfritt)', name='vg_fran',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_RIKT)
+        vg_till = arcpy.Parameter(
+            displayName='F\u00e4lt med vatteng\u00e5ng vid slutpunkten (reserv, valfritt)', name='vg_till',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_RIKT)
+
+        servis = _lagerparam('Servislager (valfritt)', 'servislager', False, kartlager, 'Optional')
+        servis.category = K_SERV
+        servis_falt = arcpy.Parameter(
+            displayName='...eller f\u00e4lt i ledningslagret som anger servis', name='servis_falt',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_SERV)
+        servis_varden = arcpy.Parameter(
+            displayName='V\u00e4rde(n) som betyder servis (flera med ;)', name='servis_varden',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_SERV)
+
+        stopp_falt = arcpy.Parameter(
+            displayName='F\u00e4lt i ledningslagret f\u00f6r stopp (t.ex. ledningstyp)', name='stopp_falt',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_STOPP)
+        stopp_varden = arcpy.Parameter(
+            displayName='V\u00e4rde(n) som inte passeras, t.ex. tryckledning (flera med ;)',
+            name='stopp_varden', datatype='GPString', parameterType='Optional', direction='Input',
+            category=K_STOPP)
+        stopp_brunnar = arcpy.Parameter(
+            displayName='Brunnar d\u00e4r s\u00f6kningen stannar, t.ex. pumpstationer (littera, flera med ;)',
+            name='stopp_brunnar', datatype='GPString', parameterType='Optional', direction='Input',
+            category=K_STOPP)
+
+        omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
+                             False, kartlager, 'Optional')
+        omrade.category = K_BEGR
+        sokradie = arcpy.Parameter(
+            displayName='S\u00f6kradie kring startbrunnen (m, tomt = hela lagret)', name='sokradie',
+            datatype='GPDouble', parameterType='Optional', direction='Input', category=K_BEGR)
+        tolerans = arcpy.Parameter(
+            displayName='Tolerans mellan ledning och brunn/servis\u00e4nde (m)', name='tolerans',
+            datatype='GPDouble', parameterType='Required', direction='Input', category=K_BEGR)
+        tolerans.value = 1.0
+
+        bedomda = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager" (batchl\u00e4ge: alla '
+                              'str\u00e4ckor, startbrunn ignoreras)', 'bedomda', False, kartlager, 'Optional')
+        bedomda.category = K_BATCH
+
+        _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
+        _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
+        return [ledning, brunn, brunn_id, startbrunn, ut_fc, csv_ut,
+                riktn, med, mot, vg_fran, vg_till,
+                servis, servis_falt, servis_varden,
+                stopp_falt, stopp_varden, stopp_brunnar,
+                omrade, sokradie, tolerans, bedomda]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and parameters[0].valueAsText:
+            falt = _faltnamn(parameters[0])
+            if falt:
+                for i in (6, 9, 10, 12, 14):
+                    _filter(parameters[i], [''] + falt)
+                if not parameters[9].altered:
+                    parameters[9].value = _forsta_traff(STANDARD_VG_FRAN, falt)
+                if not parameters[10].altered:
+                    parameters[10].value = _forsta_traff(STANDARD_VG_TILL, falt)
+        if parameters[20].altered and parameters[20].valueAsText and not parameters[5].altered:
+            l = _lagerobjekt(parameters[20].valueAsText)
+            try:
+                mapp = os.path.dirname(l.dataSource if l else parameters[20].valueAsText)
+                if mapp.lower().endswith('.gdb'):
+                    mapp = os.path.dirname(mapp)
+                if mapp:
+                    parameters[5].value = os.path.join(mapp, STANDARD_UPPSTROMS)
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslager')
+        _kolla_geometri(parameters[1], ('Point',), 'Brunnslager')
+        _kolla_geometri(parameters[11], ('Polyline',), 'Servislager')
+        _kolla_geometri(parameters[17], ('Polygon',), 'Omradeslager')
+        _kolla_geometri(parameters[20], ('Polyline',), 'Bedomda ledningar')
+        if parameters[19].value is not None and not parameters[19].value > 0:
+            parameters[19].setErrorMessage('Storre an 0')
+        if parameters[20].valueAsText:
+            namn = [f.upper() for f in _faltnamn(parameters[20])]
+            if namn and 'FRAN_BRUNN' not in namn:
+                parameters[20].setErrorMessage(
+                    'Lagret saknar faltet FRAN_BRUNN - valj lagret fran "Skapa ledningslager".')
+            if not parameters[5].valueAsText:
+                parameters[5].setErrorMessage('Batchlaget behover en CSV-fil att skriva resultatet till.')
+        elif not parameters[3].valueAsText and not parameters[4].valueAsText:
+            parameters[4].setWarningMessage(
+                'Utan utdatalager visas resultatet bara i loggen (och i CSV:n om den anges).')
+        return
+
+    def execute(self, parameters, messages):
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('natverk')
+        servis = _lagerlista(parameters[11])
+        omrade = _lagerlista(parameters[17])
+        gemensamt = dict(
+            riktningsfalt=parameters[6].valueAsText or None,
+            med_varden=parameters[7].valueAsText or None,
+            mot_varden=parameters[8].valueAsText or None,
+            vg_fran=parameters[9].valueAsText or None,
+            vg_till=parameters[10].valueAsText or None,
+            servislager=servis or None,
+            servis_falt=parameters[12].valueAsText or None,
+            servis_varden=parameters[13].valueAsText or None,
+            stopp_falt=parameters[14].valueAsText or None,
+            stopp_varden=parameters[15].valueAsText or None,
+            stopp_brunnar=_lagerlista(parameters[16]) or None,
+            omradeslager=omrade[0] if omrade else None,
+            tolerans=float(parameters[19].value),
+        )
+        if parameters[20].valueAsText:
+            m.uppstroms_batch(parameters[20].valueAsText.strip("'"), _lagerlista(parameters[0]),
+                              _lagerlista(parameters[1]), parameters[2].valueAsText,
+                              parameters[5].valueAsText, **gemensamt)
+            try:
+                arcpy.RefreshActiveView()
+            except Exception:
+                pass
+            return
+        ut = m.uppstroms(_lagerlista(parameters[0]), _lagerlista(parameters[1]), parameters[2].valueAsText,
+                         startbrunn=parameters[3].valueAsText or None,
+                         ut_fc=parameters[4].valueAsText or None,
+                         csv_ut=parameters[5].valueAsText or None,
+                         sokradie=float(parameters[18].value) if parameters[18].value else None,
+                         lagg_till_i_kartan=False, **gemensamt)
+        if ut.get('lager'):
+            parameters[4].value = ut['lager']
         return
 
 
