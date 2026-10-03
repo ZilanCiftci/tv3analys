@@ -80,8 +80,12 @@ def _centrera(df, utb, skala, ram):
     xmin, ymin, xmax, ymax = utb
     cx, cy = (xmin + xmax) / 2.0, (ymin + ymax) / 2.0
     b, h = ram[0] * skala, ram[1] * skala
-    df.extent = arcpy.Extent(cx - b / 2.0, cy - h / 2.0, cx + b / 2.0, cy + h / 2.0)
-    df.scale = skala
+    try:
+        df.extent = arcpy.Extent(cx - b / 2.0, cy - h / 2.0, cx + b / 2.0, cy + h / 2.0)
+        df.scale = skala
+    except Exception as e:
+        raise RuntimeError('Kan inte flytta dataramen (%s) - dataramens Extent ska vara "Automatic", '
+                           'inte Fixed Scale/Fixed Extent (Data Frame Properties > Data Frame)' % txt(e))
 
 
 def _satt_text(mxd, namn, text):
@@ -155,6 +159,12 @@ class Layout(object):
         self.df = arcpy.mapping.ListDataFrames(mxd)[0]
         self.ram = dataram_matt(self.df)
         self.liggande = self.ram[0] >= self.ram[1]
+        try:
+            if abs(float(self.df.rotation or 0)) > 0.01:
+                logg('  OBS: dataramen i %s ar roterad %.0f grader - skalvalet raknar pa oroterad ram, '
+                     'satt rotationen till 0' % (namn, float(self.df.rotation)))
+        except Exception:
+            pass
         self.lyr = lyr if lyr is not None else _lager_i_doc(mxd, lagernamn)
         if self.lyr is None:
             raise RuntimeError('Mallen %s saknar lagret "%s" - lagg in det (samma namn som i kartan)'
@@ -163,6 +173,10 @@ class Layout(object):
         if markeringsnamn and self.mark_lyr is None:
             logg('  mallen %s saknar markeringslagret "%s" - urval anvands i stallet'
                  % (namn, txt(markeringsnamn)))
+        if self.mark_lyr is not None and self.mark_lyr is self.lyr:
+            logg('  markeringslagret ar samma lager som strackorna i %s - en definitionsfraga skulle dolja '
+                 'alla andra strackor; urval anvands i stallet' % namn)
+            self.mark_lyr = None
         self._gammal_dq = getattr(self.mark_lyr, 'definitionQuery', None) if self.mark_lyr is not None else None
 
     def passning(self, utb, skalor, marginal):
@@ -274,7 +288,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
         try:
             valda_oid = set(lyr.getSelectionSet() or [])
         except Exception:
-            valda_oid = set()
+            raise RuntimeError('Urvalet "markerade i kartan" kraver att lagret valjs i kartan (inte en sokvag)')
         if not valda_oid:
             raise RuntimeError('Inga strackor ar markerade i kartan')
 
@@ -336,6 +350,12 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                 except Exception:
                     pass
             fil = os.path.join(ut_mapp, _filnamn(p0, per_etapp))
+            if fil in filer:                      # samma klass/fil/nr/brunnar tva ganger (t.ex. filer med samma namn)
+                stam, andelse = os.path.splitext(fil)
+                k = 2
+                while '%s_%d%s' % (stam, k, andelse) in filer:
+                    k += 1
+                fil = '%s_%d%s' % (stam, k, andelse)
             arcpy.mapping.ExportToPDF(lo.mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi),
                                       image_quality='BEST', georef_info=True)
             filer.append(fil)
