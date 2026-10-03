@@ -188,7 +188,7 @@ class Toolbox(object):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
         self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
-                      ExporteraKartbild, SkapaProjekteringslager, Projekteringsprofil]
+                      ExporteraKartor, ExporteraKartbild, SkapaProjekteringslager, Projekteringsprofil]
 
 
 class SkapaLedningslager(object):
@@ -694,6 +694,108 @@ class Uppstroms(object):
                          lagg_till_i_kartan=False, **gemensamt)
         if ut.get('lager'):
             parameters[4].value = ut['lager']
+        return
+
+
+class ExporteraKartor(object):
+    def __init__(self):
+        self.label = 'Exportera kartor (PDF per str\u00e4cka)'
+        self.description = (
+            'Skriver en PDF-karta per \u00e5tg\u00e4rdsstr\u00e4cka (eller per etapp) ur layouten: dataramen '
+            'centreras p\u00e5 str\u00e4ckan och skalan s\u00e4tts till den minsta i serien (1:200, 1:300, '
+            '1:400 ...) d\u00e4r str\u00e4ckan ryms. Str\u00e4ckan markeras, textelementen TITEL, UNDERTITEL '
+            'och SKALA i layouten fylls i om de finns, alla sidor samlas i en PDF och s\u00f6kv\u00e4gen '
+            'skrivs till f\u00e4ltet KARTA. K\u00f6r fr\u00e5n layoutvyn med \u00f6nskad sidstorlek.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        bedomda = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager"', 'bedomda', False, kartlager)
+        ut_mapp = arcpy.Parameter(
+            displayName='Utdatamapp f\u00f6r PDF-kartorna', name='ut_mapp', datatype='DEFolder',
+            parameterType='Required', direction='Input')
+        urval = arcpy.Parameter(
+            displayName='Vilka str\u00e4ckor', name='urval', datatype='GPString',
+            parameterType='Required', direction='Input')
+        _filter(urval, ['Str\u00e4ckor med \u00e5tg\u00e4rd (METOD ifyllt)', 'Klass A och B',
+                        'Markerade i kartan', 'Alla'])
+        urval.value = 'Str\u00e4ckor med \u00e5tg\u00e4rd (METOD ifyllt)'
+        per_etapp = arcpy.Parameter(
+            displayName='En karta per etapp i st\u00e4llet f\u00f6r per str\u00e4cka', name='per_etapp',
+            datatype='GPBoolean', parameterType='Optional', direction='Input')
+        per_etapp.value = False
+        skalor = arcpy.Parameter(
+            displayName='Skalor att prova i ordning (1:N, flera med ;)', name='skalor',
+            datatype='GPString', parameterType='Required', direction='Input')
+        skalor.value = '200;300;400;500;750;1000;1500;2000'
+        marginal = arcpy.Parameter(
+            displayName='Marginal runt str\u00e4ckan (m)', name='marginal', datatype='GPDouble',
+            parameterType='Required', direction='Input')
+        marginal.value = 10.0
+        dpi = arcpy.Parameter(
+            displayName='Uppl\u00f6sning (dpi)', name='dpi', datatype='GPLong',
+            parameterType='Required', direction='Input')
+        dpi.value = 200
+        markering = _lagerparam('Markeringslager (kopia av lagret med tydlig symbologi; tomt = urval)',
+                                'markeringslager', False, kartlager, 'Optional')
+        samlad = arcpy.Parameter(
+            displayName='Sl\u00e5 ihop alla sidor till en samlad PDF', name='samlad',
+            datatype='GPBoolean', parameterType='Optional', direction='Input')
+        samlad.value = True
+        skriv_falt = arcpy.Parameter(
+            displayName='Skriv s\u00f6kv\u00e4gen till f\u00e4ltet KARTA i lagret (hyperl\u00e4nk)',
+            name='skriv_falt', datatype='GPBoolean', parameterType='Optional', direction='Input')
+        skriv_falt.value = True
+        kartmapp = arcpy.Parameter(
+            displayName='Mapp med kartorna som den h\u00e4r datorn ser den (valfritt, Citrix)',
+            name='kartmapp', datatype='DEFolder', parameterType='Optional', direction='Input',
+            category='Hyperl\u00e4nkar (n\u00e4r ArcMap k\u00f6rs p\u00e5 en annan dator, t.ex. Citrix)')
+        return [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
+                skriv_falt, kartmapp]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslagret')
+        _kolla_geometri(parameters[7], ('Polyline',), 'Markeringslagret')
+        if parameters[0].valueAsText:
+            namn = [f.upper() for f in _faltnamn(parameters[0])]
+            if namn and 'FRAN_BRUNN' not in namn:
+                parameters[0].setErrorMessage(
+                    'Lagret saknar faltet FRAN_BRUNN - valj lagret fran "Skapa ledningslager".')
+            elif namn and 'METOD' not in namn and parameters[2].valueAsText and \
+                    parameters[2].valueAsText.startswith('Str'):
+                parameters[2].setWarningMessage(
+                    'Lagret saknar faltet METOD (skapat fore atgardspaketet) - valj "Klass A och B".')
+        if parameters[4].valueAsText:
+            try:
+                if not [int(v) for v in parameters[4].valueAsText.split(';') if v.strip()]:
+                    raise ValueError
+            except ValueError:
+                parameters[4].setErrorMessage('Heltal separerade med ;')
+        if parameters[5].value is not None and parameters[5].value < 0:
+            parameters[5].setErrorMessage('Minst 0')
+        return
+
+    def execute(self, parameters, messages):
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('kartexport')
+        val = parameters[2].valueAsText or ''
+        urval = ('AB' if val.startswith('Klass') else 'valda' if val.startswith('Mark')
+                 else 'alla' if val.startswith('Alla') else 'atgard')
+        markering = _lagerlista(parameters[7])
+        m.exportera(parameters[0].valueAsText.strip("'"), parameters[1].valueAsText, urval=urval,
+                    skalor=[int(v) for v in parameters[4].valueAsText.split(';') if v.strip()],
+                    marginal=float(parameters[5].value), dpi=int(parameters[6].value),
+                    markeringslager=markering[0] if markering else None,
+                    samlad=bool(parameters[8].value), per_etapp=bool(parameters[3].value),
+                    skriv_falt=bool(parameters[9].value),
+                    kartmapp=parameters[10].valueAsText or None)
+        try:
+            arcpy.RefreshActiveView()
+        except Exception:
+            pass
         return
 
 

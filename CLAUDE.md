@@ -190,6 +190,18 @@ manuell_bedomning, gallande_bedomning, etapp, metod, kostnad_kr, lagning_m, brun
 atgardsflagga; kartfält ETAPP/METOD/KOSTNAD och MAN_BED fylls från JSON när kartan saknar egen.
 `--etapper nej` stänger av. DUF 701 utan manuellt: 17 etapper, 97 strumpa, 30 framschaktade brunnar,
 19,1 Mkr schablon. Rundtursttest: lagning 3 m (+75 000), "schakt", "ingen", C→A och låst brunn fungerar.
+**Kartexport** (okt 2026, `arcmap/kartexport.py` + verktyget Exportera kartor i .pyt, oprövat i riktig
+ArcMap): `exportera(bedomda, ut_mapp, urval='atgard'|'AB'|'valda'|'alla', skalor, marginal, dpi,
+markeringslager, samlad, per_etapp, skriv_falt, kartmapp)`. `dataram_matt(df)` = (bredd, höjd)/skala
+läses EN gång (df.extent.width/df.scale – oberoende av sidenheter); `valj_skala` = minsta skala i
+serien där utbredning + 2·marginal ryms, annars största + flagga; `_centrera` sätter extent = centrum
+± ram·skala/2 och df.scale. Markering via definitionsfråga på ett markeringslager (återställs i
+finally) eller SelectLayerByAttribute (CLEAR_SELECTION efteråt). Textelement TITEL/UNDERTITEL/SKALA
+fylls om de finns (ListLayoutElements TEXT_ELEMENT, namn skiftlägesoberoende). ExportToPDF
+PAGE_LAYOUT, PDFDocumentCreate → kartor_strackor.pdf/kartor_etapper.pdf, fält KARTA (254) med
+sökväg (kartmapp för Citrix). Filnamn `<klass>_<fil>_<nr>_<fran>-<till>.pdf` / `etapp_NN.pdf`.
+Test: scratchpad/test_kartexport.py med låtsas-mapping (A3-ram 76×50 m i 1:200: 40 m → 1:200,
+100 m → 1:400, 300 m hög → 1:1500; per etapp; valda). Handledning 7.10.
 **Granskning okt 2026 av steg 1–4 (rättat, tre delgranskningar + egna fynd):** tv3_analys –
 `manuell_klass()` kräver ensam bokstav A–E (fri text som "Bevaka" är inte klass B), `manuell_metod`
 (schakt vinner; ingen/inget/ej åtgärd/avvakta = ingen) och manuellt "ingen" överbryggas inte;
