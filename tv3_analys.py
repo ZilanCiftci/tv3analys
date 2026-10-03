@@ -828,15 +828,27 @@ class Stracka:
         """strumpa / schakt / ingen. Texten i Manuell bedömning styr alltid (schakt, strumpa, ingen);
         annars strumpa för gällande klass i ATGARD_KLASSER som inte är relinad, ingen för övriga.
         F3: inget automatiskt byte till schakt (om inte SCHAKT_AUTOMATISKT) – se atgardsflagga."""
-        t = (self.manuell_bedomning or "").strip().lower()
-        for ord_, metod in (("schakt", "schakt"), ("strump", "strumpa"), ("ingen", "ingen")):
-            if ord_ in t:
-                return metod
+        m = self.manuell_metod
+        if m:
+            return m
         if self.gallande_klass not in ATGARD_KLASSER or self.relinad:
             return "ingen"
         if SCHAKT_AUTOMATISKT and self.grad4_koder:
             return "schakt"
         return "strumpa"
+
+    @property
+    def manuell_metod(self) -> str:
+        """Metod som texten i Manuell bedömning anger: schakt / strumpa / ingen, annars ''.
+        'schakt' vinner över 'strumpa' ('strumpa ej möjlig, schakt'); 'ingen'/'inget'/'ej åtgärd' = ingen."""
+        t = (self.manuell_bedomning or "").strip().lower()
+        if "schakt" in t:
+            return "schakt"
+        if any(o in t for o in ("ingen", "inget", "ej åtgärd", "ej atgard", "avvakta")):
+            return "ingen"
+        if "strump" in t:
+            return "strumpa"
+        return ""
 
     @property
     def metod(self) -> str:
@@ -1377,8 +1389,11 @@ def las_manuella(path: str) -> tuple[list[dict], list[str]]:
         rubrik = [str(c or "").strip() for c in next(rader, [])]
 
         def kol(namn):
-            for i, r in enumerate(rubrik):
-                if r.lower().startswith(namn.lower()):
+            lag = [r.lower() for r in rubrik]
+            if namn.lower() in lag:                       # exakt träff först
+                return lag.index(namn.lower())
+            for i, r in enumerate(lag):
+                if r.startswith(namn.lower()):
                     return i
             return None
         ix = {n: kol(n) for n in ("Fil", "Nr", "Startbrunn", "Slutbrunn", "Manuell bedömning",
@@ -1461,8 +1476,8 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
     # F5: kort C/D-sträcka mellan två åtgärdssträckor med samma metod tas med
     for p, r in rep_.items():
         if p in atgard or r.metod != "ingen" or r.relinad or r.gallande_klass not in ("C", "D") \
-                or r.langd >= ETAPP_OVERBRYGGA_M:
-            continue
+                or r.langd >= ETAPP_OVERBRYGGA_M or r.manuell_metod == "ingen":
+            continue          # manuellt 'ingen' överbryggas inte
         a, b = sorted(p)
         for metod in ("strumpa", "schakt"):
             if brunn_metod.get((a, metod)) and brunn_metod.get((b, metod)):
