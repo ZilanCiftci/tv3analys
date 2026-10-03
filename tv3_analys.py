@@ -201,7 +201,8 @@ BEHALL_RAPPORTER = False
 # Ange rubriken utan enhet ("Längd", inte "Längd (m)") – enheten står på egen rad i Excel.
 DOLDA_KOLUMNER = {
     "Prioritering": ["Fil", "Nr", "Område", "Ledningstyp", "Datum", "Driftindex", "Totalindex",
-                     "Drift maxgrad", "Antal skador", "Driftåtgärd", "Inspekterad flera ggr", "Littera rättat",
+                     "Drift maxgrad", "Antal skador", "Serviser uppströms", "Längd uppströms", "Driftåtgärd",
+                     "Inspekterad flera ggr", "Littera rättat",
                      "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
                      "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
@@ -413,6 +414,10 @@ class Stracka:
     gis_vg_slut: float | None = None
     langd_karta: float | None = None
     hojdsystem: str = "RH2000"           # kartans höjdsystem enligt markprofil.json
+    # Från uppströmsanalysen i ArcMap (verktyget Uppströms, batchläge; CSV via uppstroms: i listfilen)
+    serviser_uppstroms: int | None = None      # serviser/anslutningar uppströms, inkl. sträckans egna
+    langd_uppstroms: float | None = None       # m ledning uppströms, inkl. sträckan
+    serviser_kalla: str = ""                   # "servislager" eller "skattning (ANT_ANSL)"
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -1134,6 +1139,53 @@ def koppla_markprofil(strackor: list[Stracka], filer: list[dict]) -> tuple[int, 
     return n_mark, n_vg
 
 
+def las_uppstroms(path: str) -> list[dict]:
+    """Läser CSV:n från ArcMap-verktyget Uppströms (batchläge): fil;nr;startbrunn;slutbrunn;
+    serviser_uppstroms;langd_uppstroms_m;... med decimalkomma."""
+    rader = [r for r in las_text(path).splitlines() if r.strip()]
+    if not rader:
+        return []
+    rubrik = [k.strip().lower() for k in rader[0].split(";")]
+    poster = []
+    for rad in rader[1:]:
+        delar = rad.split(";")
+        post = dict(zip(rubrik, (d.strip() for d in delar)))
+        poster.append(post)
+    return poster
+
+
+def koppla_uppstroms(strackor: list[Stracka], poster: list[dict]) -> int:
+    """Kopplar serviser/längd uppströms till sträckorna: TV3-fil + sträcknummer i första hand,
+    annars brunnspar. Returnerar antal kopplade sträckor."""
+    def tal(v):
+        try:
+            return float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    pa_nr: dict[tuple[str, int], dict] = {}
+    pa_par: dict[frozenset, dict] = {}
+    for post in poster:
+        fil = os.path.basename(post.get("fil") or "").lower()
+        par = frozenset((_normlittera(post.get("startbrunn")), _normlittera(post.get("slutbrunn"))))
+        nr = tal(post.get("nr"))
+        if nr is not None and fil:
+            pa_nr.setdefault((fil, int(nr)), post)
+        pa_par.setdefault(par, post)
+    n = 0
+    for s in strackor:
+        fil = os.path.basename(s.fil).lower()
+        par = frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))
+        post = pa_nr.get((fil, s.nr)) or pa_par.get(par)
+        if not post:
+            continue
+        serv = tal(post.get("serviser_uppstroms"))
+        s.serviser_uppstroms = int(serv) if serv is not None else None
+        s.langd_uppstroms = tal(post.get("langd_uppstroms_m"))
+        s.serviser_kalla = post.get("serviser_kalla", "")
+        n += 1
+    return n
+
+
 def fil_url(sokvag: str) -> str:
     """Absolut sökväg -> file:///-URL som Excel kan öppna."""
     from urllib.parse import quote
@@ -1314,7 +1366,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     kol = ["Rang", "Prioritetsklass", "Fil", "Nr", "Startbrunn", "Slutbrunn", "Område", "Ledningstyp",
            "Material", "Dim (mm)", "Längd (m)", "Datum",
            "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
-           "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Anslutningar", "Skador (kod+grad)",
+           "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Anslutningar",
+           "Serviser uppströms", "Längd uppströms (m)", "Skador (kod+grad)",
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
@@ -1329,7 +1382,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       s.ledningstyp.capitalize(), s.material, s.dimension + (f"/{s.dimension2}" if s.dimension2 else ""),
                       round(s.langd, 1), s.datum, round(s.index("K"), 1), round(s.index("D"), 1),
                       round(s.index(), 1), s.maxgrad("K") or None, s.maxgrad("D") or None,
-                      len(s.skador()), s.antal_anslutningar, s.sammanfattning_skador(), s.driftatgard,
+                      len(s.skador()), s.antal_anslutningar, s.serviser_uppstroms,
+                      round(s.langd_uppstroms) if s.langd_uppstroms is not None else None,
+                      s.sammanfattning_skador(), s.driftatgard,
                       "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", "Ja" if s.relinad else "",
                       s.littera_rattat,
                       round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
@@ -1484,6 +1539,8 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "maxgrad_drift": s.maxgrad("D"),
             "antal_skador": len(s.skador()),
             "antal_anslutningar": s.antal_anslutningar,
+            "serviser_uppstroms": s.serviser_uppstroms,
+            "langd_uppstroms_m": s.langd_uppstroms,
             "skador": s.sammanfattning_skador(),
             "driftatgard": s.driftatgard,
             "langd_m": round(s.langd, 1),
@@ -2163,6 +2220,7 @@ Globala = dict[str, list[str]]                    # {"media": [...], "bild": [..
 _BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
 _MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
 _MARK_NYCKLAR = ("markprofil", "mark")
+_UPP_NYCKLAR = ("uppstroms", "uppströms", "uppstrom")
 
 
 def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
@@ -2175,6 +2233,8 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         bild: D:\\Inspektioner\\Foton            bildkatalog för alla filer (valfritt – annars
                                                  söks bilderna i filmkatalogerna)
         littera: brunnslittera.csv               ersättningslittera för felmärkta brunnar
+        markprofil: Karta\\markprofil.json        från ArcMap-verktyget Markprofil
+        uppstroms: Karta\\uppstroms.csv           från ArcMap-verktyget Uppströms (batchläge)
         DUF 701.TV3                              TV3-fil; media söks i filens egen katalog
         DUF 702.TV3 ; D:\\Filmer\\DUF702          TV3-fil med egen filmkatalog (fler kan
                                                  anges, separerade med ;)
@@ -2188,10 +2248,11 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         return p if os.path.isabs(p) else os.path.normpath(os.path.join(bas, p))
 
     nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR + _MARK_NYCKLAR
+                                                             + _UPP_NYCKLAR
                                                              + ("littera", "brunnslittera", "brunnar")),
                            re.IGNORECASE)
     poster: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": []}
     for rad in las_text(path).splitlines():
         rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
@@ -2200,7 +2261,8 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         if m:
             nyckel = m.group(1).lower()
             slag = ("bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR
-                    else "markprofil" if nyckel in _MARK_NYCKLAR else "littera")
+                    else "markprofil" if nyckel in _MARK_NYCKLAR
+                    else "uppstroms" if nyckel in _UPP_NYCKLAR else "littera")
             globala[slag] += [abs_(d) for d in m.group(2).split(";") if d.strip()]
             continue
         delar = rad.split(";")
@@ -2228,7 +2290,7 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Lis
     och littera-CSV:erna från listfilerna."""
     import glob
     kandidater: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": []}
 
     def lagg_till_lista(lf: str) -> None:
         p, g = las_listfil(lf)
@@ -2294,6 +2356,9 @@ def main(argv=None):
     ap.add_argument("--markprofil", action="append", default=[], metavar="FIL.JSON",
                     help="markprofil.json från ArcMap-verktyget Markprofil (markhöjder och GIS-vattengång); "
                          "kan även anges i listfilen som 'markprofil: FIL'")
+    ap.add_argument("--uppstroms", action="append", default=[], metavar="FIL.CSV",
+                    help="CSV från ArcMap-verktyget Uppströms (batchläge): serviser och längd uppströms "
+                         "per sträcka; kan även anges i listfilen som 'uppstroms: FIL'")
     ap.add_argument("--bilder", action="append", default=[], metavar="KATALOG",
                     help="katalog att söka bilder i (kan anges flera gånger); anges ingen söks "
                          "bilderna i videokatalogerna; kan även anges i listfilen som 'bild: KATALOG'")
@@ -2383,6 +2448,18 @@ def main(argv=None):
         if flaggade:
             print(f"  {len(flaggade)} sträckor med höjdflagga, t.ex. "
                   + ", ".join(f"{s.id} ({s.hojdflagga})" for s in flaggade[:3]))
+    uppposter = []
+    for uf in globala["uppstroms"] + a.uppstroms:
+        if not os.path.isfile(uf):
+            fel.append(f"{uf}: uppströmsfilen finns inte")
+            print(f"  VARNING uppströmsfil saknas: {uf}")
+            continue
+        uppposter += las_uppstroms(uf)
+    if uppposter:
+        n_upp = koppla_uppstroms(strackor, uppposter)
+        kallor = Counter(s.serviser_kalla for s in strackor if s.serviser_uppstroms is not None)
+        print(f"Uppströms: {n_upp} av {len(strackor)} sträckor kopplade"
+              + (" (" + ", ".join(f"{k}: {n}" for k, n in kallor.most_common()) + ")" if kallor else ""))
     print(f"\nVideofiler hittade: {vh} av {vt}   Bilder hittade: {bh} av {bt}")
     if vt and vh < vt:
         print("  (ange katalogen med filmerna i listfilen – 'media: KATALOG' eller 'fil.TV3 ; KATALOG' –\n"
