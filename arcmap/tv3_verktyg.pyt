@@ -188,7 +188,7 @@ class Toolbox(object):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
         self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
-                      SkapaProjekteringslager, Projekteringsprofil]
+                      ExporteraKartbild, SkapaProjekteringslager, Projekteringsprofil]
 
 
 class SkapaLedningslager(object):
@@ -694,6 +694,62 @@ class Uppstroms(object):
                          lagg_till_i_kartan=False, **gemensamt)
         if ut.get('lager'):
             parameters[4].value = ut['lager']
+        return
+
+
+class ExporteraKartbild(object):
+    def __init__(self):
+        self.label = 'Exportera kartbild'
+        self.description = (
+            'Sparar kartans aktuella vy som PNG i utdatamappen fr\u00e5n tv3_analys (kartbild.png), '
+            's\u00e5 att tv3_pptx.py kan l\u00e4gga in kartan i presentationen. Zooma och t\u00e4nd de '
+            'lager som ska synas innan verktyget k\u00f6rs.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        mapp = arcpy.Parameter(
+            displayName='Utdatamapp fr\u00e5n tv3_analys (d\u00e4r kartunderlag.json ligger)', name='mapp',
+            datatype='DEFolder', parameterType='Required', direction='Input')
+        namn = arcpy.Parameter(
+            displayName='Filnamn', name='namn', datatype='GPString', parameterType='Required',
+            direction='Input')
+        namn.value = 'kartbild.png'
+        upplosning = arcpy.Parameter(
+            displayName='Uppl\u00f6sning (dpi)', name='dpi', datatype='GPLong', parameterType='Required',
+            direction='Input')
+        upplosning.value = 200
+        bredd = arcpy.Parameter(
+            displayName='Bildbredd (pixlar, 0 = enligt dataramen)', name='bredd', datatype='GPLong',
+            parameterType='Required', direction='Input')
+        bredd.value = 2400
+        ut = arcpy.Parameter(
+            displayName='Kartbild', name='ut', datatype='DEFile', parameterType='Derived',
+            direction='Output')
+        return [mapp, namn, upplosning, bredd, ut]
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        if parameters[1].valueAsText and not parameters[1].valueAsText.lower().endswith('.png'):
+            parameters[1].setErrorMessage('Filnamnet ska sluta pa .png')
+        return
+
+    def execute(self, parameters, messages):
+        mxd = arcpy.mapping.MapDocument('CURRENT')
+        df = arcpy.mapping.ListDataFrames(mxd)[0]
+        ut = os.path.join(parameters[0].valueAsText, parameters[1].valueAsText)
+        dpi = int(parameters[2].value)
+        bredd = int(parameters[3].value or 0)
+        if bredd > 0:
+            # Hojden foljer dataramens proportioner
+            hojd = int(bredd * df.elementHeight / df.elementWidth)
+            arcpy.mapping.ExportToPNG(mxd, ut, df, df_export_width=bredd, df_export_height=hojd,
+                                      resolution=dpi, world_file=False)
+        else:
+            arcpy.mapping.ExportToPNG(mxd, ut, df, resolution=dpi, world_file=False)
+        arcpy.AddMessage('Kartbild skriven: %s' % ut)
+        parameters[4].value = ut
         return
 
 

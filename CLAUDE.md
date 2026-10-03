@@ -150,6 +150,23 @@ kartlängd/filmlängd, ingen skalning vid avbruten, vänd när utgångsbrunnen �
 skrivs som `<stam>_svackor/_bakfall.geojson` när geojson_ut anges (skriv_geojson kan nu punkter).
 Symbologi: `arcmap/svackor.lyr`/`bakfall.lyr` när användaren sparat dem. Testat med låtsas-arcpy
 (scratchpad/test_svackor.py: skalning 1,25, avbruten utan skalning, motströms vändning).
+**PowerPoint** (okt 2026, steg 4, `tv3_pptx.py`, python-pptx): `bygg_presentation(strackor, etapper,
+diagram, utdata, mall, ut, topp, sidor, ta)` fyller `mall.pptx` via platshållar-idx per layout (`PH`:
+100 = title, 101… i mallens ordning – pptxgenjs ger alla platshållare namnet "Text 0", så namnen går
+inte att använda); klassen `Mall` tar bort exempelsidorna, klonar sidnummer-platshållaren från
+layouten, passar in bilder i platshållarens ruta (platshållaren tas bort, även när bilden saknas),
+bygger tabeller (ACCENT_1-rubrik, varannan rad BACKGROUND_2, klassfärg på klasskolumn, `TABELLRADER`
+12 per sida → fortsättningssidor "(2)") och nyckeltalsrutor som i mallens exempel. KONFIG: `SIDOR`
+(titel, avdelare, nyckeltal, klasser, topplista, topptabell, koder, material, etapper, strackor,
+driftatgarder, svackor, karta, metod, avslut), `TOPP_STRACKOR` 10, `FOTON_PER_STRACKA` 3 (de
+allvarligaste skadornas bilder först), `KARTBILD` kartbild.png, `AVSLUT_PUNKTER`. `--pptx` i
+tv3_analys (efter Excel/JSON, innan diagramkatalogen städas); fristående `python tv3_pptx.py UTDATA`
+läser kartunderlag.json (nya toppfält `mediakataloger`/`bildkataloger`), TV3-filerna igen (rättade
+littera tas ur JSON på fil+nr), prioritering.xlsx (manuella), kostnader.csv → planera_atgarder,
+rita_diagram i tempmapp. ArcMap: verktyget **Exportera kartbild** (ExportToPNG av aktuell vy,
+bredd 2400 px, 200 dpi) i .pyt. Test: DUF 701 ger 26 sidor, validate.py OK, foton via låtsasbilder;
+LibreOffice i sandlådan kan inte rendera, så layouten är kontrollerad strukturellt (python-pptx), inte
+visuellt – användaren justerar mallen.
 **Åtgärdspaket och kostnad** (okt 2026, steg 3, i `tv3_analys.py`): KONFIG `KOSTNADSFIL` (kostnader.csv i
 repot, schablon: strumpa 2 500–9 500 kr/m per dimensionsintervall, hatt 9 000, lagning 25 000 kr/m,
 framschaktning 60 000, ny_brunn 45 000, etablering 40 000), `ATGARD_KLASSER` (A, B), `SCHAKT_AUTOMATISKT`
