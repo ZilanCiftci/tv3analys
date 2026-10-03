@@ -44,13 +44,7 @@ Sammanlagt cirka sju arbetspass. Steg 1 och 2 testas i ArcMap (Citrix), steg 3 o
 
 **Indata.** Ledningslager, brunnslager, valfritt servislager (eller typkolumn om serviser ligger i samma lager), och startpunkt: vald ledning i kartan eller ett brunnslittera. Valfritt område eller sökavstånd från startpunkten för att begränsa grafen (hela SVOA-nätet är stort).
 
-**Flödesriktning** (kärnfrågan). Tre alternativ i dialogen:
-
-- vattengångsfälten (från högre till lägre nivå; samma fält som Markprofil använder) – standard,
-- ritad riktning (första → sista vertex) – reserv när nivå saknas,
-- ett riktningsattribut i lagret.
-
-Ledningar där alternativen säger olika loggas (ofta datafel).
+**Flödesriktning** (kärnfrågan). Ledningslagret har ett **riktningsattribut** (F6): dialogen får ett fältval och en tolkning av värdena (vilket värde som betyder "med ritad riktning" respektive "mot"). Som reserv när attributet saknas på en ledning används vattengångsfälten (högre → lägre), annars ritad riktning; sådana ledningar loggas.
 
 **Algoritm.** Rikta varje kant uppströms→nedströms, gå bakåt från startnoden med bredd-först, samla alla kanter. Varje nod besöks en gång (ringmatning i dagvattennät ger cykler). Ledningstyper som inte får passeras (tryckledningar, pumpstationer) anges i dialogen och stoppar sökningen. Serviser räknas som ledningar i servislagret som ansluter till en uppströmskant inom toleransen. Saknas servislager används fältet Anslutningar ur kartunderlaget som skattning för de inspekterade delarna.
 
@@ -88,7 +82,7 @@ Regler per sträcka:
 | Bara tillsyns-/rensbrunnar | Schakta fram en brunn, strumpa från öppet schakt, ny brunn | framschaktning kr/st + strumpa kr/m + ny brunn kr/st |
 | Okänd typ | Som nedstigningsbrunn, men flaggas "brunnstyp okänd" | – |
 
-Rensbrunnens (RB) behandling: se fråga F1.
+Rensbrunn (RB) behandlas som tillsynsbrunn: strumpa kan inte installeras därifrån (F1).
 
 ### 3.2 Metodval per sträcka
 
@@ -101,21 +95,19 @@ Rensbrunnens (RB) behandling: se fråga F1.
 
 Manuell bedömning i Excel kan alltid styra metoden: värdena A–E styr klassen, texten "schakt", "strumpa" eller "ingen" styr metoden.
 
-### 3.3 Punktlagningar före strumpning
+### 3.3 Lagning före strumpning (manuell bedömning)
 
-Lokala skador som är så svåra att strumpan inte kan installeras över dem lagas med punktschakt först. Varje sådan observation ger en punktlagning (kr/st). Observationer inom `PUNKTLAGNING_SAMMANSLAG_M` (standard 2 m) räknas som en.
+Lokala skador som är så svåra att strumpan inte kan installeras över dem lagas med punktschakt först. Det avgörs **manuellt** (F2): fliken Prioritering får kolumnen **Lagning (m)** där användaren anger hur många meter som behöver lagas med schakt före strumpning. Kostnaden blir meter × kr/m för posten `lagning` i kostnadsfilen. Skriptet föreslår inget automatiskt, men i kolumnen Skador (kod+grad) syns de observationer som brukar kräva lagning (RBR/DEF grad 3, FOG grad 4, YTS grad 4), så att genomgången går fort.
 
-Vilka observationer som utlöser punktlagning: KONFIG `PUNKTLAGNING_KODER`, t.ex. `{("RBR", 3), ("DEF", 3), ("FOG", 4), ("YTS", 4)}` – se fråga F2. Grad 4 på RBR/DEF ger schakt av hela sträckan enligt 3.2, inte punktlagning.
-
-**Brytpunkt.** När strumpa + punktlagningar + eventuell framschaktning blir dyrare än schakt av hela sträckan byter metoden till schakt (`METOD_BRYTPUNKT = True`), eller när antalet punktlagningar överstiger `PUNKTLAGNING_MAX` per 100 m – se fråga F3.
+**Ingen automatisk brytpunkt** mot schakt (F3). Metoden byts bara av manuell bedömning ("schakt"). Kalkylen visar däremot alltid båda alternativen per sträcka, strumpa inklusive lagning och framschaktning respektive schakt av hela sträckan, så att skillnaden syns i Excel.
 
 ### 3.4 Etappindelning
 
-Sträckorna bildar en graf via brunnsparen (samma som flerinspekterade par). Sammanhängande sträckor med åtgärd och samma metod blir en etapp. En C- eller D-sträcka mellan två åtgärdssträckor tas med om den är kortare än `ETAPP_OVERBRYGGA_M` (standard 60 m, fråga F5) – en sammanhängande infodring är oftast billigare än två etableringar; sådana sträckor markeras "medtagen för sammanhang". Etapperna numreras efter högsta konstruktionsindex i etappen, alternativt efter konsekvens (antal anslutna uppströms från steg 2) om `ETAPP_ORDNING = "konsekvens"`.
+Sträckorna bildar en graf via brunnsparen (samma som flerinspekterade par). Sammanhängande sträckor med åtgärd och samma metod blir en etapp. En C- eller D-sträcka mellan två åtgärdssträckor tas med om den är kortare än `ETAPP_OVERBRYGGA_M` (standard 60 m, beslutat F5) – en sammanhängande infodring är oftast billigare än två etableringar; sådana sträckor markeras "medtagen för sammanhang". Etapperna numreras efter högsta konstruktionsindex i etappen, alternativt efter konsekvens (antal anslutna uppströms från steg 2) om `ETAPP_ORDNING = "konsekvens"`.
 
 ### 3.5 Kostnadsfil `kostnader.csv`
 
-Semikolonseparerad, decimalkomma, användaren äger den. Schablonvärden läggs in som start, tydligt märkta "schablon".
+Semikolonseparerad, decimalkomma, användaren äger den. Schablonvärden läggs in som start, tydligt märkta "schablon" (F4). Bara metoderna strumpa och schakt (F7); fler metoder kan läggas till som nya poster senare.
 
 ```
 post;dimension_fran;dimension_till;enhet;kr;kommentar
@@ -126,20 +118,20 @@ strumpa;401;600;m;…;
 schakt;0;300;m;…;
 schakt;301;600;m;…;
 hatt;;;st;…;anslutning som öppnas och tätas med hatt
-punktlagning;;;st;…;punktschakt före strumpning
+lagning;;;m;…;punktschakt före strumpning, meter enligt manuell bedömning
 framschaktning;;;st;…;schakta fram brunn när bara tillsynsbrunnar finns
 ny_brunn;;;st;…;ny nedstigningsbrunn
 etablering;;;etapp;…;fast kostnad per etapp
 ```
 
-Kostnad per sträcka = metodens kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + punktlagningar × kr/st + framschaktning + ny brunn (när båda ändarna är tillsynsbrunnar). Kostnad per etapp = summan + etablering. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
+Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + lagning kr/m × meter enligt manuell bedömning + framschaktning + ny brunn (när båda ändarna är tillsyns-/rensbrunnar). Kostnad per sträcka (schakt) = schakt kr/m × längd. Båda redovisas; vald metod avgör vad som summeras i etappen. Kostnad per etapp = summan + etablering. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
 
 ### 3.6 Utdata
 
 - Ny flik **Etapper** i Excel: etapp, sträckor, brunnar från/till, längd, metod, dimensioner, antal anslutningar (hattar), antal punktlagningar, framschaktning/ny brunn, kostnad per post och totalt, högsta klass, medtagna för sammanhang.
-- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga), Punktlagningar, Brunnstyp start/slut (dolda).
+- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga), Lagning (m) (synlig, fylls i manuellt), Kostnad strumpa, Kostnad schakt, Brunnstyp start/slut (dolda).
 - Fliken Sammanfattning: total kostnad per metod och klass.
-- `kartunderlag.json`: `etapp`, `metod`, `kostnad`, `punktlagningar`, `brunnstyp_start`, `brunnstyp_slut`; Skapa ledningslager: fälten `ETAPP`, `METOD`, `KOSTNAD`.
+- `kartunderlag.json`: `etapp`, `metod`, `kostnad`, `lagning_m`, `brunnstyp_start`, `brunnstyp_slut`; Skapa ledningslager: fälten `ETAPP`, `METOD`, `KOSTNAD`.
 - PDF-protokollet: ingen ändring (kostnad hör till Excel och kartan, som klassen).
 
 **Test.** DUF 701: kontroll att brunnstyper tolkas rätt (KNBL/KRB/KTB/SRB…), att etapperna blir sammanhängande, och att en sträcka med bara TB får framschaktning. Syntetisk kostnadsfil.
@@ -166,12 +158,14 @@ Kostnad per sträcka = metodens kr/m × längd (dimensionsintervall) + hattar ×
 
 ---
 
-## Frågor att besvara (svar förs in här)
+## Beslut (besvarat 2026-10-03)
 
-- **F1** Rensbrunn (RB): går det att strumpa från en rensbrunn, eller behandlas den som tillsynsbrunn?
-- **F2** Vilka observationer ska utlösa punktlagning?
-- **F3** Brytpunkt mot schakt: när strumpa + punktlagningar blir dyrare än schakt, eller vid ett antal punktlagningar?
-- **F4** Prislista: har ni en egen att utgå från, eller schablon tills vidare?
-- **F5** Överbryggning i etapper: ta med C/D-sträckor kortare än 60 m mellan åtgärdssträckor?
-- **F6** Flödesriktning i uppströmsanalysen: vattengångsfält, ritad riktning eller attribut?
-- **F7** Metoder utöver strumpa och schakt (formpassat rör, sprutbetong)?
+- **F1** Rensbrunn behandlas som tillsynsbrunn – strumpa kan inte installeras därifrån.
+- **F2** Lagning före strumpning är en manuell bedömning: kolumnen "Lagning (m)" i Excel, prissatt kr/m.
+- **F3** Ingen automatisk brytpunkt mot schakt; bara manuell bedömning byter metod. Båda kostnaderna visas.
+- **F4** Schablonpriser tills vidare, märkta schablon i `kostnader.csv`.
+- **F5** C/D-sträckor kortare än 60 m mellan åtgärdssträckor tas med i etappen.
+- **F6** Flödesriktning ur ett riktningsattribut i ledningslagret (fält och värdetolkning väljs i dialogen); vattengång och ritad riktning som reserv.
+- **F7** Bara strumpa och schakt.
+
+Kvar att få av användaren: namnet på riktningsattributet och dess värden (inför steg 2), samt `mall.pptx` (inför steg 4).
