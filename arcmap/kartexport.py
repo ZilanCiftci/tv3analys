@@ -11,6 +11,10 @@ TITEL/UNDERTITEL/SKALA fylls i om de finns, och sidan exporteras med ExportToPDF
 kan dessutom slas ihop till en samlad PDF, och sokvagen skrivs till faltet KARTA i lagret
 (hyperlank, som RAPPORT).
 
+Tva mallar (.mxd) med liggande respektive staende layout kan anges; da valjs per stracka den
+mall som ger minsta skala (vid lika skala den dar strackan fyller sidan bast). Mallarna maste ha
+samma lager (namn) som den oppna kartan. Utan mallar anvands den oppna kartans layout.
+
 Skalvalet ar oberoende av sidenheter: dataramens bredd i meter vid skala S raknas som
 df.extent.width * S / df.scale (i layoutvyn fyller utbredningen ramen exakt).
 
@@ -129,32 +133,138 @@ def _undertitel(post, skala, per_etapp, langd=None):
     return '  ·  '.join(delar)
 
 
+def _lager_i_doc(mxd, namn):
+    """Lagret med namnet namn (kort eller langt, skiftlage spelar ingen roll) i kartdokumentet."""
+    sokt = txt(namn).strip().strip("'").lower()
+    for l in arcpy.mapping.ListLayers(mxd):
+        try:
+            if txt(l.name).strip().lower() == sokt or txt(l.longName).strip().lower() == sokt:
+                return l
+        except Exception:
+            continue
+    return None
+
+
+class Layout(object):
+    """Ett kartdokument att exportera ur: det oppna (CURRENT) eller en mall (.mxd). Haller
+    dataramen, dess matt per skalenhet, lagret med strackorna och ev. markeringslagret."""
+
+    def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None):
+        self.mxd = mxd
+        self.namn = namn
+        self.df = arcpy.mapping.ListDataFrames(mxd)[0]
+        self.ram = dataram_matt(self.df)
+        self.liggande = self.ram[0] >= self.ram[1]
+        self.lyr = lyr if lyr is not None else _lager_i_doc(mxd, lagernamn)
+        if self.lyr is None:
+            raise RuntimeError('Mallen %s saknar lagret "%s" - lagg in det (samma namn som i kartan)'
+                               % (namn, txt(lagernamn)))
+        self.mark_lyr = _lager_i_doc(mxd, markeringsnamn) if markeringsnamn else None
+        if markeringsnamn and self.mark_lyr is None:
+            logg('  mallen %s saknar markeringslagret "%s" - urval anvands i stallet'
+                 % (namn, txt(markeringsnamn)))
+        self._gammal_dq = getattr(self.mark_lyr, 'definitionQuery', None) if self.mark_lyr is not None else None
+
+    def passning(self, utb, skalor, marginal):
+        """(skala, ryms, fyllnad) - fyllnad = hur stor del av ramen strackan tar i den skalan."""
+        skala, ryms = valj_skala(utb, self.ram, skalor, marginal)
+        b = (utb[2] - utb[0]) + 2 * marginal
+        h = (utb[3] - utb[1]) + 2 * marginal
+        fyll = max(b / (self.ram[0] * skala), h / (self.ram[1] * skala))
+        return skala, ryms, fyll
+
+    def markera(self, oids, src, oidfalt):
+        where = '%s IN (%s)' % (arcpy.AddFieldDelimiters(src, oidfalt), ','.join(str(o) for o in oids))
+        if self.mark_lyr is not None:
+            self.mark_lyr.definitionQuery = where
+            try:
+                self.mark_lyr.visible = True
+            except Exception:
+                pass
+            return
+        try:
+            self.lyr.setSelectionSet('NEW', set(oids))
+        except Exception:
+            arcpy.SelectLayerByAttribute_management(self.lyr, 'NEW_SELECTION', where)
+
+    def aterstall(self):
+        try:
+            if self.mark_lyr is not None:
+                self.mark_lyr.definitionQuery = self._gammal_dq or ''
+            else:
+                try:
+                    self.lyr.setSelectionSet('NEW', set())
+                except Exception:
+                    arcpy.SelectLayerByAttribute_management(self.lyr, 'CLEAR_SELECTION')
+        except Exception:
+            pass
+
+
+def valj_layout(layouter, utb, skalor, marginal):
+    """Layouten som ger minsta skala; vid lika skala den dar strackan fyller ramen bast.
+    Returnerar (layout, skala, ryms)."""
+    bast = None
+    for lo in layouter:
+        skala, ryms, fyll = lo.passning(utb, skalor, marginal)
+        nyckel = (not ryms, skala, -fyll)
+        if bast is None or nyckel < bast[0]:
+            bast = (nyckel, lo, skala, ryms)
+    return bast[1], bast[2], bast[3]
+
+
 def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL_M, dpi=200,
               markeringslager=None, samlad=True, per_etapp=False, skriv_falt=True,
-              kartmapp=None, bara_valda_klasser=KLASSER):
+              kartmapp=None, bara_valda_klasser=KLASSER, mall_liggande=None, mall_staende=None):
     """Exporterar en PDF per stracka (eller per etapp) till ut_mapp. Returnerar lista med
-    (filnamn, skala, ryms). urval: 'atgard' (METOD ifyllt), 'AB' (BEDOMNING i A/B),
-    'valda' (markerade i kartan), 'alla'. markeringslager: lager i kartan som pekar pa samma
-    featureklass och vars definitionsfraga satts till den aktuella strackan (tydligare an
-    urvalsfargen). kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
+    (filnamn, skala, ryms, layoutnamn). urval: 'atgard' (METOD ifyllt), 'AB' (BEDOMNING i A/B),
+    'valda' (markerade i kartan), 'alla'. markeringslager: lager som pekar pa samma featureklass
+    och vars definitionsfraga satts till den aktuella strackan (tydligare an urvalsfargen).
+    mall_liggande/mall_staende: .mxd-filer med liggande resp. staende layout; anges bada valjs
+    per stracka den som ger minsta skala (vid lika skala den dar strackan fyller sidan bast).
+    Mallarna maste innehalla lagret med strackorna (samma lagernamn som i den oppna kartan),
+    och markeringslagret om det anvands. Utan mallar anvands den oppna kartans layout.
+    kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
     mxd = _mxd()
     if mxd is None:
         raise RuntimeError('Verktyget kors i ArcMap med ett oppet kartdokument')
     if not os.path.isdir(ut_mapp):
         os.makedirs(ut_mapp)
     skalor = sorted(int(s) for s in skalor if _tal(s) and float(s) > 0) or list(SKALOR)
-    df = arcpy.mapping.ListDataFrames(mxd)[0]
-    ram = dataram_matt(df)
-    logg('Dataramen ar %.0f x %.0f m i skala 1:%d' % (ram[0] * skalor[0] if skalor else 0,
-                                                     ram[1] * skalor[0] if skalor else 0, skalor[0] if skalor else 0))
 
     lyr = hitta_lager(bedomda) if isinstance(bedomda, (TEXTTYP, bytes)) else bedomda
+    lagernamn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', bedomda))
     src, dq = kalla(lyr)
     falt = _falt(src)
     for f in ('FRAN_BRUNN', 'TILL_BRUNN'):
         if f not in falt:
             raise RuntimeError('Lagret saknar faltet %s - valj lagret fran "Skapa ledningslager"' % f)
     oidfalt = arcpy.Describe(src).OIDFieldName
+
+    # Layouter: tva mallar (liggande/staende) eller den oppna kartan
+    mark_namn = None
+    if markeringslager:
+        try:
+            mark_namn = txt(getattr(hitta_lager(markeringslager), 'longName', markeringslager))
+        except Exception as e:
+            logg('  markeringslagret hittades inte (%s) - urval anvands i stallet' % txt(e))
+    layouter = []
+    mallar = [(m, n) for m, n in ((mall_liggande, 'liggande'), (mall_staende, 'staende')) if m]
+    if mallar:
+        for mall, namn in mallar:
+            if not os.path.isfile(txt(mall)):
+                raise RuntimeError('Mallen finns inte: %s' % txt(mall))
+            doc = arcpy.mapping.MapDocument(txt(mall))
+            lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn)
+            layouter.append(lo)
+            logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
+                 % (lo.namn, lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0],
+                    '' if lo.liggande == (namn == 'liggande') else '  (OBS: ramen ser %s ut)'
+                    % ('liggande' if lo.liggande else 'staende')))
+    else:
+        lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr)
+        layouter.append(lo)
+        logg('Dataramen ar %.0f x %.0f m i skala 1:%d' % (lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0]))
+
     las = ['OID@', 'SHAPE@'] + [falt[f] for f in ('FRAN_BRUNN', 'TILL_BRUNN', 'BEDOMNING', 'ETAPP', 'METOD',
                                                   'LANGD_M', 'MATERIAL', 'DIMENSION', 'NR', 'TV3_FIL') if f in falt]
     namn = ['OID@', 'SHAPE@'] + [f for f in ('FRAN_BRUNN', 'TILL_BRUNN', 'BEDOMNING', 'ETAPP', 'METOD',
@@ -199,63 +309,52 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     else:
         grupper = [[p] for p in poster]
 
-    # Markeringslager: egen kopia av lagret med tydlig symbologi; annars urval i lagret
-    mark_lyr = None
-    if markeringslager:
-        try:
-            mark_lyr = hitta_lager(markeringslager)
-        except Exception as e:
-            logg('  markeringslagret hittades inte (%s) - urval anvands i stallet' % txt(e))
-
-    def markera(oids):
-        where = '%s IN (%s)' % (arcpy.AddFieldDelimiters(src, oidfalt), ','.join(str(o) for o in oids))
-        if mark_lyr is not None:
-            mark_lyr.definitionQuery = where
-            try:
-                mark_lyr.visible = True
-            except Exception:
-                pass
-        else:
-            arcpy.SelectLayerByAttribute_management(lyr, 'NEW_SELECTION', where)
-
-    gammal_dq = getattr(mark_lyr, 'definitionQuery', None) if mark_lyr is not None else None
     ut = []
     filer = []
     karta_per_oid = {}
+    antal_per_layout = {}
     try:
         for grupp in grupper:
             utb = None
             for p in grupp:
                 utb = _sla_ihop(utb, _utbredning(p['SHAPE@']))
-            skala, ryms = valj_skala(utb, ram, skalor, marginal)
-            _centrera(df, utb, skala, ram)
-            markera([p['OID@'] for p in grupp])
+            lo, skala, ryms = valj_layout(layouter, utb, skalor, marginal)
+            antal_per_layout[lo.namn] = antal_per_layout.get(lo.namn, 0) + 1
+            _centrera(lo.df, utb, skala, lo.ram)
+            for annan in layouter:
+                if annan is not lo:
+                    annan.aterstall()
+            lo.markera([p['OID@'] for p in grupp], src, oidfalt)
             p0 = grupp[0]
             langd = sum(_tal(p.get('LANGD_M')) or 0 for p in grupp) if per_etapp else None
-            _satt_text(mxd, 'TITEL', _titel(p0, per_etapp, len(grupp)))
-            _satt_text(mxd, 'UNDERTITEL', _undertitel(p0, skala, per_etapp, langd))
-            _satt_text(mxd, 'SKALA', 'Skala 1:%d' % skala)
-            try:
-                arcpy.RefreshActiveView()
-            except Exception:
-                pass
+            _satt_text(lo.mxd, 'TITEL', _titel(p0, per_etapp, len(grupp)))
+            _satt_text(lo.mxd, 'UNDERTITEL', _undertitel(p0, skala, per_etapp, langd))
+            _satt_text(lo.mxd, 'SKALA', 'Skala 1:%d' % skala)
+            if lo.mxd is mxd:
+                try:
+                    arcpy.RefreshActiveView()
+                except Exception:
+                    pass
             fil = os.path.join(ut_mapp, _filnamn(p0, per_etapp))
-            arcpy.mapping.ExportToPDF(mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi),
+            arcpy.mapping.ExportToPDF(lo.mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi),
                                       image_quality='BEST', georef_info=True)
             filer.append(fil)
-            ut.append((fil, skala, ryms))
+            ut.append((fil, skala, ryms, lo.namn))
             for p in grupp:
                 karta_per_oid[p['OID@']] = fil if not kartmapp else os.path.join(txt(kartmapp), os.path.basename(fil))
-            logg('  %s  1:%d%s' % (os.path.basename(fil), skala, '' if ryms else '  (ryms inte - storsta skalan)'))
+            logg('  %s  1:%d  %s%s' % (os.path.basename(fil), skala, lo.namn if len(layouter) > 1 else '',
+                                        '' if ryms else '  (ryms inte - storsta skalan)'))
     finally:
-        # Aterstall markering
-        try:
-            if mark_lyr is not None:
-                mark_lyr.definitionQuery = gammal_dq or ''
-            else:
-                arcpy.SelectLayerByAttribute_management(lyr, 'CLEAR_SELECTION')
-        except Exception:
-            pass
+        for lo in layouter:
+            lo.aterstall()
+        for lo in layouter:
+            if lo.mxd is not mxd:
+                try:
+                    del lo.mxd          # mallen sparas inte
+                except Exception:
+                    pass
+    if len(layouter) > 1:
+        logg('  layout: ' + ', '.join('%s %d' % (n, a) for n, a in sorted(antal_per_layout.items())))
 
     if samlad and filer:
         samlad_fil = os.path.join(ut_mapp, 'kartor_etapper.pdf' if per_etapp else 'kartor_strackor.pdf')
@@ -286,8 +385,9 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
         except Exception as e:
             logg('  kunde inte skriva faltet KARTA: %s' % txt(e))
 
-    ej = [f for f, s, r in ut if not r]
+    ej = [f for f, s, r, l in ut if not r]
     if ej:
-        logg('  %d kartor rymdes inte i storsta skalan 1:%d - korta ned sidan eller lagg till storre skalor' % (len(ej), max(skalor)))
+        logg('  %d kartor rymdes inte i storsta skalan 1:%d - korta ned sidan eller lagg till storre skalor'
+             % (len(ej), max(skalor)))
     logg('KLART')
     return ut

@@ -200,6 +200,13 @@ finally) eller SelectLayerByAttribute (CLEAR_SELECTION efteråt). Textelement TI
 fylls om de finns (ListLayoutElements TEXT_ELEMENT, namn skiftlägesoberoende). ExportToPDF
 PAGE_LAYOUT, PDFDocumentCreate → kartor_strackor.pdf/kartor_etapper.pdf, fält KARTA (254) med
 sökväg (kartmapp för Citrix). Filnamn `<klass>_<fil>_<nr>_<fran>-<till>.pdf` / `etapp_NN.pdf`.
+**Liggande/stående** (okt 2026): `mall_liggande`/`mall_staende` (.mxd, DEMapDocument i dialogen,
+kategori Mallar) öppnas med `arcpy.mapping.MapDocument(path)`; klassen `Layout` (mxd, df, ram,
+liggande, lyr via `_lager_i_doc` på lagernamnet från den öppna kartan, mark_lyr, markera via
+`setSelectionSet('NEW', oids)` med SelectLayerByAttribute som reserv, aterstall); `valj_layout` tar
+layouten med nyckel (ryms inte, skala, −fyllnad) = minsta skala, vid lika den där sträckan fyller
+ramen bäst; textelement och export sker i den valda mallens dokument; mallarna sparas inte (del).
+Utan mallar en `Layout` för CURRENT. Resultat-tupler (fil, skala, ryms, layoutnamn).
 Test: scratchpad/test_kartexport.py med låtsas-mapping (A3-ram 76×50 m i 1:200: 40 m → 1:200,
 100 m → 1:400, 300 m hög → 1:1500; per etapp; valda). Handledning 7.10.
 **Granskning okt 2026 av steg 1–4 (rättat, tre delgranskningar + egna fynd):** tv3_analys –
