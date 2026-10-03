@@ -89,7 +89,7 @@ Rensbrunn (RB) behandlas som tillsynsbrunn: strumpa kan inte installeras därifr
 | Villkor | Metod |
 |---|---|
 | Relinad redan | ingen åtgärd (flaggas om klass A/B – fodret är skadat) |
-| Grad 4 på RBR eller DEF, eller manuell bedömning "schakt" | schakt (hela sträckan) |
+| Grad 4 på RBR eller DEF, eller manuell bedömning "schakt" | schakt (hela sträckan) – **ingen kostnad beräknas**, kalkyleras separat |
 | Klass A eller B i övrigt | strumpa (+ punktlagningar, se 3.3) |
 | Klass C, D | ingen åtgärd (kan tas med i etapp för sammanhang, se 3.4) |
 
@@ -99,7 +99,7 @@ Manuell bedömning i Excel kan alltid styra metoden: värdena A–E styr klassen
 
 Lokala skador som är så svåra att strumpan inte kan installeras över dem lagas med punktschakt först. Det avgörs **manuellt** (F2): fliken Prioritering får kolumnen **Lagning (m)** där användaren anger hur många meter som behöver lagas med schakt före strumpning. Kostnaden blir meter × kr/m för posten `lagning` i kostnadsfilen. Skriptet föreslår inget automatiskt, men i kolumnen Skador (kod+grad) syns de observationer som brukar kräva lagning (RBR/DEF grad 3, FOG grad 4, YTS grad 4), så att genomgången går fort.
 
-**Ingen automatisk brytpunkt** mot schakt (F3). Metoden byts bara av manuell bedömning ("schakt"). Kalkylen visar däremot alltid båda alternativen per sträcka, strumpa inklusive lagning och framschaktning respektive schakt av hela sträckan, så att skillnaden syns i Excel.
+**Ingen automatisk brytpunkt** mot schakt (F3). Metoden byts bara av manuell bedömning ("schakt"). Sträckor med metod schakt får ingen kostnad i kalkylen (F8): schaktkostnaden beror på djup och om spont behövs och kalkyleras separat. De redovisas med längd och dimension i fliken Etapper under rubriken "Schakt – kostnad ej beräknad", så att de inte glöms bort i summeringen.
 
 ### 3.4 Etappindelning
 
@@ -115,8 +115,6 @@ strumpa;0;200;m;…;
 strumpa;201;300;m;…;
 strumpa;301;400;m;…;
 strumpa;401;600;m;…;
-schakt;0;300;m;…;
-schakt;301;600;m;…;
 hatt;;;st;…;anslutning som öppnas och tätas med hatt
 lagning;;;m;…;punktschakt före strumpning, meter enligt manuell bedömning
 framschaktning;;;st;…;schakta fram brunn när bara tillsynsbrunnar finns
@@ -124,13 +122,13 @@ ny_brunn;;;st;…;ny nedstigningsbrunn
 etablering;;;etapp;…;fast kostnad per etapp
 ```
 
-Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + lagning kr/m × meter enligt manuell bedömning + framschaktning + ny brunn (när båda ändarna är tillsyns-/rensbrunnar). Kostnad per sträcka (schakt) = schakt kr/m × längd. Båda redovisas; vald metod avgör vad som summeras i etappen. Kostnad per etapp = summan + etablering. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
+Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + lagning kr/m × meter enligt manuell bedömning + framschaktning + ny brunn (när båda ändarna är tillsyns-/rensbrunnar). Sträckor med metod schakt får ingen kostnad (kalkyleras separat); etappens summa gäller bara strumpsträckorna och det anges tydligt när etappen innehåller schaktsträckor. Kostnad per etapp = summan + etablering. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
 
 ### 3.6 Utdata
 
 - Ny flik **Etapper** i Excel: etapp, sträckor, brunnar från/till, längd, metod, dimensioner, antal anslutningar (hattar), antal punktlagningar, framschaktning/ny brunn, kostnad per post och totalt, högsta klass, medtagna för sammanhang.
-- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga), Lagning (m) (synlig, fylls i manuellt), Kostnad strumpa, Kostnad schakt, Brunnstyp start/slut (dolda).
-- Fliken Sammanfattning: total kostnad per metod och klass.
+- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga; tom med texten "ej beräknad" för schakt), Lagning (m) (synlig, fylls i manuellt), Brunnstyp start/slut (dolda).
+- Fliken Sammanfattning: total kostnad för strumpning per klass, samt antal meter schakt utan kostnad.
 - `kartunderlag.json`: `etapp`, `metod`, `kostnad`, `lagning_m`, `brunnstyp_start`, `brunnstyp_slut`; Skapa ledningslager: fälten `ETAPP`, `METOD`, `KOSTNAD`.
 - PDF-protokollet: ingen ändring (kostnad hör till Excel och kartan, som klassen).
 
@@ -167,5 +165,6 @@ Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + 
 - **F5** C/D-sträckor kortare än 60 m mellan åtgärdssträckor tas med i etappen.
 - **F6** Flödesriktning ur ett riktningsattribut i ledningslagret (fält och värdetolkning väljs i dialogen); vattengång och ritad riktning som reserv.
 - **F7** Bara strumpa och schakt.
+- **F8** (2026-10-03) Ingen kostnad beräknas för schakt – den beror på djup och spont och kalkyleras separat. Schaktsträckor redovisas med längd och dimension men utan kronor.
 
 Kvar att få av användaren: namnet på riktningsattributet och dess värden (inför steg 2). `mall.pptx` finns som utkast i repot och justeras av användaren (behåll layout- och platshållarnamnen).
