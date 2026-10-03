@@ -785,13 +785,13 @@ def skriv_svackor_bakfall(data, vagar, sr, svackor_ut, bakfall_ut, rapport_sokva
             del insert
         logg('  %d bakfallssegment skrivna till %s' % (n, fil))
         ut['bakfall'] = (fil, n)
-    if ut and not (os.path.isfile(LYR_SVACKOR) and os.path.isfile(LYR_BAKFALL)):
-        for rad in SYMBOLOGI_TIPS_SVACKOR:
-            logg('  ' + rad)
         g = _geojson_namn('bakfall')
         if g:
             skriv_geojson(fil, falt[1:], g)
             logg('  bakfall aven som GeoJSON: %s' % g)
+    if ut and not (os.path.isfile(LYR_SVACKOR) and os.path.isfile(LYR_BAKFALL)):
+        for rad in SYMBOLOGI_TIPS_SVACKOR:
+            logg('  ' + rad)
     return ut
 
 
@@ -1228,9 +1228,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             man = tidigare_manuella.get(par, '')
             if not man:
                 # Manuell bedomning ifylld i Excel (tv3_analys --manuell) foljer med via JSON-filen
-                m_json = txt(s.get('manuell_bedomning') or '').strip().upper()[:1]
-                if m_json in KLASSORDNING:
-                    man = m_json
+                m_json = re.match(r'\s*([A-Ea-e])(?![A-Za-z\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6])',
+                                  txt(s.get('manuell_bedomning') or ''))
+                if m_json:
+                    man = m_json.group(1).upper()
             bed, bed_typ, stil = galler(mask, man)
             lager0, oid0 = vagen[0][2], vagen[0][3]
             extra = extra_per_oid.get((lager0, oid0), [None] * len(kopiera))
@@ -1370,12 +1371,13 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                     if nyckel in extra_lager:
                         l_extra = arcpy.mapping.Layer(extra_lager[nyckel][0])
                         l_extra.name = namn
-                        arcpy.mapping.AddLayer(df, l_extra, 'TOP')
+                        # Symbologin satts INNAN lagret laggs i kartan - AddLayer lagger in en
+                        # kopia, sa andringar pa objektet efterat nar inte kartan
                         if os.path.isfile(lyr_extra):
                             arcpy.ApplySymbologyFromLayer_management(l_extra, lyr_extra)
+                        arcpy.mapping.AddLayer(df, l_extra, 'TOP')
                 ny_lyr = arcpy.mapping.Layer(ut_fil)
                 ny_lyr.name = LAGERNAMN
-                arcpy.mapping.AddLayer(df, ny_lyr, 'TOP')
                 if lyr_fil and os.path.isfile(lyr_fil):
                     arcpy.ApplySymbologyFromLayer_management(ny_lyr, lyr_fil)
                     logg('  symbologi applicerad fran %s' % lyr_fil)
@@ -1383,6 +1385,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                     logg('')
                     for rad in SYMBOLOGI_TIPS:
                         logg('  ' + rad)
+                arcpy.mapping.AddLayer(df, ny_lyr, 'TOP')
                 arcpy.RefreshTOC()
                 arcpy.RefreshActiveView()
             except Exception as e:

@@ -79,7 +79,7 @@ class Mall:
         self.layouter = {l.name: l for l in self.prs.slide_layouts}
         saknas = [n for n in PH if n not in self.layouter]
         if saknas:
-            raise SystemExit(f"Mallen saknar layouterna {', '.join(saknas)} – använd mall.pptx från repot "
+            raise ValueError(f"Mallen saknar layouterna {', '.join(saknas)} – använd mall.pptx från repot "
                              "eller behåll layoutnamnen när mallen anpassas.")
 
     def _rensa_exempelsidor(self):
@@ -93,14 +93,22 @@ class Mall:
     # --- sidor och platshållare -------------------------------------------------
     def sida(self, layout: str):
         slide = self.prs.slides.add_slide(self.layouter[layout])
-        # Sidnummer ligger som platshållare i layouten; python-pptx kopierar den inte automatiskt
+        # Sidnummer ligger som platshållare i layouten; python-pptx kopierar den inte automatiskt,
+        # och PowerPoint visar bara numret om texten innehåller ett sidnummerfält.
         try:
+            from lxml import etree
             from pptx.enum.shapes import PP_PLACEHOLDER
+            from pptx.oxml.ns import qn
             for ph in self.layouter[layout].placeholders:
                 if ph.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER:
-                    slide.shapes.clone_layout_placeholder(ph)
-        except Exception:
-            pass
+                    slide.shapes.clone_placeholder(ph)
+                    nytt = slide.shapes[-1]
+                    para = nytt.text_frame.paragraphs[0]
+                    fld = etree.SubElement(para._p, qn("a:fld"), type="slidenum",
+                                           id="{B6F15528-21DE-4FAA-801E-634DDDAF4B2B}")
+                    etree.SubElement(fld, qn("a:t")).text = "‹#›"
+        except Exception as e:  # noqa: BLE001 – sidnummer är inte värt att stoppa bygget för
+            print(f"  (sidnummer kunde inte läggas till: {e})")
         return slide
 
     @staticmethod
@@ -158,7 +166,10 @@ class Mall:
             bw, bh = 4, 3
         skala = min(w / bw, h / bh)
         nw, nh = int(bw * skala), int(bh * skala)
-        slide.shapes.add_picture(path, left + (w - nw) // 2, top + (h - nh) // 2, nw, nh)
+        try:
+            slide.shapes.add_picture(path, left + (w - nw) // 2, top + (h - nh) // 2, nw, nh)
+        except Exception as e:  # noqa: BLE001 – trasig bildfil ska inte stoppa bygget
+            print(f"  (bilden {os.path.basename(path)} kunde inte läsas: {e})")
 
     def tabell(self, slide, layout: str, namn: str, kolumner: list[str], rader: list[list],
                bredder: list[float] | None = None, storlek: float = 12, klasskol: int | None = None):
@@ -173,7 +184,9 @@ class Mall:
         left, top, w, h = ph.left, ph.top, ph.width, ph.height
         ph._element.getparent().remove(ph._element)
         n_rad = len(rader) + 1
-        radh = min(int(h / n_rad), self.Emu(457200 * 0.45))
+        # Radhöjd: dela på rutan men aldrig lägre än texten kräver (PowerPoint växer annars raden
+        # vid visning och tabellens ram stämmer inte med det som syns)
+        radh = max(min(int(h / n_rad), int(Pt(0.45 * 72))), int(Pt(storlek * 1.2 + 4)))
         shape = slide.shapes.add_table(n_rad, len(kolumner), left, top, w, radh * n_rad)
         t = shape.table
         if bredder:
@@ -268,10 +281,14 @@ def _strackanamn(s) -> str:
 
 
 def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str | None = None,
-                      ut: str | None = None, topp: int = TOPP_STRACKOR, sidor=None, ta=None) -> str:
+                      ut: str | None = None, topp: int = 15, sidor=None, ta=None,
+                      topp_strackor: int = TOPP_STRACKOR) -> str:
     """Bygger presentationen. strackor/etapper från tv3_analys (ta = modulen tv3_analys, för
     KONFIG-värden och ritfunktioner), diagram = {"klasser", "topp", "koder", "material"} → PNG.
+    topp = antal sträckor i topplistan (samma som diagrammet ritades med), topp_strackor = antal
+    sträckor i åtgärdsklass som får egen STRACKA-sida (ett brunnspar en gång).
     Returnerar sökvägen till .pptx-filen."""
+    import shutil
     import tempfile
     ta = ta or sys.modules.get("tv3_analys") or __import__("tv3_analys")
     sidor = list(sidor or SIDOR)
@@ -286,6 +303,22 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
     filer = sorted({os.path.splitext(os.path.basename(s.fil))[0] for s in strackor})
     agare = sorted({getattr(s, "agare", "") for s in strackor if getattr(s, "agare", "")})
     tmp = tempfile.mkdtemp(prefix="tv3_pptx_")
+    try:
+        _bygg_sidor(m, strackor, etapper, diagram, utdata, topp, topp_strackor, sidor, ta, tmp,
+                    sorterade, bedomda, klasser, langd, langd_k, omraden, filer, agare)
+        m.spara(ut)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return ut
+
+
+def _text_eller(v, annars: str) -> str:
+    return annars if v is None else f"{v:g}"
+
+
+def _bygg_sidor(m, strackor, etapper, diagram, utdata, topp, topp_strackor, sidor, ta, tmp,
+                sorterade, bedomda, klasser, langd, langd_k, omraden, filer, agare):
+    grad4_text = "/".join(sorted(ta.GRAD4_KODER_A)) if ta.GRAD4_KODER_A else "alla konstruktionskoder"
 
     def rubrik_tabell(titel, kolumner, rader, bredder, klasskol=None, storlek=12):
         """En eller flera tabellsidor (TABELLRADER rader per sida)."""
@@ -300,8 +333,10 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
             slide = m.sida("TITEL")
             m.text(slide, "TITEL", "title", TITEL)
             m.text(slide, "TITEL", "undertitel",
-                   "  ·  ".join(x for x in [", ".join(filer[:4]) + (" …" if len(filer) > 4 else ""),
-                                            " / ".join(omraden[:3]), f"TV-inspektion {_period(strackor)}"] if x.strip()))
+                   "  ·  ".join(x for x in [", ".join(filer[:2]) + (f" m.fl. ({len(filer)} filer)" if len(filer) > 2 else ""),
+                                            " / ".join(omraden[:2]) + (" m.fl." if len(omraden) > 2 else ""),
+                                            f"TV-inspektion {_period(strackor)}"] if x.strip()),
+                   storlek=16)
             m.text(slide, "TITEL", "meta",
                    "  ·  ".join(x for x in [", ".join(agare), "underlag för renoveringsplanering",
                                             datetime.now().strftime("%Y-%m-%d")] if x))
@@ -339,7 +374,7 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                 "Konstruktionsindex i poäng per 100 m. Driftskador (rötter, sediment, inläckage) ingår inte i "
                 "klassen utan redovisas som driftåtgärd.",
                 "",
-                (f"Klass A: grad 4 på {'/'.join(sorted(ta.GRAD4_KODER_A))} eller index ≥ {ta.TROSKEL_A:g}", False),
+                (f"Klass A: grad 4 på {grad4_text} eller index ≥ {ta.TROSKEL_A:g}", False),
                 (f"Klass B: grad 3 eller index ≥ {ta.TROSKEL_B:g}", False),
             ], storlek=13)
         elif sida == "topptabell":
@@ -349,7 +384,7 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                               f"{s.index('K'):.0f}", s.sammanfattning_skador()[:60]])
             rubrik_tabell(f"Topplista – de {len(rader)} mest kritiska",
                           ["Rang", "Sträcka", "Material", "Dim", "Längd (m)", "Index", "Skador"],
-                          rader, [0.8, 3.2, 1.3, 0.9, 1.2, 1.0, 3.7], storlek=11)
+                          rader, [0.8, 3.2, 1.3, 0.9, 1.2, 1.0, 3.7], storlek=10)
         elif sida == "koder":
             slide = m.sida("RUBRIK_BILD")
             m.text(slide, "RUBRIK_BILD", "title", "Observationer per skadekod")
@@ -389,9 +424,18 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                           sum(len(e["framschaktade"]) for e in etapper), _tal(tot)])
             rubrik_tabell("Etapper och kostnad (schablon)",
                           ["Etapp", "Metod", "Klass", "Sträckor", "Längd (m)", "Brunnar att schakta fram", "Kostnad (kr)"],
-                          rader, [0.8, 1.2, 0.8, 1.0, 1.2, 2.2, 1.8], klasskol=2, storlek=11)
+                          rader, [0.8, 1.2, 0.8, 1.0, 1.2, 2.2, 1.8], klasskol=2, storlek=10)
         elif sida == "strackor":
-            for rang, s in enumerate(sorterade[:topp], 1):
+            # Bara sträckor i åtgärdsklass, ett brunnspar en gång (syskon filmade från båda håll)
+            urval, sedda_par = [], set()
+            for s in sorterade:
+                par = frozenset((s.startbrunn, s.slutbrunn))
+                if s.gallande_klass in ta.ATGARD_KLASSER and par not in sedda_par:
+                    urval.append(s)
+                    sedda_par.add(par)
+                if len(urval) >= topp_strackor:
+                    break
+            for rang, s in enumerate(urval, 1):
                 slide = m.sida("STRACKA")
                 m.text(slide, "STRACKA", "title", f"{rang}. {_strackanamn(s)}  ·  Klass {s.gallande_klass}")
                 ov = os.path.join(tmp, f"oversikt_{rang}.png")
@@ -416,7 +460,9 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                     m.bild(slide, "STRACKA", f"foto{i + 1}", foton[i] if i < len(foton) else None)
                 pa = s.profil_analys
                 fakta = [
-                    (f"{s.material} {s.dimension} mm, {_tal(s.langd, 1)} m, {s.ledningstyp.lower()}", True),
+                    (", ".join(x for x in [
+                        " ".join(d for d in [s.material, f"{s.dimension} mm" if s.dimension else ""] if d),
+                        f"{_tal(s.langd, 1)} m", s.ledningstyp.lower()] if x.strip()), True),
                     f"Konstruktionsindex {s.index('K'):.0f} p/100 m, maxgrad {s.maxgrad('K') or '–'}",
                     f"Skador: {s.sammanfattning_skador() or 'inga'}",
                     f"Anslutningar: {s.antal_anslutningar}",
@@ -435,7 +481,7 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                 if s.manuell_bedomning:
                     fakta.append(f"Manuell bedömning: {s.manuell_bedomning}"
                                  + (f" – {s.kommentar}" if s.kommentar else ""))
-                fakta.append(f"{s.fil}, sträcka {s.nr}, {s.datum}")
+                fakta.append(", ".join(x for x in [s.fil, f"sträcka {s.nr}", s.datum] if x))
                 m.text(slide, "STRACKA", "fakta", fakta, storlek=12)
         elif sida == "driftatgarder":
             drift = sorted((s for s in strackor if s.driftatgard), key=lambda s: -s.index("D"))
@@ -443,7 +489,7 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                 rader = [[_strackanamn(s), s.driftatgard, f"{s.index('D'):.0f}",
                           ", ".join(f"{n}×{k}{g}" for (k, g), n in
                                     Counter((o.kod, o.grad) for o in s.skador("D")).most_common(3)),
-                          s.klass] for s in drift[:TABELLRADER * 2]]
+                          s.klass] for s in drift]
                 rubrik_tabell(f"Driftåtgärder ({len(drift)} sträckor)",
                               ["Sträcka", "Åtgärd", "Driftindex", "Driftskador", "Klass"],
                               rader, [3.0, 3.2, 1.2, 3.0, 0.8], klasskol=4, storlek=11)
@@ -456,11 +502,11 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
                           f"{s.svacka_andel * 100:.0f} %" if s.svacka_andel is not None else "",
                           f"{pa['svacklangd']:.0f}", f"{pa['bakfall']:.0f}" if pa["bakfall"] >= 1 else "",
                           f"{s.material} {s.dimension}", "osäker" if pa["osaker"] else ""]
-                         for s, pa in sv[:TABELLRADER * 2]]
+                         for s, pa in sv]
                 rubrik_tabell(f"Svackor och bakfall ({len(sv)} sträckor med svacka ≥ 2 cm)",
                               ["Sträcka", "Svackdjup (cm)", "Andel av diam.", "Stående vatten (m)",
                                "Bakfall (m)", "Material/dim", "Profil"],
-                              rader, [3.0, 1.3, 1.3, 1.5, 1.1, 2.0, 1.0], storlek=11)
+                              rader, [3.0, 1.3, 1.3, 1.5, 1.1, 2.0, 1.0], storlek=10)
         elif sida == "karta":
             kb = os.path.join(utdata, KARTBILD)
             if os.path.isfile(kb):
@@ -475,15 +521,19 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
             slide = m.sida("RUBRIK_TEXT")
             m.text(slide, "RUBRIK_TEXT", "title", "Metod – poängmodell enligt P93")
             gp = ", ".join(f"grad {g} = {p} p" for g, p in sorted(ta.GRADPOANG.items()))
-            kf = ", ".join(f"{k} {v:g}" for k, v in (ta.KODFAKTOR or {}).items())
+            kf = ", ".join(f"{k} {v:g}" for k, v in (ta.KODFAKTOR or {}).items()) or "inga"
+            gf = ", ".join(f"{k} grad {g} = {v:g}" for (k, g), v in (ta.GRADFAKTOR or {}).items())
+            af = ", ".join(f"{k} {a} × {v:g}" for (k, a), v in (ta.ATTRIBUTFAKTOR or {}).items())
+            lop = (f"löpande skador × längd / {ta.LOPANDE_ENHET_M:g} m, högst {_text_eller(ta.LOPANDE_TAK, 'utan tak')}"
+                   if ta.LOPANDE_ENHET_M else "löpande skador räknas en gång oavsett längd")
             m.text(slide, "RUBRIK_TEXT", "body", [
                 ("Poäng per observation", True), (gp, False, 1),
-                (f"Driftskador × {ta.DRIFTFAKTOR:g}; löpande skador × längd / {ta.LOPANDE_ENHET_M:g} m, högst {ta.LOPANDE_TAK:g}", False, 1),
-                (f"Kodvikter: {kf}; ytskada grad 4 = 1,0; cirkulära sprickor × {ta.ATTRIBUTFAKTOR.get(('SPR', 'CIRK'), 1):g}", False, 1),
+                (f"Driftskador × {ta.DRIFTFAKTOR:g}; {lop}", False, 1),
+                (f"Kodvikter: {kf}" + (f"; {gf}" if gf else "") + (f"; {af}" if af else ""), False, 1),
                 ("Konstruktionsindex", True),
                 (f"poäng / max(längd, {ta.MINLANGD:g} m) × 100 – bara konstruktionsskador styr klassen", False, 1),
                 ("Prioritetsklass", True),
-                (f"A: grad 4 på {'/'.join(sorted(ta.GRAD4_KODER_A))} eller index ≥ {ta.TROSKEL_A:g}   ·   "
+                (f"A: grad 4 på {grad4_text} eller index ≥ {ta.TROSKEL_A:g}   ·   "
                  f"B: grad 3 eller index ≥ {ta.TROSKEL_B:g}   ·   C: övriga skador   ·   D: inga skador", False, 1),
                 ("Åtgärdspaket", True),
                 ("Klass A/B → strumpa (schakt bara manuellt); etapper av sammanhängande sträckor; "
@@ -494,10 +544,6 @@ def bygg_presentation(strackor, etapper, diagram: dict, utdata: str, mall: str |
             m.text(slide, "AVSLUT", "title", "Nästa steg")
             m.text(slide, "AVSLUT", "body", AVSLUT_PUNKTER, storlek=18)
 
-    m.spara(ut)
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
-    return ut
 
 
 # ----------------------------------------------------------------------------
@@ -509,7 +555,9 @@ def main(argv=None):
     ap.add_argument("utdata", help="utdatamapp med kartunderlag.json (och prioritering.xlsx)")
     ap.add_argument("--mall", default=MALL, help="pptx-mall (standard: mall.pptx bredvid skriptet)")
     ap.add_argument("--ut", default=None, help=f"utfil (standard: <utdata>/{PPTX_FIL})")
-    ap.add_argument("--topp", type=int, default=TOPP_STRACKOR, help="antal sträckor med egen sida")
+    ap.add_argument("--topp", type=int, default=15, help="antal sträckor i topplistan (diagram och tabell)")
+    ap.add_argument("--strackor", type=int, default=TOPP_STRACKOR,
+                    help="antal sträckor i åtgärdsklass som får egen sida")
     ap.add_argument("--kostnader", default=None, help="kostnadsfil (standard: kostnader.csv bredvid skriptet)")
     a = ap.parse_args(argv)
 
@@ -532,12 +580,16 @@ def main(argv=None):
         strackor += ta.las_tv3(p)
     if not strackor:
         sys.exit("Inga TV3-filer kunde läsas – sökvägarna i kartunderlag.json pekar på en annan dator?")
-    # Ersättningslittera finns inte i JSON-filen: använd de rättade namnen därifrån (fil + nr)
-    rattade = {(os.path.basename(p["tv3_fil"]), p["nr"]): p for p in data.get("strackor", []) if p.get("littera_rattat")}
+    # Ersättningslittera finns inte i JSON-filen: använd de rättade namnen därifrån (sökväg + nr).
+    # OBS: markprofil och uppströmsdata läses inte här, så svackor utan GIS-korrigering och
+    # etappordningen vid ETAPP_ORDNING = "konsekvens" kan avvika från prioritering.xlsx.
+    rattade = {(os.path.normcase(p["tv3_fil"]), p["nr"]): p for p in data.get("strackor", []) if p.get("littera_rattat")}
     for s in strackor:
-        p = rattade.get((os.path.basename(s.tv3_sokvag), s.nr))
+        p = rattade.get((os.path.normcase(s.tv3_sokvag), s.nr))
         if p:
-            s.startbrunn, s.slutbrunn, s.littera_rattat = p["startbrunn"], p["slutbrunn"], p["littera_rattat"]
+            s.startbrunn, s.slutbrunn = p["startbrunn"], p["slutbrunn"]
+            s.utgangsbrunn, s.littera_rattat = p.get("utgangsbrunn") or s.utgangsbrunn, p["littera_rattat"]
+            s._cache.clear()
     media = data.get("mediakataloger", [])
     bild = data.get("bildkataloger", [])
     ta.koppla_media(strackor, media, bild)
@@ -557,9 +609,14 @@ def main(argv=None):
     etapper = ta.planera_atgarder(strackor, kostnader, fram)
     tmp = tempfile.mkdtemp(prefix="tv3_diagram_")
     diagram = ta.rita_diagram(strackor, tmp, a.topp)
-    ut = bygg_presentation(strackor, etapper, diagram, a.utdata, a.mall, a.ut, a.topp, ta=ta)
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        ut = bygg_presentation(strackor, etapper, diagram, a.utdata, a.mall, a.ut, a.topp, ta=ta,
+                               topp_strackor=a.strackor)
+    except ValueError as e:
+        sys.exit(str(e))
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
     print(f"Presentation skriven: {ut}")
 
 

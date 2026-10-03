@@ -720,21 +720,26 @@ class Stracka:
         "langd_m", "lutning_promille" (stigning i flödesriktningen över segmentet)}."""
         if not stigande:
             return []
-        grupper = []                          # [första index, sista index]
+        grupper = []                          # [första index, sista index, Σdx stigande, Σdz stigande]
         for i0, i1 in stigande:
-            if grupper and abs(pts[i0][0] - pts[grupper[-1][1]][0]) < BAKFALL_SEGMENT_MIN_M:
+            dx, dz = abs(pts[i1][0] - pts[i0][0]), z[i1] - z[i0]
+            if grupper and abs(pts[i0][0] - pts[grupper[-1][1]][0]) < BAKFALL_SEGMENT_MIN_M \
+                    and z[i0] >= z[grupper[-1][1]] - 0.005:        # luckan får inte falla (cm-brus tillåts)
                 grupper[-1][1] = i1
+                grupper[-1][2] += dx
+                grupper[-1][3] += dz
             else:
-                grupper.append([i0, i1])
+                grupper.append([i0, i1, dx, dz])
         ut = []
-        for i0, i1 in grupper:
+        for i0, i1, sdx, sdz in grupper:
             x0, x1 = pts[i0][0], pts[i1][0]
             langd = abs(x1 - x0)
             if langd < BAKFALL_SEGMENT_MIN_M:
                 continue
+            # Lutningen räknas över de stigande bitarna, inte över eventuella luckor
             ut.append({"fran_m": round(min(x0, x1), 1), "till_m": round(max(x0, x1), 1),
                        "langd_m": round(langd, 1),
-                       "lutning_promille": round((z[i1] - z[i0]) / langd * 1000, 1)})
+                       "lutning_promille": round(sdz / sdx * 1000, 1) if sdx else None})
         return ut
 
     @property
@@ -806,22 +811,33 @@ class Stracka:
     def brunnstyp(self, brunn: str) -> str:
         """NB / TB / RB för en av sträckans brunnar: TVDAT-infokoden vid sträckans ände i första
         hand (inom BRUNNSTYP_ANDE_M från 0 resp. längden), annars litterats prefix, annars ''."""
-        if self.langd > 2 * BRUNNSTYP_ANDE_M:
-            if brunn == self.fran_brunn:
-                nara = [o for o in self.observationer
-                        if o.infokod in ("NB", "TB", "RB") and o.lage <= BRUNNSTYP_ANDE_M]
-            else:
-                nara = [o for o in self.observationer
-                        if o.infokod in ("NB", "TB", "RB") and o.lage >= self.langd - BRUNNSTYP_ANDE_M]
-            if nara:
-                return nara[0].infokod
-        return brunnstyp_ur_littera(brunn)
+        typ_film = self.brunnstyp_film(brunn)
+        return typ_film or brunnstyp_ur_littera(brunn)
+
+    def brunnstyp_film(self, brunn: str) -> str:
+        """Brunnstyp enligt TVDAT-koden (NB/TB/RB) närmast sträckans ände, annars ''."""
+        if self.langd <= 2 * BRUNNSTYP_ANDE_M:
+            return ""
+        ande = 0.0 if brunn == self.fran_brunn else self.langd
+        nara = [o for o in self.observationer
+                if o.infokod in ("NB", "TB", "RB") and abs(o.lage - ande) <= BRUNNSTYP_ANDE_M]
+        return min(nara, key=lambda o: abs(o.lage - ande)).infokod if nara else ""
+
+    def brunnstyp_konflikt(self) -> str:
+        """Text när filmens kod och litterats prefix anger olika brunnstyp, t.ex.
+        'KNBL62726: NB enligt littera, RB i filmen'."""
+        ut = []
+        for b in (self.startbrunn, self.slutbrunn):
+            f, l = self.brunnstyp_film(b), brunnstyp_ur_littera(b)
+            if f and l and f != l:
+                ut.append(f"{b}: {l} enligt littera, {f} i filmen")
+        return "; ".join(ut)
 
     @property
     def gallande_klass(self) -> str:
         """Manuell bedömning (A–E) om ifylld, annars maskinell klass."""
-        m = (self.manuell_bedomning or "").strip().upper()[:1]
-        return m if m in KLASS_TEXT else self.klass
+        m = manuell_klass(self.manuell_bedomning)
+        return m or self.klass
 
     @property
     def metod_auto(self) -> str:
@@ -883,6 +899,9 @@ class Stracka:
                 fl.append("brunnstyp okänd")
             elif "NB" not in typer:
                 fl.append("bara tillsyns-/rensbrunnar – framschaktning")
+            konflikt = self.brunnstyp_konflikt()
+            if konflikt:
+                fl.append(f"brunnstyp? {konflikt}")
         if self.kostnadsflagga:
             fl.append(self.kostnadsflagga)
         if self.etapp_flagga:
@@ -893,6 +912,13 @@ class Stracka:
     def dimension_mm(self) -> int | None:
         m = re.search(r"\d+", self.dimension or "")
         return int(m.group(0)) if m else None
+
+
+def manuell_klass(text: str) -> str:
+    """A–E ur Manuell bedömning: en ensam bokstav ("A", "b", "A – går strumpa"), inte första
+    bokstaven i fri text ("Bevaka" är inte klass B). Tomt om ingen klass angetts."""
+    m = re.match(r"\s*([A-Ea-e])(?![A-Za-zÅÄÖåäö])", text or "")
+    return m.group(1).upper() if m else ""
 
 
 def brunnstyp_ur_littera(littera: str) -> str:
@@ -1347,12 +1373,18 @@ def las_kostnader(path: str) -> list[dict]:
         d += [""] * (6 - len(d))
 
         def tal(v):
+            v = re.sub(r"[^\d,.\-]", "", v)            # "9 000 kr" -> "9000"
+            if "," in v:
+                v = v.replace(".", "").replace(",", ".")  # "2.500,50" -> 2500.50
             try:
-                return float(v.replace(",", ".").replace(" ", ""))
+                return float(v) if v else None
             except ValueError:
                 return None
         kr = tal(d[4])
-        if not d[0] or kr is None:
+        if not d[0]:
+            continue
+        if kr is None:
+            print(f"  VARNING kostnadsfil: kan inte tolka beloppet '{d[4]}' för posten {d[0]} – raden hoppas över")
             continue
         poster.append({"post": d[0].lower(), "fran": tal(d[1]), "till": tal(d[2]),
                        "enhet": d[3], "kr": kr, "kommentar": d[5]})
@@ -1368,11 +1400,12 @@ def pris(kostnader: list[dict], post: str, dim_mm: int | None = None) -> float |
     if not med_intervall:
         return kandidater[0]["kr"]
     if dim_mm is None:
-        return None
+        return next((k["kr"] for k in kandidater if k not in med_intervall), None)
     for k in med_intervall:
         if (k["fran"] is None or dim_mm >= k["fran"]) and (k["till"] is None or dim_mm <= k["till"]):
             return k["kr"]
-    return None
+    # Rad utan intervall gäller när inget intervall täcker dimensionen
+    return next((k["kr"] for k in kandidater if k not in med_intervall), None)
 
 
 def las_manuella(path: str) -> tuple[list[dict], list[str]]:
@@ -1410,19 +1443,32 @@ def las_manuella(path: str) -> tuple[list[dict], list[str]]:
             man, kom, lag = v("Manuell bedömning"), v("Kommentar"), v("Lagning")
             if man is None and kom is None and lag is None:
                 continue
+            lagning = None
+            if lag not in (None, ""):
+                m_lag = re.search(r"\d+(?:[.,]\d+)?", str(lag))
+                if m_lag:
+                    lagning = float(m_lag.group(0).replace(",", "."))
+                    if str(lag).strip() != m_lag.group(0):
+                        print(f"  Lagning '{lag}' ({v('Startbrunn')}→{v('Slutbrunn')}) tolkas som {lagning:g} m")
+                else:
+                    print(f"  VARNING Lagning '{lag}' ({v('Startbrunn')}→{v('Slutbrunn')}) kunde inte tolkas – ignoreras")
             poster.append({"fil": str(v("Fil") or ""), "nr": int(v("Nr")) if isinstance(v("Nr"), (int, float)) else None,
                            "startbrunn": str(v("Startbrunn") or ""), "slutbrunn": str(v("Slutbrunn") or ""),
                            "manuell": str(man or "").strip(), "kommentar": str(kom or "").strip(),
-                           "lagning_m": float(str(lag).replace(",", ".")) if lag not in (None, "") else None})
+                           "lagning_m": lagning})
     if "Etapper" in wb.sheetnames:
         ws = wb["Etapper"]
         rader = ws.iter_rows(values_only=True)
         rubrik = [str(c or "").strip().lower() for c in next(rader, [])]
         ci = next((i for i, r in enumerate(rubrik) if r.startswith("schakta fram")), None)
+        ce = next((i for i, r in enumerate(rubrik) if r == "etapp"), None)
         if ci is not None:
             for rad in rader:
-                if rad and ci < len(rad) and rad[ci]:
-                    fram += [b.strip() for b in re.split(r"[,;\s]+", str(rad[ci])) if b.strip()]
+                if not rad or ci >= len(rad) or not rad[ci]:
+                    continue
+                if ce is not None and ce < len(rad) and not isinstance(rad[ce], (int, float)):
+                    continue                      # enhetsraden ("manuellt")
+                fram += [b.strip() for b in re.split(r"[,;\s]+", str(rad[ci])) if b.strip()]
     wb.close()
     return poster, fram
 
@@ -1456,16 +1502,24 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
     klassordn = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
 
     # En representant per brunnspar (värsta gällande klass); syskon följer med utan egen kostnad
-    par_av = lambda s: frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))
-    rep_: dict[frozenset, Stracka] = {}
-    for s in strackor:
-        if len(par_av(s)) < 2:
-            continue
-        r = rep_.get(par_av(s))
-        if r is None or (klassordn[s.gallande_klass], -s.index("K")) < (klassordn[r.gallande_klass], -r.index("K")):
-            rep_[par_av(s)] = s
+    def par_av(s):
+        p = frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))
+        # Samma (eller tom) brunn i båda ändar: sträckan får ett eget "par" så att den ändå
+        # kan bli en egen etapp; den kopplas inte till grannar
+        return p if len(p) == 2 and all(p) else frozenset((f"#{s.fil}", f"#{s.nr}"))
+
     for s in strackor:
         s.etapp, s._metod, s.etapp_flagga, s.kostnad, s.kostnadsflagga = None, None, "", None, ""
+    # Representant per brunnspar: en sträcka med manuell bedömning går före, sedan värsta
+    # gällande klass och högst index. Syskon (flerinspekterat par) följer representanten.
+    rep_: dict[frozenset, Stracka] = {}
+
+    def rang(s):
+        return (not bool((s.manuell_bedomning or "").strip()), klassordn[s.gallande_klass], -s.index("K"))
+    for s in strackor:
+        r = rep_.get(par_av(s))
+        if r is None or rang(s) < rang(r):
+            rep_[par_av(s)] = s
 
     atgard = {p: r for p, r in rep_.items() if r.metod in ("strumpa", "schakt")}
     brunn_metod: dict[tuple[str, str], list[Stracka]] = defaultdict(list)   # (brunn, metod) -> sträckor
@@ -1555,7 +1609,8 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
             k["summa"] = sum(v for v in k.values() if v is not None)
             s.kostnad = k
             if p_str is None:
-                s.kostnadsflagga = f"dimension {s.dimension or '?'} saknar pris"
+                s.kostnadsflagga = (f"dimension {s.dimension or '?'} saknar pris"
+                                    if any(k["post"] == "strumpa" for k in kostnader) else "kostnadsfil saknas")
             for n_ in summa:
                 summa[n_] += k[n_] or 0.0
         n_fram = len(e["framschaktade"])
@@ -1568,9 +1623,15 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
     # Syskon (samma brunnspar, flera inspektioner) får representantens etapp och metod
     for s in strackor:
         r = rep_.get(par_av(s))
-        if r is not None and r is not s and r.etapp is not None:
-            s.etapp, s._metod, s.etapp_flagga = r.etapp, r.metod, r.etapp_flagga
-            s.kostnadsflagga = f"kostnad räknad på nr {r.nr}"
+        if r is not None and r is not s:
+            if r.etapp is not None:
+                s.etapp, s._metod, s.etapp_flagga = r.etapp, r.metod, r.etapp_flagga
+                s.kostnadsflagga = f"kostnad räknad på nr {r.nr}"
+            if (s.manuell_bedomning or "").strip():
+                s.etapp_flagga = (s.etapp_flagga + "; " if s.etapp_flagga else "") + \
+                    f"manuell bedömning på nr {r.nr} gäller för brunnsparet"
+        if len(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))) < 2 and s.metod != "ingen":
+            s.etapp_flagga = (s.etapp_flagga + "; " if s.etapp_flagga else "") + "samma brunn i båda ändar – egen etapp"
     return etapper
 
 
@@ -2975,10 +3036,10 @@ def main(argv=None):
         etapper = planera_atgarder(strackor, kostnader, framschakta)
         n_str = sum(1 for s in strackor if s.metod == "strumpa")
         n_sch = sum(1 for s in strackor if s.metod == "schakt")
+        kr = f"{sum(e['kostnad']['summa'] for e in etapper):,.0f}".replace(",", " ")
         print(f"Åtgärdspaket: {len(etapper)} etapper, {n_str} sträckor strumpa, {n_sch} schakt, "
-              f"{sum(len(e['framschaktade']) for e in etapper)} brunnar att schakta fram, "
-              f"{sum(e['kostnad']['summa'] for e in etapper):,.0f} kr".replace(",", " ")
-              + (f" (kostnader: {os.path.basename(kostnadsfil)})" if kostnader else ""))
+              f"{sum(len(e['framschaktade']) for e in etapper)} brunnar att schakta fram, {kr} kr"
+              + (f" (kostnader: {os.path.basename(kostnadsfil)})" if kostnader else " (ingen kostnadsfil)"))
     print(f"\nVideofiler hittade: {vh} av {vt}   Bilder hittade: {bh} av {bt}")
     if vt and vh < vt:
         print("  (ange katalogen med filmerna i listfilen – 'media: KATALOG' eller 'fil.TV3 ; KATALOG' –\n"
@@ -3010,11 +3071,14 @@ def main(argv=None):
     if a.pptx:
         try:
             import tv3_pptx
-            pptx_fil = tv3_pptx.bygg_presentation(strackor, etapper, diagram, a.utdata, topp=min(a.topp, 10),
+            pptx_fil = tv3_pptx.bygg_presentation(strackor, etapper, diagram, a.utdata, topp=a.topp,
                                                   ta=sys.modules[__name__])
             print(f"Presentation skriven till {pptx_fil}")
         except ImportError as e:
             print(f"  VARNING PowerPoint hoppas över: {e} (pip install python-pptx)")
+        except Exception as e:  # noqa: BLE001 – mall eller innehåll får inte stoppa övriga utdata
+            fel.append(f"PowerPoint: {e}")
+            print(f"  VARNING PowerPoint hoppas över: {e}")
     if not a.diagram:
         shutil.rmtree(diagramkatalog, ignore_errors=True)
     felfil = os.path.join(a.utdata, "fel.txt")
