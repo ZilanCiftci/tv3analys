@@ -79,10 +79,23 @@ Regler per sträcka:
 | Brunnar i ändarna | Åtgärd | Kostnadsposter |
 |---|---|---|
 | Minst en nedstigningsbrunn | Strumpa från den | strumpa kr/m |
-| Bara tillsyns-/rensbrunnar | Schakta fram en brunn, strumpa från öppet schakt, ny brunn | framschaktning kr/st + strumpa kr/m + ny brunn kr/st |
+| Bara tillsyns-/rensbrunnar | Schakta fram en brunn, strumpa från öppet schakt, ny brunn | strumpa kr/m; framschaktning + ny brunn räknas **per brunn på etappnivå**, se nedan |
 | Okänd typ | Som nedstigningsbrunn, men flaggas "brunnstyp okänd" | – |
 
 Rensbrunn (RB) behandlas som tillsynsbrunn: strumpa kan inte installeras därifrån (F1).
+
+**Framschaktning räknas per brunn, inte per sträcka (F9).** Ligger flera strumpsträckor efter
+varandra med bara tillsynsbrunnar räcker det att schakta fram den gemensamma mittenbrunnen: från
+ett öppet schakt strumpas åt båda hållen. Skriptet väljer därför brunnarna inom varje etapp så att
+**varje strumpsträcka utan nedstigningsbrunn har minst en framschaktad brunn i någon ände**, med så
+få brunnar som möjligt: brunnen som täcker flest ännu otäckta sträckor tas först (girig täckning;
+etapperna är små så det ger minsta antalet i praktiken, för en rak kedja alltid varannan brunn).
+Exempel: TB1–TB2–TB3 (två sträckor) → en framschaktning (TB2) och en ny brunn, inte två.
+TB1–TB2–TB3–TB4 (tre sträckor) → TB2 + TB3 eller TB2 + TB4, dvs. två. Finns en nedstigningsbrunn i
+kedjan täcker den sina två sträckor utan schakt. Varje framschaktad brunn får en ny nedstigningsbrunn
+(posten `ny_brunn`). Vilka brunnar som valts skrivs ut per etapp (kolumn "Framschaktade brunnar") så
+att valet kan granskas och ändras: en manuell kolumn **Schakta fram** (ja/nej per brunn i fliken
+Etapper, eller littera i KONFIG) låser valet vid omkörning.
 
 ### 3.2 Metodval per sträcka
 
@@ -117,22 +130,22 @@ strumpa;301;400;m;…;
 strumpa;401;600;m;…;
 hatt;;;st;…;anslutning som öppnas och tätas med hatt
 lagning;;;m;…;punktschakt före strumpning, meter enligt manuell bedömning
-framschaktning;;;st;…;schakta fram brunn när bara tillsynsbrunnar finns
-ny_brunn;;;st;…;ny nedstigningsbrunn
+framschaktning;;;st;…;schakta fram brunn när bara tillsynsbrunnar finns – per brunn i etappen, inte per sträcka
+ny_brunn;;;st;…;ny nedstigningsbrunn i varje framschaktad brunn
 etablering;;;etapp;…;fast kostnad per etapp
 ```
 
-Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + lagning kr/m × meter enligt manuell bedömning + framschaktning + ny brunn (när båda ändarna är tillsyns-/rensbrunnar). Sträckor med metod schakt får ingen kostnad (kalkyleras separat); etappens summa gäller bara strumpsträckorna och det anges tydligt när etappen innehåller schaktsträckor. Kostnad per etapp = summan + etablering. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
+Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + hattar × antal anslutningar + lagning kr/m × meter enligt manuell bedömning. Framschaktning och ny brunn ligger **inte** på sträckan utan på etappen: antal framschaktade brunnar enligt 3.1 × (framschaktning + ny brunn). Sträckor med metod schakt får ingen kostnad (kalkyleras separat); etappens summa gäller bara strumpsträckorna och det anges tydligt när etappen innehåller schaktsträckor. Kostnad per etapp = summan av sträckorna + brunnskostnaderna + etablering. En strumpsträcka som inte ingår i någon etapp med grannar bildar en egen etapp med en sträcka, så regeln är densamma överallt. Dimensionsintervallet väljs på sträckans dimension; saknas intervall flaggas sträckan.
 
 ### 3.6 Utdata
 
-- Ny flik **Etapper** i Excel: etapp, sträckor, brunnar från/till, längd, metod, dimensioner, antal anslutningar (hattar), antal punktlagningar, framschaktning/ny brunn, kostnad per post och totalt, högsta klass, medtagna för sammanhang.
-- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga; tom med texten "ej beräknad" för schakt), Lagning (m) (synlig, fylls i manuellt), Brunnstyp start/slut (dolda).
+- Ny flik **Etapper** i Excel: etapp, sträckor, brunnar från/till, längd, metod, dimensioner, antal anslutningar (hattar), antal punktlagningar, antal framschaktade brunnar och deras littera (kolumn "Framschaktade brunnar"), kostnad per post och totalt, högsta klass, medtagna för sammanhang.
+- Fliken Prioritering: kolumnerna Etapp, Metod, Kostnad (synliga; sträckans egen kostnad utan brunnsposter; tom med texten "ej beräknad" för schakt), Lagning (m) (synlig, fylls i manuellt), Brunnstyp start/slut (dolda).
 - Fliken Sammanfattning: total kostnad för strumpning per klass, samt antal meter schakt utan kostnad.
 - `kartunderlag.json`: `etapp`, `metod`, `kostnad`, `lagning_m`, `brunnstyp_start`, `brunnstyp_slut`; Skapa ledningslager: fälten `ETAPP`, `METOD`, `KOSTNAD`.
 - PDF-protokollet: ingen ändring (kostnad hör till Excel och kartan, som klassen).
 
-**Test.** DUF 701: kontroll att brunnstyper tolkas rätt (KNBL/KRB/KTB/SRB…), att etapperna blir sammanhängande, och att en sträcka med bara TB får framschaktning. Syntetisk kostnadsfil.
+**Test.** DUF 701: kontroll att brunnstyper tolkas rätt (KNBL/KRB/KTB/SRB…), att etapperna blir sammanhängande, att en ensam sträcka med bara TB får en framschaktning, och att en kedja TB–TB–TB får exakt en (mittenbrunnen). Syntetisk kostnadsfil.
 
 **Omfattning.** Två arbetspass.
 
@@ -166,5 +179,6 @@ Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + 
 - **F6** Flödesriktning ur ett riktningsattribut i ledningslagret (fält och värdetolkning väljs i dialogen); vattengång och ritad riktning som reserv.
 - **F7** Bara strumpa och schakt.
 - **F8** (2026-10-03) Ingen kostnad beräknas för schakt – den beror på djup och spont och kalkyleras separat. Schaktsträckor redovisas med längd och dimension men utan kronor.
+- **F9** (2026-10-03) Framschaktning och ny brunn räknas per brunn på etappnivå, inte per sträcka: en gemensam mittenbrunn mellan två strumpsträckor schaktas fram en gång och ger åtkomst åt båda. Så få brunnar som möjligt väljs; valet redovisas och kan låsas manuellt.
 
 Kvar att få av användaren: namnet på riktningsattributet och dess värden (inför steg 2). `mall.pptx` finns som utkast i repot och justeras av användaren (behåll layout- och platshållarnamnen).

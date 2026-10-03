@@ -360,7 +360,7 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
 60 m, flödesriktning ur riktningsattribut, bara strumpa/schakt; **F8: ingen kostnad för schakt** –
-beror på djup/spont, kalkyleras separat; schaktsträckor listas med längd/dimension utan kronor). **`mall.pptx`** (utkast, repots rot,
+beror på djup/spont, kalkyleras separat; schaktsträckor listas med längd/dimension utan kronor; **F9: framschaktning + ny brunn per brunn på etappnivå** – gemensam mittenbrunn mellan två TB-sträckor schaktas fram en gång, girig minsta täckning, valet redovisas och kan låsas). **`mall.pptx`** (utkast, repots rot,
 byggd med pptxgenjs i scratchpad/pptx/mall.js, tema "tv3_analys": dk2/accent1 0B5C6B teal, lt2 E6EFF2,
 accent2–5 klassfärgerna, Calibri, 16:9 wide) har layouterna **TITEL** (title, undertitel, meta),
 **AVDELARE** (title, body), **RUBRIK** (bara title – för fritt komponerade sidor som nyckeltalsrutor),
