@@ -2022,6 +2022,12 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
         "kalla": "tv3_analys.py",
         "genererad": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "klasser": KLASS_TEXT,
+        # Mappar där film och bilder hittades (tv3_pptx.py använder dem när den körs fristående)
+        "mediakataloger": sorted({d for s in strackor for d in s.media_kataloger}
+                                 | {os.path.dirname(s.video_sokvag) for s in strackor if s.video_sokvag}),
+        "bildkataloger": sorted({d for s in strackor for d in s.bild_kataloger}
+                                | {os.path.dirname(o.bild_sokvag) for s in strackor for o in s.observationer
+                                   if o.bild_sokvag}),
         "strackor": poster,
     }
     with open(path, "w", encoding="utf-8") as f:
@@ -2813,6 +2819,9 @@ def main(argv=None):
     ap.add_argument("--kostnader", metavar="FIL.CSV", default=None,
                     help=f"kostnadsfil för åtgärdspaketet (standard: {KOSTNADSFIL} bredvid listfilen eller skriptet); "
                          "kan även anges i listfilen som 'kostnader: FIL'")
+    ap.add_argument("--pptx", action="store_true",
+                    help="skriv presentation.pptx i utdatakatalogen ur mall.pptx (kräver python-pptx; "
+                         "kan också göras efteråt med tv3_pptx.py UTDATA)")
     ap.add_argument("--etapper", choices=["ja", "nej"], default="ja",
                     help="åtgärdspaket: etappindelning och kostnad (fliken Etapper); nej = hoppa över")
     ap.add_argument("--bilder", action="append", default=[], metavar="KATALOG",
@@ -2983,6 +2992,14 @@ def main(argv=None):
         kartfil = os.path.join(a.utdata, KARTUNDERLAG_FIL)
         n_poster = skriv_kartunderlag(strackor, kartfil)
         print(f"\n{n_poster} sträckor skrivna till {kartfil} (underlag för ArcMap)")
+    if a.pptx:
+        try:
+            import tv3_pptx
+            pptx_fil = tv3_pptx.bygg_presentation(strackor, etapper, diagram, a.utdata, topp=min(a.topp, 10),
+                                                  ta=sys.modules[__name__])
+            print(f"Presentation skriven till {pptx_fil}")
+        except ImportError as e:
+            print(f"  VARNING PowerPoint hoppas över: {e} (pip install python-pptx)")
     if not a.diagram:
         shutil.rmtree(diagramkatalog, ignore_errors=True)
     felfil = os.path.join(a.utdata, "fel.txt")

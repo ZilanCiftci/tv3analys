@@ -1,7 +1,7 @@
 # Implementeringsplan: fyra nya verktyg
 
-Status: oktober 2026. Steg 1 (svackkarta), 2 (uppströmsanalys) och 3 (åtgärdspaket) är implementerade
-(PR #54, #55, #56); steg 4 pågår. Beslut och svar på frågorna står under respektive avsnitt.
+Status: oktober 2026. Alla fyra steg är implementerade (PR #54 svackkarta, #55 uppströmsanalys,
+#56 åtgärdspaket, #57 PowerPoint). ArcMap-verktygen är testade med låtsas-arcpy, inte i riktig ArcMap. Beslut och svar på frågorna står under respektive avsnitt.
 
 Ordning (varje steg bygger på det föregående):
 
