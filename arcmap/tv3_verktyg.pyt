@@ -705,7 +705,8 @@ class ExporteraKartor(object):
             'centreras p\u00e5 str\u00e4ckan och skalan s\u00e4tts till den minsta i serien (1:200, 1:300, '
             '1:400 ...) d\u00e4r str\u00e4ckan ryms. Str\u00e4ckan markeras, textelementen TITEL, UNDERTITEL '
             'och SKALA i layouten fylls i om de finns, alla sidor samlas i en PDF och s\u00f6kv\u00e4gen '
-            'skrivs till f\u00e4ltet KARTA. K\u00f6r fr\u00e5n layoutvyn med \u00f6nskad sidstorlek.')
+            'skrivs till f\u00e4ltet KARTA. K\u00f6r fr\u00e5n layoutvyn med \u00f6nskad sidstorlek, eller ange '
+            'en liggande och en st\u00e5ende mall (.mxd) s\u00e5 v\u00e4ljs orienteringen per str\u00e4cka.')
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -750,8 +751,15 @@ class ExporteraKartor(object):
             displayName='Mapp med kartorna som den h\u00e4r datorn ser den (valfritt, Citrix)',
             name='kartmapp', datatype='DEFolder', parameterType='Optional', direction='Input',
             category='Hyperl\u00e4nkar (n\u00e4r ArcMap k\u00f6rs p\u00e5 en annan dator, t.ex. Citrix)')
+        K_MALL = 'Mallar (liggande/st\u00e5ende v\u00e4ljs automatiskt per str\u00e4cka)'
+        mall_ligg = arcpy.Parameter(
+            displayName='Mall med liggande layout (.mxd, valfritt)', name='mall_liggande',
+            datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
+        mall_sta = arcpy.Parameter(
+            displayName='Mall med st\u00e5ende layout (.mxd, valfritt)', name='mall_staende',
+            datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
         return [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
-                skriv_falt, kartmapp]
+                skriv_falt, kartmapp, mall_ligg, mall_sta]
 
     def isLicensed(self):
         return True
@@ -776,6 +784,12 @@ class ExporteraKartor(object):
                 parameters[4].setErrorMessage('Heltal separerade med ;')
         if parameters[5].value is not None and parameters[5].value < 0:
             parameters[5].setErrorMessage('Minst 0')
+        for i in (11, 12):
+            if parameters[i].valueAsText and not os.path.isfile(parameters[i].valueAsText):
+                parameters[i].setErrorMessage('Filen finns inte')
+        if bool(parameters[11].valueAsText) != bool(parameters[12].valueAsText):
+            parameters[12 if parameters[11].valueAsText else 11].setWarningMessage(
+                'Bara en mall angiven - den anvands for alla kartor. Ange bada for automatiskt val.')
         return
 
     def execute(self, parameters, messages):
@@ -791,7 +805,9 @@ class ExporteraKartor(object):
                     markeringslager=markering[0] if markering else None,
                     samlad=bool(parameters[8].value), per_etapp=bool(parameters[3].value),
                     skriv_falt=bool(parameters[9].value),
-                    kartmapp=parameters[10].valueAsText or None)
+                    kartmapp=parameters[10].valueAsText or None,
+                    mall_liggande=parameters[11].valueAsText or None,
+                    mall_staende=parameters[12].valueAsText or None)
         try:
             arcpy.RefreshActiveView()
         except Exception:
