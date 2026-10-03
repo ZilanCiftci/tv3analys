@@ -191,6 +191,25 @@ SPARA_DIAGRAM = False
 SKRIV_KARTUNDERLAG = True
 KARTUNDERLAG_FIL = "kartunderlag.json"
 
+# Åtgärdspaket och kostnad (PLAN_verktyg.md steg 3). Kostnaderna läses ur KOSTNADSFIL
+# (post;dimension_fran;dimension_till;enhet;kr;kommentar – användaren äger filen, schablon tills
+# vidare). Manuella bedömningar läses ur en tidigare prioritering.xlsx ('manuell:' i listfilen eller
+# --manuell): kolumnerna Manuell bedömning (A–E, eller texten schakt/strumpa/ingen som styr metoden),
+# Kommentar och Lagning (m).
+KOSTNADSFIL = "kostnader.csv"          # söks relativt listfilen, annars bredvid skriptet
+ATGARD_KLASSER = ("A", "B")            # gällande klasser som får åtgärd (strumpa)
+SCHAKT_AUTOMATISKT = False             # F3: metoden byts bara manuellt. True = grad 4 på GRAD4_KODER_A
+                                       # (rörbrott/deformation) ger schakt automatiskt
+ETAPP_OVERBRYGGA_M = 60.0              # F5: C/D-sträcka kortare än så mellan två åtgärdssträckor tas med
+ETAPP_ORDNING = "index"                # "index" = högsta konstruktionsindex först,
+                                       # "konsekvens" = flest serviser uppströms först (kräver uppstroms:)
+BRUNNSTYP_ANDE_M = 1.5                 # m – TVDAT-kod NB/TB/RB så nära änden gäller för brunnen där
+LAGNINGSKODER = {("RBR", 3), ("RBR", 4), ("DEF", 3), ("DEF", 4), ("FOG", 4), ("YTS", 4)}
+                                       # skador som brukar kräva punktlagning före strumpning – listas i
+                                       # Åtgärdsflagga när Lagning (m) inte är ifylld (F2: manuell bedömning)
+FRAMSCHAKTA_BRUNNAR: list[str] = []    # F9: lås vilka brunnar som schaktas fram (littera); kan också
+                                       # anges i fliken Etapper, kolumn "Schakta fram (manuellt)"
+
 # Hoppa över PDF-rapporter som redan finns i utdatakatalogen (spar tid när bara Excel eller
 # kartunderlaget ska uppdateras). Motsvarar --behall-rapporter. Ta bort rapporter/ eller kör
 # utan flaggan när layouten ändrats.
@@ -204,7 +223,9 @@ DOLDA_KOLUMNER = {
                      "Drift maxgrad", "Antal skador", "Serviser uppströms", "Längd uppströms", "Driftåtgärd",
                      "Inspekterad flera ggr", "Littera rättat",
                      "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
-                     "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga"],
+                     "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga",
+                     "Brunnstyp start", "Brunnstyp slut"],
+    "Etapper": ["Sträckor (lista)"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
 }
 
@@ -418,6 +439,16 @@ class Stracka:
     serviser_uppstroms: int | None = None      # serviser/anslutningar uppströms, inkl. sträckans egna
     langd_uppstroms: float | None = None       # m ledning uppströms, inkl. sträckan
     serviser_kalla: str = ""                   # "servislager" eller "skattning (ANT_ANSL)"
+    # Manuell bedömning ur en tidigare prioritering.xlsx (manuell: i listfilen / --manuell)
+    manuell_bedomning: str = ""                # A–E, eller text som styr metoden (schakt/strumpa/ingen)
+    kommentar: str = ""
+    lagning_m: float | None = None             # meter punktlagning före strumpning (F2, manuell)
+    # Åtgärdsplanering (planera_atgarder)
+    etapp: int | None = None
+    etapp_flagga: str = ""                     # t.ex. "medtagen för sammanhang"
+    kostnad: dict | None = None                # {"strumpa", "hattar", "lagning", "summa"} i kr
+    kostnadsflagga: str = ""                   # t.ex. "dimension 225 saknar pris", "kostnad på nr 72"
+    _metod: str | None = None                  # satt av planeringen (överbryggning), annars metod_auto
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -770,6 +801,99 @@ class Stracka:
         for (kod, grad), n in sorted(c.items(), key=lambda kv: (-kv[0][1], kv[0][0])):
             delar.append(f"{n}×{kod}{grad}")
         return ", ".join(delar)
+
+    # ---- åtgärdspaket (steg 3) ----
+    def brunnstyp(self, brunn: str) -> str:
+        """NB / TB / RB för en av sträckans brunnar: TVDAT-infokoden vid sträckans ände i första
+        hand (inom BRUNNSTYP_ANDE_M från 0 resp. längden), annars litterats prefix, annars ''."""
+        if self.langd > 2 * BRUNNSTYP_ANDE_M:
+            if brunn == self.fran_brunn:
+                nara = [o for o in self.observationer
+                        if o.infokod in ("NB", "TB", "RB") and o.lage <= BRUNNSTYP_ANDE_M]
+            else:
+                nara = [o for o in self.observationer
+                        if o.infokod in ("NB", "TB", "RB") and o.lage >= self.langd - BRUNNSTYP_ANDE_M]
+            if nara:
+                return nara[0].infokod
+        return brunnstyp_ur_littera(brunn)
+
+    @property
+    def gallande_klass(self) -> str:
+        """Manuell bedömning (A–E) om ifylld, annars maskinell klass."""
+        m = (self.manuell_bedomning or "").strip().upper()[:1]
+        return m if m in KLASS_TEXT else self.klass
+
+    @property
+    def metod_auto(self) -> str:
+        """strumpa / schakt / ingen. Texten i Manuell bedömning styr alltid (schakt, strumpa, ingen);
+        annars strumpa för gällande klass i ATGARD_KLASSER som inte är relinad, ingen för övriga.
+        F3: inget automatiskt byte till schakt (om inte SCHAKT_AUTOMATISKT) – se atgardsflagga."""
+        t = (self.manuell_bedomning or "").strip().lower()
+        for ord_, metod in (("schakt", "schakt"), ("strump", "strumpa"), ("ingen", "ingen")):
+            if ord_ in t:
+                return metod
+        if self.gallande_klass not in ATGARD_KLASSER or self.relinad:
+            return "ingen"
+        if SCHAKT_AUTOMATISKT and self.grad4_koder:
+            return "schakt"
+        return "strumpa"
+
+    @property
+    def metod(self) -> str:
+        return self._metod or self.metod_auto
+
+    @property
+    def grad4_koder(self) -> list[str]:
+        """Konstruktionskoder med grad 4 som gör strumpning tveksam (GRAD4_KODER_A)."""
+        return sorted({o.kod for o in self.skador("K")
+                       if o.grad == 4 and (GRAD4_KODER_A is None or o.kod in GRAD4_KODER_A)})
+
+    @property
+    def lagningsbehov(self) -> str:
+        """Skador som brukar kräva punktlagning före strumpning, t.ex. '2×YTS4, 1×RBR3'."""
+        c = Counter((o.kod, o.grad) for o in self.skador("K") if (o.kod, o.grad) in LAGNINGSKODER)
+        return ", ".join(f"{n}×{kod}{grad}" for (kod, grad), n in
+                         sorted(c.items(), key=lambda kv: (-kv[0][1], kv[0][0])))
+
+    @property
+    def atgardsflagga(self) -> str:
+        fl = []
+        gk = self.gallande_klass
+        if self.relinad and gk in ATGARD_KLASSER:
+            fl.append(f"relinad men klass {gk} – fodret skadat?")
+        if self.metod == "strumpa":
+            if self.grad4_koder:
+                fl.append(f"grad 4 {'/'.join(self.grad4_koder)} – går strumpa?")
+            if self.lagning_m is None and self.lagningsbehov:
+                fl.append(f"lagning? {self.lagningsbehov}")
+            typer = (self.brunnstyp(self.startbrunn), self.brunnstyp(self.slutbrunn))
+            if "" in typer:
+                fl.append("brunnstyp okänd")
+            elif "NB" not in typer:
+                fl.append("bara tillsyns-/rensbrunnar – framschaktning")
+        if self.kostnadsflagga:
+            fl.append(self.kostnadsflagga)
+        if self.etapp_flagga:
+            fl.append(self.etapp_flagga)
+        return "; ".join(fl)
+
+    @property
+    def dimension_mm(self) -> int | None:
+        m = re.search(r"\d+", self.dimension or "")
+        return int(m.group(0)) if m else None
+
+
+def brunnstyp_ur_littera(littera: str) -> str:
+    """NB / TB / RB ur litterats bokstavsprefix (KNBL, BdNBL → NB; KTB, STB → TB; SRB, KRB → RB),
+    annars ''. Rensbrunn behandlas som tillsynsbrunn i kalkylen (F1) men redovisas som RB."""
+    m = re.match(r"[A-Za-zÅÄÖåäö]+", (littera or "").strip())
+    if not m:
+        return ""
+    pfx = m.group(0).upper()
+    for typ in ("NB", "TB", "RB"):
+        if typ in pfx:
+            return typ
+    return ""
 
 
 # ----------------------------------------------------------------------------
@@ -1196,10 +1320,251 @@ def fil_url(sokvag: str) -> str:
 
 
 # ----------------------------------------------------------------------------
+# Åtgärdspaket och kostnad (PLAN_verktyg.md steg 3)
+# ----------------------------------------------------------------------------
+
+def las_kostnader(path: str) -> list[dict]:
+    """Läser kostnadsfilen: post;dimension_fran;dimension_till;enhet;kr;kommentar (decimalkomma,
+    # = kommentar). Returnerar [{"post", "fran", "till", "enhet", "kr", "kommentar"}]."""
+    poster = []
+    for rad in las_text(path).splitlines():
+        rad = rad.split("#", 1)[0].strip()
+        if not rad or rad.lower().startswith("post"):
+            continue
+        d = [x.strip() for x in re.split(r"[;\t]", rad)]
+        d += [""] * (6 - len(d))
+
+        def tal(v):
+            try:
+                return float(v.replace(",", ".").replace(" ", ""))
+            except ValueError:
+                return None
+        kr = tal(d[4])
+        if not d[0] or kr is None:
+            continue
+        poster.append({"post": d[0].lower(), "fran": tal(d[1]), "till": tal(d[2]),
+                       "enhet": d[3], "kr": kr, "kommentar": d[5]})
+    return poster
+
+
+def pris(kostnader: list[dict], post: str, dim_mm: int | None = None) -> float | None:
+    """kr för en post; för dimensionsberoende poster den rad vars intervall täcker dim_mm."""
+    kandidater = [k for k in kostnader if k["post"] == post]
+    if not kandidater:
+        return None
+    med_intervall = [k for k in kandidater if k["fran"] is not None or k["till"] is not None]
+    if not med_intervall:
+        return kandidater[0]["kr"]
+    if dim_mm is None:
+        return None
+    for k in med_intervall:
+        if (k["fran"] is None or dim_mm >= k["fran"]) and (k["till"] is None or dim_mm <= k["till"]):
+            return k["kr"]
+    return None
+
+
+def las_manuella(path: str) -> tuple[list[dict], list[str]]:
+    """Läser manuella bedömningar ur en tidigare prioritering.xlsx: fliken Prioritering
+    (Fil, Nr, Startbrunn, Slutbrunn, Manuell bedömning, Kommentar, Lagning) och fliken Etapper
+    (kolumnen 'Schakta fram (manuellt)'). Returnerar (poster, framschakta_brunnar)."""
+    from openpyxl import load_workbook
+    wb = load_workbook(path, read_only=True, data_only=True)
+    poster: list[dict] = []
+    fram: list[str] = []
+    if "Prioritering" in wb.sheetnames:
+        ws = wb["Prioritering"]
+        rader = ws.iter_rows(values_only=True)
+        rubrik = [str(c or "").strip() for c in next(rader, [])]
+
+        def kol(namn):
+            for i, r in enumerate(rubrik):
+                if r.lower().startswith(namn.lower()):
+                    return i
+            return None
+        ix = {n: kol(n) for n in ("Fil", "Nr", "Startbrunn", "Slutbrunn", "Manuell bedömning",
+                                  "Kommentar", "Lagning")}
+        for rad in rader:
+            if not rad or ix["Startbrunn"] is None:
+                continue
+
+            def v(n):
+                i = ix[n]
+                return rad[i] if i is not None and i < len(rad) else None
+            if v("Startbrunn") is None or (ix["Nr"] is not None and not isinstance(v("Nr"), (int, float))):
+                continue                      # enhetsrad eller tom rad
+            man, kom, lag = v("Manuell bedömning"), v("Kommentar"), v("Lagning")
+            if man is None and kom is None and lag is None:
+                continue
+            poster.append({"fil": str(v("Fil") or ""), "nr": int(v("Nr")) if isinstance(v("Nr"), (int, float)) else None,
+                           "startbrunn": str(v("Startbrunn") or ""), "slutbrunn": str(v("Slutbrunn") or ""),
+                           "manuell": str(man or "").strip(), "kommentar": str(kom or "").strip(),
+                           "lagning_m": float(str(lag).replace(",", ".")) if lag not in (None, "") else None})
+    if "Etapper" in wb.sheetnames:
+        ws = wb["Etapper"]
+        rader = ws.iter_rows(values_only=True)
+        rubrik = [str(c or "").strip().lower() for c in next(rader, [])]
+        ci = next((i for i, r in enumerate(rubrik) if r.startswith("schakta fram")), None)
+        if ci is not None:
+            for rad in rader:
+                if rad and ci < len(rad) and rad[ci]:
+                    fram += [b.strip() for b in re.split(r"[,;\s]+", str(rad[ci])) if b.strip()]
+    wb.close()
+    return poster, fram
+
+
+def koppla_manuella(strackor: list[Stracka], poster: list[dict]) -> int:
+    """Kopplar manuella bedömningar: TV3-fil + sträcknummer i första hand, annars brunnspar."""
+    pa_nr: dict[tuple[str, int], dict] = {}
+    pa_par: dict[frozenset, dict] = {}
+    for post in poster:
+        fil = os.path.basename(post["fil"]).lower()
+        if post["nr"] is not None and fil:
+            pa_nr.setdefault((fil, post["nr"]), post)
+        pa_par.setdefault(frozenset((_normlittera(post["startbrunn"]), _normlittera(post["slutbrunn"]))), post)
+    n = 0
+    for s in strackor:
+        post = pa_nr.get((os.path.basename(s.fil).lower(), s.nr)) or \
+            pa_par.get(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))))
+        if not post:
+            continue
+        s.manuell_bedomning, s.kommentar, s.lagning_m = post["manuell"], post["kommentar"], post["lagning_m"]
+        n += 1
+    return n
+
+
+def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
+                     framschakta_manuellt: list[str] | None = None) -> list[dict]:
+    """Delar in åtgärdssträckorna i etapper, väljer brunnar att schakta fram och räknar kostnad.
+    Sätter s.etapp, s._metod (överbryggning), s.etapp_flagga, s.kostnad, s.kostnadsflagga.
+    Returnerar etapperna (dict per etapp, numrerade efter ETAPP_ORDNING)."""
+    fram_manuellt = {_normlittera(b) for b in (framschakta_manuellt or []) + list(FRAMSCHAKTA_BRUNNAR)}
+    klassordn = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+
+    # En representant per brunnspar (värsta gällande klass); syskon följer med utan egen kostnad
+    par_av = lambda s: frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))
+    rep_: dict[frozenset, Stracka] = {}
+    for s in strackor:
+        if len(par_av(s)) < 2:
+            continue
+        r = rep_.get(par_av(s))
+        if r is None or (klassordn[s.gallande_klass], -s.index("K")) < (klassordn[r.gallande_klass], -r.index("K")):
+            rep_[par_av(s)] = s
+    for s in strackor:
+        s.etapp, s._metod, s.etapp_flagga, s.kostnad, s.kostnadsflagga = None, None, "", None, ""
+
+    atgard = {p: r for p, r in rep_.items() if r.metod in ("strumpa", "schakt")}
+    brunn_metod: dict[tuple[str, str], list[Stracka]] = defaultdict(list)   # (brunn, metod) -> sträckor
+    for r in atgard.values():
+        for b in par_av(r):
+            brunn_metod[(b, r.metod)].append(r)
+
+    # F5: kort C/D-sträcka mellan två åtgärdssträckor med samma metod tas med
+    for p, r in rep_.items():
+        if p in atgard or r.metod != "ingen" or r.relinad or r.gallande_klass not in ("C", "D") \
+                or r.langd >= ETAPP_OVERBRYGGA_M:
+            continue
+        a, b = sorted(p)
+        for metod in ("strumpa", "schakt"):
+            if brunn_metod.get((a, metod)) and brunn_metod.get((b, metod)):
+                r._metod = metod
+                r.etapp_flagga = "medtagen för sammanhang"
+                atgard[p] = r
+                for bb in (a, b):
+                    brunn_metod[(bb, metod)].append(r)
+                break
+
+    # Sammanhängande sträckor med samma metod = etapp (bredd-först över gemensamma brunnar)
+    etapper: list[dict] = []
+    sedda: set[frozenset] = set()
+    for p in sorted(atgard, key=lambda q: (klassordn[atgard[q].gallande_klass], -atgard[q].index("K"))):
+        if p in sedda:
+            continue
+        metod = atgard[p].metod
+        grupp, ko = [], [p]
+        sedda.add(p)
+        while ko:
+            q = ko.pop()
+            grupp.append(atgard[q])
+            for b in q:
+                for granne in brunn_metod.get((b, metod), []):
+                    gp = par_av(granne)
+                    if gp not in sedda:
+                        sedda.add(gp)
+                        ko.append(gp)
+        etapper.append({"metod": metod, "strackor": grupp})
+
+    # Ordning: högsta konstruktionsindex först, eller flest serviser uppströms (konsekvens)
+    def nyckel(e):
+        idx = max(s.index("K") for s in e["strackor"])
+        serv = max((s.serviser_uppstroms or 0) for s in e["strackor"])
+        return (-serv, -idx) if ETAPP_ORDNING == "konsekvens" else (-idx, -serv)
+    etapper.sort(key=nyckel)
+
+    p_hatt, p_lagn = pris(kostnader, "hatt"), pris(kostnader, "lagning")
+    p_fram, p_brunn, p_etab = pris(kostnader, "framschaktning"), pris(kostnader, "ny_brunn"), pris(kostnader, "etablering")
+    for nr, e in enumerate(etapper, 1):
+        e["nr"] = nr
+        strumpa = [s for s in e["strackor"] if s.metod == "strumpa"]
+        # F9: brunnar att schakta fram – så få som möjligt, varje strumpsträcka med bara
+        # tillsyns-/rensbrunnar ska ha en framschaktad brunn i någon ände (okänd typ = som NB)
+        behov = [s for s in strumpa if s.brunnstyp(s.startbrunn) in ("TB", "RB")
+                 and s.brunnstyp(s.slutbrunn) in ("TB", "RB")]
+        kandidater: dict[str, list[Stracka]] = defaultdict(list)
+        for s in behov:
+            for b in par_av(s):
+                kandidater[b].append(s)
+        valda = [b for b in sorted(kandidater) if b in fram_manuellt]
+        tackta = {id(s) for b in valda for s in kandidater[b]}
+        while len(tackta) < len(behov):
+            b = min(kandidater, key=lambda k: (-sum(1 for s in kandidater[k] if id(s) not in tackta),
+                                                -len(kandidater[k]), k))
+            if not any(id(s) not in tackta for s in kandidater[b]):
+                break
+            valda.append(b)
+            tackta |= {id(s) for s in kandidater[b]}
+        littera = {_normlittera(x): x for s in behov for x in (s.startbrunn, s.slutbrunn)}
+        e["framschaktade"] = [littera.get(b, b) for b in valda]
+        e["framschakt_manuell"] = [littera.get(b, b) for b in valda if b in fram_manuellt]
+
+        # Kostnad per sträcka (strumpa); schakt kalkyleras inte (F8)
+        summa = {"strumpa": 0.0, "hattar": 0.0, "lagning": 0.0}
+        for s in e["strackor"]:
+            s.etapp = nr
+            if s.metod != "strumpa":
+                continue
+            dim = s.dimension_mm
+            p_str = pris(kostnader, "strumpa", dim)
+            k = {"strumpa": p_str * s.langd if p_str is not None else None,
+                 "hattar": p_hatt * s.antal_anslutningar if p_hatt is not None else None,
+                 "lagning": p_lagn * s.lagning_m if (p_lagn is not None and s.lagning_m) else 0.0}
+            k["summa"] = sum(v for v in k.values() if v is not None)
+            s.kostnad = k
+            if p_str is None:
+                s.kostnadsflagga = f"dimension {s.dimension or '?'} saknar pris"
+            for n_ in summa:
+                summa[n_] += k[n_] or 0.0
+        n_fram = len(e["framschaktade"])
+        e["kostnad"] = dict(summa)
+        e["kostnad"]["brunnar"] = n_fram * ((p_fram or 0.0) + (p_brunn or 0.0))
+        e["kostnad"]["etablering"] = (p_etab or 0.0) if strumpa else 0.0
+        e["kostnad"]["summa"] = sum(e["kostnad"].values())
+        e["schakt_m"] = sum(s.langd for s in e["strackor"] if s.metod == "schakt")
+        e["langd_m"] = sum(s.langd for s in e["strackor"])
+    # Syskon (samma brunnspar, flera inspektioner) får representantens etapp och metod
+    for s in strackor:
+        r = rep_.get(par_av(s))
+        if r is not None and r is not s and r.etapp is not None:
+            s.etapp, s._metod, s.etapp_flagga = r.etapp, r.metod, r.etapp_flagga
+            s.kostnadsflagga = f"kostnad räknad på nr {r.nr}"
+    return etapper
+
+
+# ----------------------------------------------------------------------------
 # Excel
 # ----------------------------------------------------------------------------
 
-def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], topp: int):
+def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], topp: int,
+                etapper: list[dict] | None = None):
     from openpyxl import Workbook
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -1336,10 +1701,27 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
               ["Klass D", "inga skadeobservationer"],
               ["Klass E", "ej bedömd (ingen inspekterad längd)"],
               ["Kort sträcka", f"sträckor < {MINLANGD:g} m normeras som {MINLANGD:g} m"]]
+    if etapper is not None:
+        strumpa = [s for s in strackor if s.metod == "strumpa" and s.kostnad]
+        schakt = [s for s in strackor if s.metod == "schakt" and not s.kostnadsflagga.startswith("kostnad räknad")]
+        tot = sum(e["kostnad"]["summa"] for e in etapper)
+        rader += [[], ["Åtgärdspaket", "", "Antal", "Längd (m)", "Kostnad (kr)"],
+                  ["Etapper", "sammanhängande sträckor med samma metod", len(etapper),
+                   round(sum(e["langd_m"] for e in etapper)), round(tot)],
+                  ["Strumpa", "kostnad enligt kostnadsfilen (schablon)", len(strumpa),
+                   round(sum(s.langd for s in strumpa)), round(sum(s.kostnad["summa"] for s in strumpa))],
+                  ["Framschaktning + ny brunn", "brunnar som schaktas fram (en per etappdel med bara tillsynsbrunnar)",
+                   sum(len(e["framschaktade"]) for e in etapper), "", round(sum(e["kostnad"]["brunnar"] for e in etapper))],
+                  ["Etablering", "fast kostnad per etapp", sum(1 for e in etapper if e["kostnad"]["etablering"]), "",
+                   round(sum(e["kostnad"]["etablering"] for e in etapper))],
+                  ["Schakt", "kostnad ej beräknad – beror på djup och spont", len(schakt),
+                   round(sum(s.langd for s in schakt)), "ej beräknad"],
+                  ["Manuellt bedömda", "sträckor med Manuell bedömning ifylld",
+                   sum(1 for s in strackor if s.manuell_bedomning), "", ""]]
     for r in rader:
         ws.append(r)
     ws["A1"].font = Font(bold=True, size=14)
-    rubrikrader = [i for i, r in enumerate(rader, 1) if r[0] in ("Prioritetsklass", "Poängmodell")]
+    rubrikrader = [i for i, r in enumerate(rader, 1) if r and r[0] in ("Prioritetsklass", "Poängmodell", "Åtgärdspaket")]
     for r in rubrikrader:
         for c in ws[r]:
             c.font = Font(bold=True)
@@ -1371,7 +1753,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
-           "Manuell bedömning", "Kommentar", "Rapport", "Videofil"]
+           "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
+           "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
     rader = []
     for rang, s in enumerate(sorterade, 1):
@@ -1396,16 +1779,64 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       h["status"] if h else "",
                       round(tk["min"], 2) if tk else None, round(tk["max"], 2) if tk else None,
                       s.hojdflagga,
-                      "", "", "Öppna rapport" if s.rapport_fil else "", s.videofil])
+                      s.brunnstyp(s.startbrunn), s.brunnstyp(s.slutbrunn), s.etapp,
+                      s.metod if s.metod != "ingen" else "",
+                      (round(s.kostnad["summa"]) if s.kostnad else ("ej beräknad" if s.metod == "schakt" else None)),
+                      s.atgardsflagga,
+                      s.manuell_bedomning, s.kommentar, s.lagning_m,
+                      "Öppna rapport" if s.rapport_fil else "", s.videofil])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     start = tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
-                                    "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26},
+                                    "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26,
+                                    "Åtgärdsflagga": 40, "Kostnad": 12, "Lagning": 10},
                    klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
                    dolda=DOLDA_KOLUMNER.get("Prioritering"))
     ci = kol.index("Svackdjup/diameter") + 1
+    ck = kol.index("Kostnad (kr)") + 1
     for r in range(start, ws.max_row + 1):
         ws.cell(r, ci).number_format = "0%"
+        ws.cell(r, ck).number_format = "#,##0"
+
+    # ---- Etapper ----
+    if etapper is not None:
+        ws = wb.create_sheet("Etapper")
+        kol = ["Etapp", "Metod", "Högsta klass", "Max konstruktionsindex (p/100 m)", "Sträckor", "Längd (m)",
+               "Dimensioner (mm)", "Brunnar", "Anslutningar (hattar)", "Lagning (m)",
+               "Framschaktade brunnar", "Schakta fram (manuellt)", "Serviser uppströms",
+               "Kostnad strumpa (kr)", "Kostnad hattar (kr)", "Kostnad lagning (kr)",
+               "Kostnad brunnar (kr)", "Etablering (kr)", "Kostnad totalt (kr)",
+               "Schakt – kostnad ej beräknad (m)", "Medtagna för sammanhang", "Flaggor", "Sträckor (lista)"]
+        rader = []
+        for e in etapper:
+            st = e["strackor"]
+            brunnar = sorted({b for s in st for b in (s.startbrunn, s.slutbrunn)})
+            dims = sorted({s.dimension_mm for s in st if s.dimension_mm})
+            serv = [s.serviser_uppstroms for s in st if s.serviser_uppstroms is not None]
+            flaggor = sorted({f for s in st for f in s.atgardsflagga.split("; ")
+                              if f and not f.startswith("medtagen") and not f.startswith("kostnad räknad")})
+            rader.append([e["nr"], e["metod"], min(s.gallande_klass for s in st),
+                          round(max(s.index("K") for s in st), 1), len(st), round(e["langd_m"]),
+                          ", ".join(str(d) for d in dims), ", ".join(brunnar),
+                          sum(s.antal_anslutningar for s in st if s.metod == "strumpa"),
+                          sum(s.lagning_m or 0 for s in st) or None,
+                          ", ".join(e["framschaktade"]), ", ".join(e["framschakt_manuell"]),
+                          max(serv) if serv else None,
+                          round(e["kostnad"]["strumpa"]) or None, round(e["kostnad"]["hattar"]) or None,
+                          round(e["kostnad"]["lagning"]) or None, round(e["kostnad"]["brunnar"]) or None,
+                          round(e["kostnad"]["etablering"]) or None,
+                          round(e["kostnad"]["summa"]) if e["metod"] == "strumpa" else "ej beräknad",
+                          round(e["schakt_m"]) or None,
+                          sum(1 for s in st if s.etapp_flagga) or None,
+                          "; ".join(flaggor),
+                          "; ".join(f"{s.fil} nr {s.nr}: {s.startbrunn}→{s.slutbrunn} ({s.gallande_klass}, {s.langd:.0f} m)"
+                                    for s in st)])
+        start = tabell(ws, kol, rader, {"Brunnar": 40, "Framschaktade brunnar": 24, "Schakta fram (manuellt)": 22,
+                                        "Flaggor": 45, "Sträckor (lista)": 60, "Metod": 10},
+                       klasskol=2, dolda=DOLDA_KOLUMNER.get("Etapper"))
+        for r in range(start, ws.max_row + 1):
+            for c in range(kol.index("Kostnad strumpa (kr)") + 1, kol.index("Kostnad totalt (kr)") + 2):
+                ws.cell(r, c).number_format = "#,##0"
 
     # ---- Observationer ----
     ws = wb.create_sheet("Observationer")
@@ -1541,6 +1972,15 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "antal_anslutningar": s.antal_anslutningar,
             "serviser_uppstroms": s.serviser_uppstroms,
             "langd_uppstroms_m": s.langd_uppstroms,
+            "manuell_bedomning": s.manuell_bedomning,
+            "gallande_bedomning": s.gallande_klass,
+            "etapp": s.etapp,
+            "metod": s.metod if s.metod != "ingen" else None,
+            "kostnad_kr": round(s.kostnad["summa"]) if s.kostnad else None,
+            "lagning_m": s.lagning_m,
+            "brunnstyp_start": s.brunnstyp(s.startbrunn),
+            "brunnstyp_slut": s.brunnstyp(s.slutbrunn),
+            "atgardsflagga": s.atgardsflagga,
             "skador": s.sammanfattning_skador(),
             "driftatgard": s.driftatgard,
             "langd_m": round(s.langd, 1),
@@ -2221,6 +2661,8 @@ _BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
 _MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
 _MARK_NYCKLAR = ("markprofil", "mark")
 _UPP_NYCKLAR = ("uppstroms", "uppströms", "uppstrom")
+_MANUELL_NYCKLAR = ("manuell", "manuellt", "bedomning", "bedömning")
+_KOSTNAD_NYCKLAR = ("kostnader", "kostnad", "priser")
 
 
 def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
@@ -2235,6 +2677,8 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         littera: brunnslittera.csv               ersättningslittera för felmärkta brunnar
         markprofil: Karta\\markprofil.json        från ArcMap-verktyget Markprofil
         uppstroms: Karta\\uppstroms.csv           från ArcMap-verktyget Uppströms (batchläge)
+        manuell: forra_korningen\\prioritering.xlsx  manuella bedömningar, kommentarer, Lagning (m)
+        kostnader: kostnader.csv                 kostnadsposter för åtgärdspaketet
         DUF 701.TV3                              TV3-fil; media söks i filens egen katalog
         DUF 702.TV3 ; D:\\Filmer\\DUF702          TV3-fil med egen filmkatalog (fler kan
                                                  anges, separerade med ;)
@@ -2248,11 +2692,12 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         return p if os.path.isabs(p) else os.path.normpath(os.path.join(bas, p))
 
     nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR + _MARK_NYCKLAR
-                                                             + _UPP_NYCKLAR
+                                                             + _UPP_NYCKLAR + _MANUELL_NYCKLAR + _KOSTNAD_NYCKLAR
                                                              + ("littera", "brunnslittera", "brunnar")),
                            re.IGNORECASE)
     poster: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": [],
+                        "manuell": [], "kostnader": []}
     for rad in las_text(path).splitlines():
         rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
@@ -2262,7 +2707,9 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
             nyckel = m.group(1).lower()
             slag = ("bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR
                     else "markprofil" if nyckel in _MARK_NYCKLAR
-                    else "uppstroms" if nyckel in _UPP_NYCKLAR else "littera")
+                    else "uppstroms" if nyckel in _UPP_NYCKLAR
+                    else "manuell" if nyckel in _MANUELL_NYCKLAR
+                    else "kostnader" if nyckel in _KOSTNAD_NYCKLAR else "littera")
             globala[slag] += [abs_(d) for d in m.group(2).split(";") if d.strip()]
             continue
         delar = rad.split(";")
@@ -2290,7 +2737,8 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Lis
     och littera-CSV:erna från listfilerna."""
     import glob
     kandidater: list[Listpost] = []
-    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": []}
+    globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": [],
+                        "manuell": [], "kostnader": []}
 
     def lagg_till_lista(lf: str) -> None:
         p, g = las_listfil(lf)
@@ -2359,6 +2807,14 @@ def main(argv=None):
     ap.add_argument("--uppstroms", action="append", default=[], metavar="FIL.CSV",
                     help="CSV från ArcMap-verktyget Uppströms (batchläge): serviser och längd uppströms "
                          "per sträcka; kan även anges i listfilen som 'uppstroms: FIL'")
+    ap.add_argument("--manuell", action="append", default=[], metavar="FIL.XLSX",
+                    help="tidigare prioritering.xlsx med ifyllda Manuell bedömning, Kommentar och Lagning (m); "
+                         "kan även anges i listfilen som 'manuell: FIL'")
+    ap.add_argument("--kostnader", metavar="FIL.CSV", default=None,
+                    help=f"kostnadsfil för åtgärdspaketet (standard: {KOSTNADSFIL} bredvid listfilen eller skriptet); "
+                         "kan även anges i listfilen som 'kostnader: FIL'")
+    ap.add_argument("--etapper", choices=["ja", "nej"], default="ja",
+                    help="åtgärdspaket: etappindelning och kostnad (fliken Etapper); nej = hoppa över")
     ap.add_argument("--bilder", action="append", default=[], metavar="KATALOG",
                     help="katalog att söka bilder i (kan anges flera gånger); anges ingen söks "
                          "bilderna i videokatalogerna; kan även anges i listfilen som 'bild: KATALOG'")
@@ -2460,6 +2916,45 @@ def main(argv=None):
         kallor = Counter(s.serviser_kalla for s in strackor if s.serviser_uppstroms is not None)
         print(f"Uppströms: {n_upp} av {len(strackor)} sträckor kopplade"
               + (" (" + ", ".join(f"{k}: {n}" for k, n in kallor.most_common()) + ")" if kallor else ""))
+    manposter, framschakta = [], []
+    for mf in globala["manuell"] + a.manuell:
+        if not os.path.isfile(mf):
+            fel.append(f"{mf}: filen med manuella bedömningar finns inte")
+            print(f"  VARNING fil med manuella bedömningar saknas: {mf}")
+            continue
+        try:
+            po, fr = las_manuella(mf)
+        except Exception as e:                 # noqa: BLE001 – trasig/öppen Excelfil ska inte stoppa körningen
+            fel.append(f"{mf}: kunde inte läsas ({e})")
+            print(f"  VARNING kunde inte läsa manuella bedömningar: {mf} ({e})")
+            continue
+        manposter += po
+        framschakta += fr
+    if manposter:
+        n_man = koppla_manuella(strackor, manposter)
+        print(f"Manuella bedömningar: {n_man} sträckor ({sum(1 for s in strackor if s.manuell_bedomning)} med "
+              f"bedömning, {sum(1 for s in strackor if s.lagning_m)} med lagning)")
+    etapper = None
+    if a.etapper == "ja":
+        kostnadsfil = a.kostnader or (globala["kostnader"][0] if globala["kostnader"] else None)
+        if kostnadsfil is None:
+            for kandidat in ([os.path.join(os.path.dirname(os.path.abspath(lf)), KOSTNADSFIL) for lf in a.lista]
+                             + [os.path.join(os.path.dirname(os.path.abspath(__file__)), KOSTNADSFIL)]):
+                if os.path.isfile(kandidat):
+                    kostnadsfil = kandidat
+                    break
+        kostnader = []
+        if kostnadsfil and os.path.isfile(kostnadsfil):
+            kostnader = las_kostnader(kostnadsfil)
+        else:
+            print(f"  VARNING kostnadsfil saknas ({kostnadsfil or KOSTNADSFIL}) – etapper utan kostnad")
+        etapper = planera_atgarder(strackor, kostnader, framschakta)
+        n_str = sum(1 for s in strackor if s.metod == "strumpa")
+        n_sch = sum(1 for s in strackor if s.metod == "schakt")
+        print(f"Åtgärdspaket: {len(etapper)} etapper, {n_str} sträckor strumpa, {n_sch} schakt, "
+              f"{sum(len(e['framschaktade']) for e in etapper)} brunnar att schakta fram, "
+              f"{sum(e['kostnad']['summa'] for e in etapper):,.0f} kr".replace(",", " ")
+              + (f" (kostnader: {os.path.basename(kostnadsfil)})" if kostnader else ""))
     print(f"\nVideofiler hittade: {vh} av {vt}   Bilder hittade: {bh} av {bt}")
     if vt and vh < vt:
         print("  (ange katalogen med filmerna i listfilen – 'media: KATALOG' eller 'fil.TV3 ; KATALOG' –\n"
@@ -2480,7 +2975,7 @@ def main(argv=None):
               + (f", {behallna} befintliga behållna" if behallna else ""))
     excel_fil = os.path.join(a.utdata, "prioritering.xlsx")
     try:
-        skriv_excel(strackor, excel_fil, diagram, a.topp)
+        skriv_excel(strackor, excel_fil, diagram, a.topp, etapper)
     except PermissionError:
         sys.exit(f"\nKan inte skriva {excel_fil} – filen är troligen öppen i Excel. "
                  "Stäng den och kör igen.")

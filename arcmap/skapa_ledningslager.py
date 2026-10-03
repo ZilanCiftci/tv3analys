@@ -552,6 +552,9 @@ EGNA_FALT = [
     ('AVBRUTEN',   'TEXT',   3,   'Avbruten inspektion'),
     ('SVACKA_CM',  'LONG',   None, 'Svackdjup (cm)'),
     ('LUTNING',    'DOUBLE', None, 'Lutning (promille)'),
+    ('ETAPP',      'LONG',   None, 'Etapp (åtgärdspaket)'),
+    ('METOD',      'TEXT',   10,  'Metod (strumpa/schakt)'),
+    ('KOSTNAD',    'DOUBLE', None, 'Kostnad (kr, strumpa)'),
     ('OMRADE',     'TEXT',   60,  'Område'),
     ('DATUM',      'TEXT',   10,  'Inspektionsdatum'),
     ('TV3_FIL',    'TEXT',   100, 'TV3-fil'),
@@ -1223,6 +1226,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
             mask = txt(s.get('maskinell_bedomning') or 'E')[:2]
             man = tidigare_manuella.get(par, '')
+            if not man:
+                # Manuell bedomning ifylld i Excel (tv3_analys --manuell) foljer med via JSON-filen
+                m_json = txt(s.get('manuell_bedomning') or '').strip().upper()[:1]
+                if m_json in KLASSORDNING:
+                    man = m_json
             bed, bed_typ, stil = galler(mask, man)
             lager0, oid0 = vagen[0][2], vagen[0][3]
             extra = extra_per_oid.get((lager0, oid0), [None] * len(kopiera))
@@ -1239,6 +1247,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 'Ja' if s.get('relinad') else 'Nej',
                 'Ja' if s.get('avbruten') else 'Nej',
                 s.get('svackdjup_cm'), s.get('lutning_promille'),
+                s.get('etapp'), klipp(s.get('metod'), 10), s.get('kostnad_kr'),
                 klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
                 s.get('nr'),
