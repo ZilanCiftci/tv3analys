@@ -356,6 +356,20 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 - Behåll ett enda skript med KONFIG-block överst; parametrar ska gå att ändra utan att röra
   koden.
 
+**Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
+åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
+lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
+60 m, flödesriktning ur riktningsattribut, bara strumpa/schakt). **`mall.pptx`** (utkast, repots rot,
+byggd med pptxgenjs i scratchpad/pptx/mall.js, tema "tv3_analys": dk2/accent1 0B5C6B teal, lt2 E6EFF2,
+accent2–5 klassfärgerna, Calibri, 16:9 wide) har layouterna **TITEL** (title, undertitel, meta),
+**AVDELARE** (title, body), **RUBRIK** (bara title – för fritt komponerade sidor som nyckeltalsrutor),
+**RUBRIK_TEXT** (title, body), **RUBRIK_BILD** (title, bild 8,2×5,2", body höger), **RUBRIK_TABELL**
+(title, tabell), **STRACKA** (title, oversikt 7,9×2,45", foto1–foto3 2,55", fakta höger), **AVSLUT**
+(title, body, mörk). Sidfot och sidnummer ligger i layouterna. `tv3_pptx.py` ska fylla via
+`placeholder`-namnen. Exempelsidor med DUF 701-innehåll ingår. LibreOffice i sandlådan kan inte
+rendera ("source file could not be loaded"), så mallen är kontrollerad med validate.py + python-pptx
+(positioner), inte visuellt.
+
 ## 7. Idéer som nämnts men inte byggts
 
 - Kartvy: grundversionen finns (`arcmap/`), inkl. hyperlänk till PDF/film. Kvar: lägga
