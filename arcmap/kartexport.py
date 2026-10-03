@@ -104,7 +104,10 @@ def _filnamn(post, per_etapp):
     def ren(v):
         return re.sub(r'[^A-Za-z0-9_.\-]+', '_', txt(v or '')).strip('_') or 'x'
     if per_etapp:
-        return 'etapp_%02d.pdf' % int(post.get('ETAPP') or 0)
+        try:
+            return 'etapp_%02d.pdf' % int(post.get('ETAPP') or 0)
+        except (TypeError, ValueError):
+            return 'etapp_%s.pdf' % ren(post.get('ETAPP'))
     fil = os.path.splitext(os.path.basename(txt(post.get('TV3_FIL') or '')))[0]
     return '%s_%s_%s_%s-%s.pdf' % (ren(post.get('BEDOMNING') or 'X'), ren(fil), txt(post.get('NR') or ''),
                                    ren(post.get('FRAN_BRUNN')), ren(post.get('TILL_BRUNN')))
@@ -118,13 +121,15 @@ def _titel(post, per_etapp, antal=1):
                                             txt(post.get('FRAN_BRUNN') or '?'), txt(post.get('TILL_BRUNN') or '?'))
 
 
-def _undertitel(post, skala, per_etapp, langd=None):
+def _undertitel(post, skala, per_etapp, langd=None, metoder=None):
     delar = []
     if not per_etapp and post.get('BEDOMNING'):
         delar.append('Klass %s' % txt(post['BEDOMNING']))
     if post.get('ETAPP') is not None and not per_etapp:
         delar.append('Etapp %s' % txt(post['ETAPP']))
-    if post.get('METOD'):
+    if metoder:
+        delar.append(' / '.join(sorted(set(txt(m) for m in metoder if m))))
+    elif post.get('METOD'):
         delar.append(txt(post['METOD']))
     L = langd if langd is not None else _tal(post.get('LANGD_M'))
     if L:
@@ -138,15 +143,36 @@ def _undertitel(post, skala, per_etapp, langd=None):
 
 
 def _lager_i_doc(mxd, namn):
-    """Lagret med namnet namn (kort eller langt, skiftlage spelar ingen roll) i kartdokumentet."""
+    """Lagret i kartdokumentet med namnet namn: forst pa langt namn (Grupp\\Lager), sedan pa
+    kortnamnet (lagret kan ligga i en annan grupp eller lost i mallen). Skiftlage spelar ingen roll."""
     sokt = txt(namn).strip().strip("'").lower()
-    for l in arcpy.mapping.ListLayers(mxd):
+    kort = sokt.split('\\')[-1]
+    lager = [l for l in arcpy.mapping.ListLayers(mxd) if not getattr(l, 'isGroupLayer', False)]
+    for l in lager:
         try:
-            if txt(l.name).strip().lower() == sokt or txt(l.longName).strip().lower() == sokt:
+            if txt(l.longName).strip().lower() == sokt or txt(l.name).strip().lower() == sokt:
+                return l
+        except Exception:
+            continue
+    for l in lager:
+        try:
+            if txt(l.name).strip().lower() == kort:
                 return l
         except Exception:
             continue
     return None
+
+
+def _huvudram(mxd):
+    """Dataramen att exportera ur: den storsta pa sidan (mallar med oversiktskarta har flera),
+    annars den forsta."""
+    ramar = arcpy.mapping.ListDataFrames(mxd)
+    if not ramar:
+        raise RuntimeError('Kartdokumentet har ingen dataram')
+    try:
+        return max(ramar, key=lambda d: float(d.elementWidth) * float(d.elementHeight))
+    except Exception:
+        return ramar[0]
 
 
 class Layout(object):
@@ -156,7 +182,13 @@ class Layout(object):
     def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None):
         self.mxd = mxd
         self.namn = namn
-        self.df = arcpy.mapping.ListDataFrames(mxd)[0]
+        try:
+            if txt(mxd.activeView).upper() != 'PAGE_LAYOUT':
+                mxd.activeView = 'PAGE_LAYOUT'      # dataramens utbredning galler layouten, inte datavyn
+                logg('  %s: vaxlade till layoutvyn' % namn)
+        except Exception:
+            pass
+        self.df = _huvudram(mxd)
         self.ram = dataram_matt(self.df)
         self.liggande = self.ram[0] >= self.ram[1]
         try:
@@ -178,6 +210,29 @@ class Layout(object):
                  'alla andra strackor; urval anvands i stallet' % namn)
             self.mark_lyr = None
         self._gammal_dq = getattr(self.mark_lyr, 'definitionQuery', None) if self.mark_lyr is not None else None
+        # Anvandarens eget urval i lagret aterstalls efterat (markeringen gors med urval)
+        self._gammalt_urval = None
+        try:
+            self._gammalt_urval = list(self.lyr.getSelectionSet() or [])
+        except Exception:
+            pass
+
+    def kontrollera_kalla(self, src):
+        """Varnar om mallens lager pekar pa en annan featureklass an den oppna kartans."""
+        for l, vad in ((self.lyr, 'lagret'), (self.mark_lyr, 'markeringslagret')):
+            if l is None:
+                continue
+            try:
+                k = kalla(l)[0]
+            except Exception:
+                continue
+            if os.path.normcase(txt(k)) != os.path.normcase(txt(src)):
+                logg('  OBS: %s i %s pekar pa %s, inte pa %s - markeringen kan hamna pa fel objekt'
+                     % (vad, self.namn, txt(k), txt(src)))
+
+    def stang(self):
+        """Slapper referenserna till kartdokumentet (mallar laser annars datakallan)."""
+        self.df = self.lyr = self.mark_lyr = self.mxd = None
 
     def passning(self, utb, skalor, marginal):
         """(skala, ryms, fyllnad) - fyllnad = hur stor del av ramen strackan tar i den skalan."""
@@ -197,17 +252,25 @@ class Layout(object):
                 pass
             return
         try:
-            self.lyr.setSelectionSet('NEW', set(oids))
+            self.lyr.setSelectionSet('NEW', list(oids))
         except Exception:
             arcpy.SelectLayerByAttribute_management(self.lyr, 'NEW_SELECTION', where)
 
     def aterstall(self):
+        """Aterstaller definitionsfragan respektive anvandarens ursprungliga urval."""
+        if self.lyr is None:
+            return
         try:
             if self.mark_lyr is not None:
                 self.mark_lyr.definitionQuery = self._gammal_dq or ''
+            elif self._gammalt_urval:
+                try:
+                    self.lyr.setSelectionSet('NEW', list(self._gammalt_urval))
+                except Exception:
+                    arcpy.SelectLayerByAttribute_management(self.lyr, 'CLEAR_SELECTION')
             else:
                 try:
-                    self.lyr.setSelectionSet('NEW', set())
+                    self.lyr.setSelectionSet('NEW', [])
                 except Exception:
                     arcpy.SelectLayerByAttribute_management(self.lyr, 'CLEAR_SELECTION')
         except Exception:
@@ -220,7 +283,9 @@ def valj_layout(layouter, utb, skalor, marginal):
     bast = None
     for lo in layouter:
         skala, ryms, fyll = lo.passning(utb, skalor, marginal)
-        nyckel = (not ryms, skala, -fyll)
+        # Ryms strackan: storst fyllnad vinner vid lika skala. Ryms den inte i nagon layout:
+        # minst overskjutning vinner (annars valdes den layout dar strackan stack ut mest).
+        nyckel = (not ryms, skala, fyll if not ryms else -fyll)
         if bast is None or nyckel < bast[0]:
             bast = (nyckel, lo, skala, ryms)
     return bast[1], bast[2], bast[3]
@@ -246,6 +311,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     skalor = sorted(int(s) for s in skalor if _tal(s) and float(s) > 0) or list(SKALOR)
 
     lyr = hitta_lager(bedomda) if isinstance(bedomda, (TEXTTYP, bytes)) else bedomda
+    if isinstance(lyr, (TEXTTYP, bytes)):
+        raise RuntimeError('Ange lagret som det heter i kartan (inte en sokvag) - markering och urval kraver ett lager')
     lagernamn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', bedomda))
     src, dq = kalla(lyr)
     falt = _falt(src)
@@ -264,16 +331,22 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     layouter = []
     mallar = [(m, n) for m, n in ((mall_liggande, 'liggande'), (mall_staende, 'staende')) if m]
     if mallar:
-        for mall, namn in mallar:
-            if not os.path.isfile(txt(mall)):
-                raise RuntimeError('Mallen finns inte: %s' % txt(mall))
-            doc = arcpy.mapping.MapDocument(txt(mall))
-            lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn)
-            layouter.append(lo)
-            logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
-                 % (lo.namn, lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0],
-                    '' if lo.liggande == (namn == 'liggande') else '  (OBS: ramen ser %s ut)'
-                    % ('liggande' if lo.liggande else 'staende')))
+        try:
+            for mall, namn in mallar:
+                if not os.path.isfile(txt(mall)):
+                    raise RuntimeError('Mallen finns inte: %s' % txt(mall))
+                doc = arcpy.mapping.MapDocument(txt(mall))
+                lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn)
+                lo.kontrollera_kalla(src)
+                layouter.append(lo)
+                logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
+                     % (lo.namn, lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0],
+                        '' if lo.liggande == (namn == 'liggande') else '  (OBS: ramen ser %s ut)'
+                        % ('liggande' if lo.liggande else 'staende')))
+        except Exception:
+            for lo in layouter:
+                lo.stang()
+            raise
     else:
         lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr)
         layouter.append(lo)
@@ -292,8 +365,18 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
         if not valda_oid:
             raise RuntimeError('Inga strackor ar markerade i kartan')
 
+    # Geometrin lases i dataramens koordinatsystem (dataramen kan ha ett annat an lagret)
+    sr_ram = None
+    try:
+        sr_ram = layouter[0].df.spatialReference
+        for lo in layouter[1:]:
+            if txt(lo.df.spatialReference.name) != txt(sr_ram.name):
+                logg('  OBS: mallarna har olika koordinatsystem (%s / %s) - utbredningen raknas i %s'
+                     % (txt(sr_ram.name), txt(lo.df.spatialReference.name), txt(sr_ram.name)))
+    except Exception:
+        sr_ram = None
     poster = []
-    with arcpy.da.SearchCursor(src, las, dq) as mark:
+    with arcpy.da.SearchCursor(src, las, dq, spatial_reference=sr_ram) as mark:
         for rad in mark:
             post = dict(zip(namn, rad))
             if post['SHAPE@'] is None:
@@ -342,7 +425,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
             p0 = grupp[0]
             langd = sum(_tal(p.get('LANGD_M')) or 0 for p in grupp) if per_etapp else None
             _satt_text(lo.mxd, 'TITEL', _titel(p0, per_etapp, len(grupp)))
-            _satt_text(lo.mxd, 'UNDERTITEL', _undertitel(p0, skala, per_etapp, langd))
+            _satt_text(lo.mxd, 'UNDERTITEL', _undertitel(p0, skala, per_etapp, langd,
+                                                         [p.get('METOD') for p in grupp] if per_etapp else None))
             _satt_text(lo.mxd, 'SKALA', 'Skala 1:%d' % skala)
             if lo.mxd is mxd:
                 try:
@@ -356,6 +440,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                 while '%s_%d%s' % (stam, k, andelse) in filer:
                     k += 1
                 fil = '%s_%d%s' % (stam, k, andelse)
+                logg('  filnamnet fanns redan - skriver %s' % os.path.basename(fil))
             arcpy.mapping.ExportToPDF(lo.mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi),
                                       image_quality='BEST', georef_info=True)
             filer.append(fil)
@@ -369,10 +454,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
             lo.aterstall()
         for lo in layouter:
             if lo.mxd is not mxd:
-                try:
-                    del lo.mxd          # mallen sparas inte
-                except Exception:
-                    pass
+                lo.stang()              # mallen sparas inte; referenserna slapps innan faltet skrivs
+        layouter = [lo for lo in layouter if lo.mxd is not None]
     if len(layouter) > 1:
         logg('  layout: ' + ', '.join('%s %d' % (n, a) for n, a in sorted(antal_per_layout.items())))
 

@@ -207,6 +207,14 @@ liggande, lyr via `_lager_i_doc` på lagernamnet från den öppna kartan, mark_l
 layouten med nyckel (ryms inte, skala, −fyllnad) = minsta skala, vid lika den där sträckan fyller
 ramen bäst; textelement och export sker i den valda mallens dokument; mallarna sparas inte (del).
 Utan mallar en `Layout` för CURRENT. Resultat-tupler (fil, skala, ryms, layoutnamn).
+Granskning okt 2026 (rättat): nyckeln i `valj_layout` är (ryms inte, skala, fyll om inte ryms annars
+−fyll) – minst överskjutning när inget ryms; användarens urval sparas (`_gammalt_urval`) och
+återställs i `aterstall`; `_lager_i_doc` provar långt namn, sedan kortnamn, hoppar grupplager;
+`_huvudram` = största dataramen; `activeView` sätts till PAGE_LAYOUT; `kontrollera_kalla` varnar
+när mallens lager pekar på annan featureklass; geometrin läses med `spatial_reference` =
+dataramens SR; `Layout.stang()` släpper mallarna före AddField; filnamnskollisioner får löpnummer
+och loggas; ETAPP som text tål `_filnamn`; undertitel per etapp listar alla metoder; `bedomda` som
+sökväg ger tydligt fel; fast dataram ger begripligt fel; roterad dataram loggas.
 Test: scratchpad/test_kartexport.py med låtsas-mapping (A3-ram 76×50 m i 1:200: 40 m → 1:200,
 100 m → 1:400, 300 m hög → 1:1500; per etapp; valda). Handledning 7.10.
 **Granskning okt 2026 av steg 1–4 (rättat, tre delgranskningar + egna fynd):** tv3_analys –
