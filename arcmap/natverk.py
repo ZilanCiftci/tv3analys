@@ -76,31 +76,86 @@ def _lista(v):
 
 
 class Graf(Natverk):
-    """Natverk med riktning per kant och attribut per ledning."""
+    """Natverk med riktning per kant och attribut per ledning.
+
+    Natverk ger varje ledningsande bade en fri-ande-nod (P) och, nar en brunn ligger dar, en
+    brunnsnod (B) pa samma stalle med en bit utan langd emellan. Sadana noder behandlas har
+    som EN nod (en grupp): sokningen passerar nollbitarna fritt, stopp galler hela gruppen och
+    ledningar raknas inte dubbelt. Bitarna identifieras pa sin punktlista (id), sa att tva bitar
+    av samma ledning mellan samma noder (ringledning) halls isar."""
 
     def __init__(self, brunnar, tol, med_varden=None, mot_varden=None, sokradie=25.0):
         Natverk.__init__(self, brunnar, tol, sokradie)
-        self.fram = set()        # (n1, n2, lager, oid): kanten lagrad i ritad riktning n1 -> n2
+        self.fram_ids = set()    # id(pts) for punktlistor lagrade i ritad riktning
+        self.noll = set()        # id(pts) for bitar utan langd (P- och B-nod pa samma stalle)
+        self.oid_noder = {}      # (lager, oid) -> noder som objektets bitar ror
         self.attr = {}           # (lager, oid) -> {'riktning', 'vg_upp', 'vg_ned', 'stopp'}
         self.med = _lista(med_varden) or set(['MED', 'JA', '1', 'TRUE', 'WITH', 'F'])
         self.mot = _lista(mot_varden) or set(['MOT', '-1', 'AGAINST', 'B'])
-        self.stat = {'attribut': 0, 'vattengang': 0, 'ritad': 0}
+        self.stat = {'attribut': 0, 'vattengang': 0, 'ritad': 0, 'okant_attribut': 0}
         self._riktn = {}
+        self._grupp = None       # nod -> kanonisk nod (lazy)
+        self._medlemmar = None   # kanonisk nod -> [noder]
 
     def _kant(self, n1, n2, pts, lager, oid):
-        # Natverk ger varje ledningsande bade en fri-ande-nod och (nar en brunn ligger dar)
-        # en brunnsnod pa samma stalle, med en bit utan langd emellan. Den biten behovs inte
-        # har - utan den raknas inte ledningen dubbelt och stoppledningar stoppar en gang.
+        bak = pts[::-1]
+        self.kanter.setdefault(n1, []).append((n2, pts, lager, oid))
+        self.kanter.setdefault(n2, []).append((n1, bak, lager, oid))
+        self.fram_ids.add(id(pts))
         if _langd(pts) < 1e-6:
-            return
-        Natverk._kant(self, n1, n2, pts, lager, oid)
-        self.fram.add((n1, n2, lager, oid))
+            self.noll.add(id(pts))
+            self.noll.add(id(bak))
+            self._grupp = None
+        self.oid_noder.setdefault((lager, oid), set()).update((n1, n2))
 
     def inom_bbox(self, xmin, ymin, xmax, ymax):
         # Alla ledningar ska in i grafen (Natverk hoppar annars over ledningar langt fran
         # de sokta brunnarna - har ar alla brunnar sokta, men ledningar utan brunn ska med)
         return True
 
+    # --- nodgrupper (noder forbundna med nollbitar) ---------------------------------
+    def _bygg_grupper(self):
+        foralder = {}
+
+        def hitta(n):
+            while foralder.get(n, n) != n:
+                n = foralder[n]
+            return n
+        for nod, lista in self.kanter.items():
+            for annan, pts, lager, oid in lista:
+                if id(pts) in self.noll:
+                    a, b = hitta(nod), hitta(annan)
+                    if a != b:
+                        foralder[b] = a
+        grupp, medlemmar = {}, {}
+        for nod in self.kanter:
+            medlemmar.setdefault(hitta(nod), []).append(nod)
+        for rot, noder in medlemmar.items():
+            # Brunnsnoden ar kanonisk (kortast och forst i sortering: ('B', ...) < ('P', ...))
+            kanon = sorted(noder, key=lambda n: (n[0] != 'B', txt(n[1])))[0]
+            for n in noder:
+                grupp[n] = kanon
+        self._grupp, self._medlemmar = grupp, dict((grupp[r], n) for r, n in medlemmar.items())
+
+    def kanon(self, nod):
+        if self._grupp is None:
+            self._bygg_grupper()
+        return self._grupp.get(nod, nod)
+
+    def medlemmar(self, nod):
+        if self._grupp is None:
+            self._bygg_grupper()
+        return self._medlemmar.get(self.kanon(nod), [nod])
+
+    def grannar(self, nod):
+        """Riktiga kanter (inte nollbitar) fran nagon nod i gruppen:
+        (annan nod, pts fran gruppen till annan, lager, oid)."""
+        for m in self.medlemmar(nod):
+            for annan, pts, lager, oid in self.kanter.get(m, ()):
+                if id(pts) not in self.noll:
+                    yield annan, pts, lager, oid
+
+    # --- riktning -------------------------------------------------------------------
     def riktning(self, lager, oid):
         """('MED'|'MOT', kalla) - flodet i forhallande till ritad riktning."""
         n = (lager, oid)
@@ -109,12 +164,16 @@ class Graf(Natverk):
         post = self.attr.get(n, {})
         ut = None
         v = post.get('riktning')
+        if isinstance(v, float) and v == int(v):
+            v = int(v)                          # 1.0 i ett Double-falt ska matcha '1'
         if v is not None and txt(v).strip():
             t = txt(v).strip().upper()
             if t in self.med:
                 ut = ('MED', 'attribut')
             elif t in self.mot:
                 ut = ('MOT', 'attribut')
+            else:
+                self.stat['okant_attribut'] += 1
         if ut is None:
             vu, vn = _tal(post.get('vg_upp')), _tal(post.get('vg_ned'))
             if vu is not None and vn is not None and vu != vn:
@@ -125,55 +184,60 @@ class Graf(Natverk):
         self._riktn[n] = ut
         return ut
 
-    def flodar(self, fran, till, lager, oid):
-        """True om flodet gar fran nod fran till nod till langs kanten (lager, oid)."""
+    def flodar_ut(self, pts, lager, oid):
+        """True om flodet gar i punktlistans riktning (fran dess forsta till dess sista punkt)."""
         r, kalla_ = self.riktning(lager, oid)
-        ritad = (fran, till, lager, oid) in self.fram
-        return ritad == (r == 'MED')
+        return (id(pts) in self.fram_ids) == (r == 'MED')
 
     def nedstroms_nod(self, lager, oid):
-        """Nedstromsanden (noden) for ett ledningsobjekt: den nod ingen av objektets kanter
-        lamnar i flodesriktningen. Flera kanter (delad vid brunnar) -> den sista."""
+        """Nedstromsanden (kanonisk nod) for ett ledningsobjekt: den nod ingen av objektets
+        bitar lamnar i flodesriktningen. Flera kandidater -> den forsta i sortering."""
         noder_fran, noder_till = set(), set()
-        for n1, n2, l, o in self.fram:
-            if (l, o) != (lager, oid):
-                continue
-            if self.flodar(n1, n2, l, o):
-                noder_fran.add(n1); noder_till.add(n2)
-            else:
-                noder_fran.add(n2); noder_till.add(n1)
+        for nod in self.oid_noder.get((lager, oid), ()):
+            for annan, pts, l, o in self.kanter.get(nod, ()):
+                if (l, o) != (lager, oid) or id(pts) in self.noll:
+                    continue
+                if self.flodar_ut(pts, l, o):
+                    noder_fran.add(self.kanon(nod)); noder_till.add(self.kanon(annan))
         slut = noder_till - noder_fran
-        return sorted(slut, key=txt)[0] if slut else (sorted(noder_till, key=txt)[0] if noder_till else None)
+        kand = slut or noder_till
+        return sorted(kand, key=lambda n: (n[0] != 'B', txt(n[1])))[0] if kand else None
 
     def uppstroms(self, start, stopp_brunnar=None, max_kanter=None):
         """Allt uppstroms om noden start. Returnerar (kanter, noder, stoppade) dar
         kanter = [(nod_upp, nod_ned, pts upp->ned, lager, oid, avstand vid nod_ned, niva)],
-        noder = {nod: (avstand till start langs natet, niva)}, stoppade = antal kanter
-        som inte passerats (stoppfalt) eller brunnar dar sokningen stannat."""
+        noder = {kanonisk nod: (avstand till start langs natet, niva)}, stoppade = antal
+        kanter som inte passerats (stoppfalt) eller stoppbrunnar dar sokningen stannat.
+        Stoppbrunnar laggs inte i noder och ledningen fran dem tas inte med."""
         stopp_brunnar = set(normalisera(b) for b in (stopp_brunnar or []))
+        start = self.kanon(start)
         noder = {start: (0.0, 0)}
         ko = deque([start])
-        kanter, sedda, stoppade = [], set(), 0
+        kanter, stoppade, stoppade_noder = [], 0, set()
+
+        def ar_stopp(nod):
+            return any(m[0] == 'B' and m[1] in stopp_brunnar for m in self.medlemmar(nod))
+
         while ko:
             nod = ko.popleft()
             avst, niva = noder[nod]
-            if nod[0] == 'B' and nod[1] in stopp_brunnar and nod != start:
-                stoppade += 1
-                continue
-            for annan, pts, lager, oid in self.kanter.get(nod, ()):
-                if not self.flodar(annan, nod, lager, oid):
+            for annan, pts, lager, oid in self.grannar(nod):
+                # pts gar fran gruppen (nod) till annan; kanten ar uppstroms om flodet gar mot pts
+                if self.flodar_ut(pts, lager, oid):
                     continue
-                nyckel = (lager, oid, frozenset((nod, annan)))
-                if nyckel in sedda:
-                    continue
-                sedda.add(nyckel)
                 if self.attr.get((lager, oid), {}).get('stopp'):
                     stoppade += 1
                     continue
-                kanter.append((annan, nod, pts[::-1], lager, oid, avst, niva))
-                if annan not in noder:
-                    noder[annan] = (avst + _langd(pts), niva + 1)
-                    ko.append(annan)
+                k_annan = self.kanon(annan)
+                if k_annan != start and ar_stopp(k_annan):
+                    if k_annan not in stoppade_noder:
+                        stoppade_noder.add(k_annan)
+                        stoppade += 1
+                    continue
+                kanter.append((k_annan, nod, pts[::-1], lager, oid, avst, niva))
+                if k_annan not in noder:
+                    noder[k_annan] = (avst + _langd(pts), niva + 1)
+                    ko.append(k_annan)
                 if max_kanter and len(kanter) >= max_kanter:
                     return kanter, noder, stoppade
         return kanter, noder, stoppade
@@ -211,19 +275,39 @@ class Segmentindex(object):
 
 # ------------------------------------------------ inlasning
 
-def _las_brunnar(brunnslager, brunn_id, omrade=None, bbox=None):
-    """{littera: (x, y)} ur brunnslagren (forsta forekomsten vinner)."""
+def _sr_namn(d):
+    try:
+        return txt(d.spatialReference.name)
+    except Exception:
+        return ''
+
+
+def _las_brunnar(brunnslager, brunn_id, omrade=None, bbox=None, sr=None):
+    """{littera: (x, y)} ur brunnslagren (forsta forekomsten vinner). Brunnar i ett annat
+    koordinatsystem an sr (ledningslagrets) projiceras."""
     brunnar = {}
     for lyr in brunnslager:
         idfalt = hitta_falt(lyr, brunn_id)
         src, dq = kalla(lyr)
+        sr_namn = txt(getattr(sr, 'name', '') or '') if sr is not None else ''
+        projicera = bool(sr_namn) and _sr_namn(arcpy.Describe(src)) not in ('', sr_namn)
+        if projicera:
+            logg('  %s projiceras till ledningslagrets koordinatsystem' % txt(getattr(lyr, 'name', lyr)))
         arcpy.MakeFeatureLayer_management(src, 'lyr_nat_br', dq)
         if omrade is not None:
             arcpy.SelectLayerByLocation_management('lyr_nat_br', 'INTERSECT', omrade, '', 'NEW_SELECTION')
-        with arcpy.da.SearchCursor('lyr_nat_br', ['SHAPE@XY', idfalt]) as mark:
-            for (x, y), bid in mark:
+        falt = ['SHAPE@' if projicera else 'SHAPE@XY', idfalt]
+        with arcpy.da.SearchCursor('lyr_nat_br', falt) as mark:
+            for geom, bid in mark:
                 bid = normalisera(bid)
-                if not bid or x is None:
+                if not bid or geom is None:
+                    continue
+                if projicera:
+                    pnt = geom.projectAs(sr).firstPoint
+                    x, y = pnt.X, pnt.Y
+                else:
+                    x, y = geom
+                if x is None:
                     continue
                 if bbox and not (bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]):
                     continue
@@ -253,8 +337,9 @@ def bygg_graf(ledningslager, brunnslager, brunn_id, tolerans=1.0, riktningsfalt=
         arcpy.MakeFeatureLayer_management(src, 'lyr_nat_omr', dq)
         omrade = 'lyr_nat_omr'
 
+    sr = arcpy.Describe(kalla(led_lager[0])[0]).spatialReference
     logg('Laser brunnar')
-    brunnar = _las_brunnar(brunn_lager, brunn_id, omrade, bbox)
+    brunnar = _las_brunnar(brunn_lager, brunn_id, omrade, bbox, sr)
     logg('  %d brunnar' % len(brunnar))
     graf = Graf(brunnar, tolerans, med_varden, mot_varden)
     servis_v = _lista(servis_varden)
@@ -265,9 +350,15 @@ def bygg_graf(ledningslager, brunnslager, brunn_id, tolerans=1.0, riktningsfalt=
         namn = txt(getattr(lyr, 'name', lyr))
         falt = dict((f.name.upper(), f.name) for f in arcpy.ListFields(kalla(lyr)[0]))
         extra = []
-        for f in (riktningsfalt, vg_fran, vg_till, servis_falt, stopp_falt):
-            extra.append(falt.get(txt(f).upper()) if f else None)
-        lasfalt = ['OID@', 'SHAPE@'] + [f for f in extra if f]
+        for f, vad in ((riktningsfalt, 'riktningsfaltet'), (vg_fran, 'vattengangsfaltet (fran)'),
+                       (vg_till, 'vattengangsfaltet (till)'), (servis_falt, 'servisfaltet'),
+                       (stopp_falt, 'stoppfaltet')):
+            namn_f = falt.get(txt(f).upper()) if f else None
+            if f and not namn_f:
+                logg('  VARNING: %s %s finns inte i %s - ignoreras for det lagret' % (vad, txt(f), namn))
+            extra.append(namn_f)
+        sedd = set()
+        lasfalt = ['OID@', 'SHAPE@'] + [f for f in extra if f and not (f in sedd or sedd.add(f))]
         src, dq = kalla(lyr)
         arcpy.MakeFeatureLayer_management(src, 'lyr_nat_led', dq)
         if omrade is not None:
@@ -480,13 +571,17 @@ def uppstroms(ledningslager, brunnslager, brunn_id, startbrunn=None, start_oid=N
 
 def _logga_riktning(graf):
     s = graf.stat
-    n = sum(s.values())
+    n = s['attribut'] + s['vattengang'] + s['ritad']
     if not n:
         return
-    logg('  flodesriktning ur attribut %d, vattengang %d, ritad riktning (antagen) %d'
-         % (s['attribut'], s['vattengang'], s['ritad']))
+    logg('  flodesriktning for de %d provade ledningarna: ur attribut %d, vattengang %d, '
+         'ritad riktning (antagen) %d' % (n, s['attribut'], s['vattengang'], s['ritad']))
+    if s['okant_attribut']:
+        logg('  VARNING: %d ledningar har ett riktningsvarde som varken ar "med" eller "mot" - '
+             'kontrollera vardena i dialogen' % s['okant_attribut'])
     if s['ritad'] > 0.5 * n:
-        logg('  OBS: over halften av ledningarna saknar riktningsuppgift - resultatet beror pa ritriktningen')
+        logg('  OBS: over halften av de provade ledningarna saknar riktningsuppgift - '
+             'resultatet beror pa ritriktningen')
 
 
 def skriv_uppstroms_lager(ut_fc, sr, startnamn, kanter, serv, graf):

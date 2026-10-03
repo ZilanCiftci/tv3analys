@@ -190,6 +190,33 @@ manuell_bedomning, gallande_bedomning, etapp, metod, kostnad_kr, lagning_m, brun
 atgardsflagga; kartfält ETAPP/METOD/KOSTNAD och MAN_BED fylls från JSON när kartan saknar egen.
 `--etapper nej` stänger av. DUF 701 utan manuellt: 17 etapper, 97 strumpa, 30 framschaktade brunnar,
 19,1 Mkr schablon. Rundtursttest: lagning 3 m (+75 000), "schakt", "ingen", C→A och låst brunn fungerar.
+**Granskning okt 2026 av steg 1–4 (rättat, tre delgranskningar + egna fynd):** tv3_analys –
+`manuell_klass()` kräver ensam bokstav A–E (fri text som "Bevaka" är inte klass B), `manuell_metod`
+(schakt vinner; ingen/inget/ej åtgärd/avvakta = ingen) och manuellt "ingen" överbryggas inte;
+representant per brunnspar: sträcka med manuell bedömning först, sedan klass/index, syskon med egen
+manuell bedömning flaggas; sträcka med samma brunn i båda ändar får eget "par" (#fil/#nr) och egen
+etapp; `las_manuella` tolkar Lagning med regex ("3 m" → 3, varning annars) och hoppar enhetsraden i
+Etapper; `las_kostnader` tål "2.500,00"/"9 000 kr" och varnar vid otolkbara belopp; `pris()` använder
+dimensionslös rad som reserv; "kostnadsfil saknas" i stället för "dimension saknar pris" när filen
+saknas; `brunnstyp_film` tar koden närmast änden och `brunnstyp_konflikt` flaggar "brunnstyp? X: NB
+enligt littera, RB i filmen"; bakfallssegment slår bara ihop luckor som inte faller och räknar
+lutningen över de stigande bitarna; `--pptx` fångar alla fel (fel.txt) och skickar `a.topp`.
+natverk – `Graf` behåller nollbitarna men grupperar noder förbundna med dem (`kanon`/`medlemmar`/
+`grannar`, union-find lazy): sökningen passerar fritt, stopp gäller gruppen, brunn snett vid en skarv
+bryter inte grafen; bitar identifieras på `id(pts)` (`fram_ids`, `noll`) så ringledningar av samma oid
+räknas rätt; stoppbrunnar läggs inte i noder (ingen ANT_ANSL-skattning från dem); numeriska
+riktningsvärden (1.0) normaliseras, okända värden räknas (`okant_attribut`) och varnas; saknade fält
+varnas per lager; dubblettfält i SearchCursor dedupliceras; brunnar projiceras till ledningslagrets SR;
+loggtexten säger "provade ledningar". skapa_ledningslager – GeoJSON för bakfall skrivs i rätt block
+(låg inuti symbologitipsen och skrev svackpunkterna), symbologi appliceras före AddLayer, MAN_BED ur
+JSON kräver ensam bokstav. tv3_pptx – sidnummer via `clone_placeholder` + `a:fld type=slidenum`
+(clone_layout_placeholder finns inte i python-pptx 1.0.2), None-säkra KONFIG-texter (LOPANDE_*,
+ATTRIBUTFAKTOR, GRAD4_KODER_A, GRADFAKTOR), `ValueError` i stället för SystemExit, STRACKA-sidor bara
+för gällande klass i ATGARD_KLASSER och ett brunnspar en gång (`topp_strackor`, `--strackor`), inga
+kapade tabeller, tomma fält utelämnas i fakta, undertitel 16 pt och max två filer/områden, radhöjd ≥
+texten, 10 pt i sjukolumnstabeller, trasig bild hoppas över, tempmapp städas i finally, rättade
+littera matchas på hel sökväg och utgångsbrunn sätts. Granskarnas testskript: scratchpad/rev_nat2.py
+(skarv + ring), rev_geo.py.
 **Uppströmsanalys** (okt 2026, steg 2, `arcmap/natverk.py` + verktyget Uppströms i .pyt, oprövat i
 riktig ArcMap): `Graf(Natverk)` med ALLA brunnar som noder, `fram` = kanter i ritad riktning, bitar utan
 längd (fri ände + brunn på samma ställe) tas bort i `_kant`; `riktning(lager, oid)` → attribut
