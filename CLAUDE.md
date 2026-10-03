@@ -150,6 +150,29 @@ kartlängd/filmlängd, ingen skalning vid avbruten, vänd när utgångsbrunnen �
 skrivs som `<stam>_svackor/_bakfall.geojson` när geojson_ut anges (skriv_geojson kan nu punkter).
 Symbologi: `arcmap/svackor.lyr`/`bakfall.lyr` när användaren sparat dem. Testat med låtsas-arcpy
 (scratchpad/test_svackor.py: skalning 1,25, avbruten utan skalning, motströms vändning).
+**Åtgärdspaket och kostnad** (okt 2026, steg 3, i `tv3_analys.py`): KONFIG `KOSTNADSFIL` (kostnader.csv i
+repot, schablon: strumpa 2 500–9 500 kr/m per dimensionsintervall, hatt 9 000, lagning 25 000 kr/m,
+framschaktning 60 000, ny_brunn 45 000, etablering 40 000), `ATGARD_KLASSER` (A, B), `SCHAKT_AUTOMATISKT`
+False (F3), `ETAPP_OVERBRYGGA_M` 60 (F5), `ETAPP_ORDNING` index|konsekvens, `BRUNNSTYP_ANDE_M` 1,5,
+`LAGNINGSKODER`, `FRAMSCHAKTA_BRUNNAR`. Stracka: `manuell_bedomning`/`kommentar`/`lagning_m` (ur tidigare
+prioritering.xlsx via `manuell:`/`--manuell`, `las_manuella` läser fliken Prioritering på rubriknamn och
+Etapper-kolumnen "Schakta fram (manuellt)"; `koppla_manuella` fil+nr, annars brunnspar), `gallande_klass`
+(manuell A–E före maskinell), `metod_auto`/`metod` (text schakt/strump/ingen i manuell styr; strumpa för
+gällande A/B ej relinad; `_metod` sätts vid överbryggning), `brunnstyp(brunn)` (TVDAT NB/TB/RB vid änden,
+annars `brunnstyp_ur_littera`: prefixet innehåller NB/TB/RB), `grad4_koder`, `lagningsbehov`,
+`atgardsflagga` ("relinad men klass A", "grad 4 RBR – går strumpa?", "lagning? 2×YTS4", "brunnstyp okänd",
+"bara tillsyns-/rensbrunnar – framschaktning", kostnads-/etappflaggor), `dimension_mm`.
+`planera_atgarder(strackor, kostnader, framschakta)`: representant per brunnspar (värsta gällande klass,
+syskon får etapp/metod men "kostnad räknad på nr X"), överbryggning, komponenter per metod via gemensamma
+brunnar, ordning, F9 girig täckning per etapp (behov = strumpsträckor med TB/RB i båda ändar; manuellt
+låsta brunnar först), kostnad per sträcka {strumpa, hattar, lagning, summa} och per etapp + brunnar +
+etablering; schakt utan kostnad (F8). Excel: Prioritering får Brunnstyp start/slut (dolda), Etapp, Metod,
+Kostnad (kr), Åtgärdsflagga, Manuell bedömning, Kommentar, Lagning (m) (förifyllda ur manuell:); ny flik
+**Etapper** (en rad per etapp, "Sträckor (lista)" dold); Sammanfattning-block "Åtgärdspaket". JSON:
+manuell_bedomning, gallande_bedomning, etapp, metod, kostnad_kr, lagning_m, brunnstyp_start/slut,
+atgardsflagga; kartfält ETAPP/METOD/KOSTNAD och MAN_BED fylls från JSON när kartan saknar egen.
+`--etapper nej` stänger av. DUF 701 utan manuellt: 17 etapper, 97 strumpa, 30 framschaktade brunnar,
+19,1 Mkr schablon. Rundtursttest: lagning 3 m (+75 000), "schakt", "ingen", C→A och låst brunn fungerar.
 **Uppströmsanalys** (okt 2026, steg 2, `arcmap/natverk.py` + verktyget Uppströms i .pyt, oprövat i
 riktig ArcMap): `Graf(Natverk)` med ALLA brunnar som noder, `fram` = kanter i ritad riktning, bitar utan
 längd (fri ände + brunn på samma ställe) tas bort i `_kant`; `riktning(lager, oid)` → attribut
