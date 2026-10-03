@@ -146,7 +146,7 @@ Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + 
 
 **Var.** Nytt skript `tv3_pptx.py` som läser en färdig utdatamapp (kan köras om efter justeringar i Excel). Startas även med `--pptx` från `tv3_analys.py`. Beroende: `python-pptx`.
 
-**Mall.** `mall.pptx` med er grafiska profil och layouterna titel, rubrik + text, rubrik + bild, rubrik + tabell. Skriptet fyller platshållare och ritar inget eget. Utan mall används en enkel inbyggd.
+**Mall.** `mall.pptx` (utkast i repots rot, justeras av användaren) med layouterna TITEL, AVDELARE, RUBRIK, RUBRIK_TEXT, RUBRIK_BILD, RUBRIK_TABELL, STRACKA och AVSLUT och namngivna platshållare (title, undertitel, meta, body, bild, tabell, oversikt, foto1–foto3, fakta). Skriptet fyller platshållarna via namnen och ritar inget eget utöver nyckeltalsrutor på layouten RUBRIK. Layoutnamnen och platshållarnamnen måste behållas när mallen anpassas.
 
 **Bilder.** Klassfördelning, topplista, skador per kod och klass per material finns som PNG. Protokollens översikt och profil sparas undan i en bildmapp när `--pptx` är på. Fotografier ur mediamapparna. Kartbild: nytt litet verktyg **Exportera kartbild** i toolboxen sparar aktuell vy som PNG i utdatamappen; saknas bilden hoppas sidan över.
 
@@ -168,4 +168,4 @@ Kostnad per sträcka (strumpa) = strumpa kr/m × längd (dimensionsintervall) + 
 - **F6** Flödesriktning ur ett riktningsattribut i ledningslagret (fält och värdetolkning väljs i dialogen); vattengång och ritad riktning som reserv.
 - **F7** Bara strumpa och schakt.
 
-Kvar att få av användaren: namnet på riktningsattributet och dess värden (inför steg 2), samt `mall.pptx` (inför steg 4).
+Kvar att få av användaren: namnet på riktningsattributet och dess värden (inför steg 2). `mall.pptx` finns som utkast i repot och justeras av användaren (behåll layout- och platshållarnamnen).
