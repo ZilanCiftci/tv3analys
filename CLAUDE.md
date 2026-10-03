@@ -137,6 +137,19 @@ skickas som text → "does not exist". Namnen slås upp till lagerobjekt via `ar
 Brunnar i SVOA-kartan: nedstigningsbrunnar (xNB/xNBL) i `A Nedstign och övriga brunnar`,
 rens-/tillsynsbrunnar (xRB/xTB) i `A Rensbrunn/tillsynsbrunn`, plus `A Platsgjuten brunnspunkt` –
 alla tre är standard.
+**Svackor och bakfall som karta** (okt 2026, steg 1 i PLAN_verktyg.md): `kartunderlag.json` har
+`svackpos_m` (kamerans position), `svacka_andel` och `bakfall_segment` (lista {fran_m, till_m,
+langd_m, lutning_promille}; `Stracka._bakfall_segment` slår ihop stigande delsträckor, luckor och
+segment < `BAKFALL_SEGMENT_MIN_M` 1 m; `BAKFALL_MIN_PROMILLE` 5). Skapa ledningslager har valfria
+utdata `svackor_ut` (punkt, fält SVACKA_CM, SVACKLANGD, ANDEL_DIAM, POS_M) och `bakfall_ut` (linje,
+LANGD_M, LUTNING, FRAN_M, TILL_M) + gemensamma UTG_BRUNN, MASK_BED, OSAKER, MATERIAL, DIMENSION, NR,
+KALLFIL, RAPPORT (`skriv_svackor_bakfall`; alla poster i filen med matchat par, även syskon; svackor
+< `SVACKA_MIN_CM` 2 hoppas över). Positionen läggs ut med `_kartposition` längs vägen a→b: skala
+kartlängd/filmlängd, ingen skalning vid avbruten, vänd när utgångsbrunnen är b. Hjälpfunktionerna
+`_utdata`/`_radera_utdata`/`_skapa_fc` bröts ut ur skapa() (shapefil/gdb, schemalås). GeoJSON
+skrivs som `<stam>_svackor/_bakfall.geojson` när geojson_ut anges (skriv_geojson kan nu punkter).
+Symbologi: `arcmap/svackor.lyr`/`bakfall.lyr` när användaren sparat dem. Testat med låtsas-arcpy
+(scratchpad/test_svackor.py: skalning 1,25, avbruten utan skalning, motströms vändning).
 **Markprofil** (sep 2026, `arcmap/markprofil.py` + verktyget Markprofil i .pyt, oprövat i riktig ArcMap):
 läser bedömda-lagret (fält `NR` tillagt i EGNA_FALT för kopplingen), hämtar vattengång vid start-/
 slutbrunn ur ursprungliga ledningslagret (fält vid ledningens start-/slutvertex, valda i dialogen,
