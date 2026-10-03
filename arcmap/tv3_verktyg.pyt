@@ -197,7 +197,8 @@ class SkapaLedningslager(object):
             'Skapar ett ledningslager av kartunderlag.json fr\u00e5n tv3_analys. '
             'Varje brunnspar i filen letas upp i brunnslagren och ledningen mellan '
             'brunnarna klipps ut som ett eget objekt med f\u00e4lten Maskinell bed\u00f6mning '
-            'och Manuell bed\u00f6mning. Manuella bed\u00f6mningar fr\u00e5n en tidigare k\u00f6rning bevaras.')
+            'och Manuell bed\u00f6mning. Manuella bed\u00f6mningar fr\u00e5n en tidigare k\u00f6rning bevaras. '
+            'Valfritt skrivs ocks\u00e5 svackor (punkter) och bakfall (linjer) ur inklinometerprofilerna.')
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -276,8 +277,18 @@ class SkapaLedningslager(object):
             datatype='DEFile', parameterType='Optional', direction='Output')
         _filter(geojson_ut, ['geojson', 'json'])
 
+        svackor_ut = arcpy.Parameter(
+            displayName='Svackor (punktlager, valfritt)', name='svackor_ut',
+            datatype='DEFeatureClass', parameterType='Optional', direction='Output',
+            category='Svackor och bakfall (ur inklinometerprofilerna)')
+        bakfall_ut = arcpy.Parameter(
+            displayName='Bakfall (linjelager, valfritt)', name='bakfall_ut',
+            datatype='DEFeatureClass', parameterType='Optional', direction='Output',
+            category='Svackor och bakfall (ur inklinometerprofilerna)')
+
         return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
-                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut]
+                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut,
+                svackor_ut, bakfall_ut]
 
     def isLicensed(self):
         return True
@@ -324,10 +335,15 @@ class SkapaLedningslager(object):
             rapportmapp=parameters[12].valueAsText or None,
             filmmapp=parameters[13].valueAsText or None,
             geojson_ut=parameters[14].valueAsText or None,
+            svackor_ut=parameters[15].valueAsText or None,
+            bakfall_ut=parameters[16].valueAsText or None,
         )
         parameters[4].value = ut
         if parameters[6].valueAsText and os.path.isfile(parameters[6].valueAsText):
             parameters[4].symbology = parameters[6].valueAsText
+        for i, lyr in ((15, m.LYR_SVACKOR), (16, m.LYR_BAKFALL)):
+            if parameters[i].valueAsText and os.path.isfile(lyr):
+                parameters[i].symbology = lyr
         return
 
 

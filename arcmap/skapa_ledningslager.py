@@ -80,6 +80,14 @@ FILMMAPP = None            # t.ex. r'\\server\share\Inspektioner\Filmer'
 # Valfri GeoJSON-export (WGS84, 2D) for webb-GIS. None = ingen.
 GEOJSON_UT = None          # t.ex. r'H:\PY\tv3analys\Karta\bedomda_ledningar.geojson'
 
+# Valfria lager med svackor (punkter dar stående vatten ar djupast) och bakfall (linjer
+# dar ledningen lutar mot flodesriktningen), ur inklinometerprofilerna. None = skrivs inte.
+# Positionerna i JSON-filen ar kamerans; de laggs ut langs kartlinjen fran utgangsbrunnen,
+# skalade med kartlangd/filmlangd (ingen skalning vid avbruten inspektion).
+SVACKOR_UT = None          # t.ex. r'H:\PY\tv3analys\Karta\svackor'
+BAKFALL_UT = None          # t.ex. r'H:\PY\tv3analys\Karta\bakfall'
+SVACKA_MIN_CM = 2          # svackor grundare an sa tas inte med i svacklagret
+
 # True = bygg inte om geometrin, rakna bara om BEDOMNING/BED_TYP/STIL i UT_FC
 # efter att manuella bedomningar fyllts i.
 BARA_UPPDATERA = False
@@ -452,6 +460,60 @@ def sla_ihop(vagen):
     return pts
 
 
+def _langd(pts):
+    return sum(_avst(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+
+
+def _punkt_vid(pts, d):
+    """Punkt (x, y) pa avstandet d langs punktlistan (klamms till andarna)."""
+    if d <= 0:
+        return pts[0][0], pts[0][1]
+    g = 0.0
+    for i in range(len(pts) - 1):
+        seg = _avst(pts[i], pts[i + 1])
+        if seg > 0 and g + seg >= d:
+            t = (d - g) / seg
+            return (pts[i][0] + t * (pts[i + 1][0] - pts[i][0]),
+                    pts[i][1] + t * (pts[i + 1][1] - pts[i][1]))
+        g += seg
+    return pts[-1][0], pts[-1][1]
+
+
+def _delstracka(pts, d0, d1):
+    """Punktlista for delen mellan avstanden d0 och d1 langs linjen (d0 < d1)."""
+    ut = [_punkt_vid(pts, d0)]
+    g = 0.0
+    for i in range(len(pts) - 1):
+        seg = _avst(pts[i], pts[i + 1])
+        if d0 < g + seg < d1 and g + seg > d0:
+            ut.append((pts[i + 1][0], pts[i + 1][1]))
+        g += seg
+    ut.append(_punkt_vid(pts, d1))
+    return ut
+
+
+def _kartposition(post, pos, l_karta, a, b):
+    """Kamerans position pos (m fran utgangsbrunnen) -> avstand fran a langs kartlinjen a-b.
+    Skalas med kartlangd/filmlangd, utom vid avbruten inspektion (da ar filmpositionen
+    kartmeter fran kamerans brunn, samma regel som markprofilen)."""
+    langd_film = _tal(post.get('langd_m'))
+    skala = 1.0
+    if not post.get('avbruten') and langd_film and langd_film > 0:
+        skala = l_karta / langd_film
+    d = pos * skala
+    utg = normalisera(post.get('utgangsbrunn'))
+    if utg == b or (utg != a and normalisera(post.get('startbrunn')) == b):
+        d = l_karta - d
+    return max(0.0, min(l_karta, d))
+
+
+def _tal(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 # ------------------------------------------------ bedomning
 
 def galler(mask_bed, man_bed):
@@ -500,6 +562,233 @@ EGNA_FALT = [
     ('SRC_LAGER',  'TEXT',   100, 'Källager'),
     ('SRC_OID',    'LONG',   None, 'Käll-OID'),
 ]
+
+
+# Lager med svackor (punkt) och bakfall (linje) ur inklinometerprofilerna
+GEMENSAMMA_FALT = [
+    ('FRAN_BRUNN', 'TEXT',   50,  'Startbrunn (uppströms)'),
+    ('TILL_BRUNN', 'TEXT',   50,  'Slutbrunn (nedströms)'),
+]
+SVACK_FALT = GEMENSAMMA_FALT + [
+    ('SVACKA_CM',  'LONG',   None, 'Svackdjup (cm)'),
+    ('SVACKLANGD', 'DOUBLE', None, 'Svacklängd (m)'),
+    ('ANDEL_DIAM', 'DOUBLE', None, 'Svackdjup/diameter'),
+    ('POS_M',      'DOUBLE', None, 'Position från utgångsbrunnen (m)'),
+]
+BAKFALL_FALT = GEMENSAMMA_FALT + [
+    ('LANGD_M',    'DOUBLE', None, 'Längd (m)'),
+    ('LUTNING',    'DOUBLE', None, 'Lutning mot flödet (‰)'),
+    ('FRAN_M',     'DOUBLE', None, 'Från (m från utgångsbrunnen)'),
+    ('TILL_M',     'DOUBLE', None, 'Till (m från utgångsbrunnen)'),
+]
+SLUTFALT = [
+    ('UTG_BRUNN',  'TEXT',   50,  'Utgångsbrunn (kamerans start)'),
+    ('MASK_BED',   'TEXT',   2,   'Maskinell bedömning'),
+    ('OSAKER',     'TEXT',   3,   'Profil osäker'),
+    ('MATERIAL',   'TEXT',   50,  'Material'),
+    ('DIMENSION',  'TEXT',   20,  'Dimension'),
+    ('NR',         'LONG',   None, 'Sträcknr'),
+    ('KALLFIL',    'TEXT',   100, 'TV3-fil'),
+    ('RAPPORT',    'TEXT',   254, 'Rapport (PDF)'),
+]
+SVACK_FALT = SVACK_FALT + SLUTFALT
+BAKFALL_FALT = BAKFALL_FALT + SLUTFALT
+LAGERNAMN_SVACKOR = 'Svackor'
+LAGERNAMN_BAKFALL = 'Bakfall'
+# Symbologi for de tva lagren, sparad fran ArcMap en gang (som bedomda_ledningar.lyr)
+LYR_SVACKOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'svackor.lyr')
+LYR_BAKFALL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bakfall.lyr')
+SYMBOLOGI_TIPS_SVACKOR = [
+    'Symbologi for svackor (spara som arcmap/svackor.lyr): Quantities > Graduated symbols pa',
+    '  SVACKA_CM i tre steg (2-5, 5-10, >10 cm); rod farg nar ANDEL_DIAM > 0,5.',
+    'Symbologi for bakfall (spara som arcmap/bakfall.lyr): bred linje graderad pa LUTNING.',
+]
+
+
+def _utdata(ut_fc):
+    """Tolkar en utdatasokvag: (ut_fil, ut_ws, ut_namn, ar_shapefil, max_text, doman_ws).
+    Vanlig mapp = shapefil. Geodatabas (.gdb/.mdb/.sde) och feature dataset i en sadan
+    = featureklass med alias, NULL och vardelista."""
+    ut_ws = os.path.dirname(ut_fc)
+    ut_namn = os.path.basename(ut_fc)
+    if not os.path.isdir(ut_ws) and not arcpy.Exists(ut_ws):
+        raise RuntimeError('Utdatamappen finns inte: %s' % ut_ws)
+    try:
+        ar_shapefil = txt(arcpy.Describe(ut_ws).dataType) == 'Folder'
+    except Exception:
+        ar_shapefil = os.path.isdir(ut_ws) and not re.search(r'\.(gdb|mdb|sde)(\\|/|$)', ut_ws.lower())
+    if ar_shapefil and not ut_namn.lower().endswith('.shp'):
+        ut_namn = ut_namn + '.shp'
+    ut_fil = os.path.join(ut_ws, ut_namn)
+    max_text = 254 if ar_shapefil else 400
+    # Domanen ligger i geodatabasen, aven nar utdata skrivs i ett feature dataset
+    doman_ws = ut_ws
+    if not ar_shapefil:
+        try:
+            if txt(arcpy.Describe(ut_ws).dataType) == 'FeatureDataset':
+                doman_ws = os.path.dirname(ut_ws)
+        except Exception:
+            pass
+    return ut_fil, ut_ws, ut_namn, ar_shapefil, max_text, doman_ws
+
+
+def _radera_utdata(ut_fil):
+    """Finns utdata redan: ta bort lagret ur kartan (ArcMap haller annars schemalas pa
+    featureklassen) och radera den innan den skapas pa nytt."""
+    if not arcpy.Exists(ut_fil):
+        return
+    mxd = _mxd()
+    if mxd is not None:
+        try:
+            for l in arcpy.mapping.ListLayers(mxd):
+                if getattr(l, 'supports', lambda x: False)('DATASOURCE') and \
+                        os.path.normcase(txt(l.dataSource)) == os.path.normcase(txt(ut_fil)):
+                    arcpy.mapping.RemoveLayer(arcpy.mapping.ListDataFrames(mxd)[0], l)
+                    logg('  lagret "%s" togs bort ur kartan infor omkorningen' % txt(l.name))
+        except Exception as e:
+            logg('  kunde inte ta bort det gamla lagret ur kartan: %s' % txt(e))
+    try:
+        arcpy.Delete_management(ut_fil)
+    except Exception as e:
+        raise RuntimeError('Kan inte skriva over %s - ta bort lagret ur kartan och kor igen (%s)'
+                           % (ut_fil, txt(e)))
+
+
+def _skapa_fc(ut_fc, geometri, falt, sr):
+    """Skapar en tom featureklass/shapefil med falten. Returnerar (ut_fil, ar_shapefil, max_text)."""
+    ut_fil, ut_ws, ut_namn, ar_shapefil, max_text, doman_ws = _utdata(ut_fc)
+    _radera_utdata(ut_fil)
+    arcpy.CreateFeatureclass_management(ut_ws, ut_namn, geometri, '', 'DISABLED', 'DISABLED', sr)
+    for namn, typ, langd, alias in falt:
+        if typ == 'TEXT':
+            arcpy.AddField_management(ut_fil, namn, typ,
+                                      field_length=min(langd, max_text), field_alias=alias)
+        else:
+            arcpy.AddField_management(ut_fil, namn, typ, field_alias=alias)
+    return ut_fil, ar_shapefil, max_text
+
+
+def _utan_null(rad, typer, ar_shapefil):
+    """Shapefiler kan inte lagra NULL i tal- och textfalt: tomma varden blir 0 resp. ''."""
+    if not ar_shapefil:
+        return rad
+    ut = []
+    for v, typ in zip(rad, typer):
+        if v is None and typ not in ('DATE', 'SHAPE@'):
+            v = '' if typ == 'TEXT' else 0
+        ut.append(v)
+    return ut
+
+
+def skriv_svackor_bakfall(data, vagar, sr, svackor_ut, bakfall_ut, rapport_sokvag,
+                          svacka_min_cm=2, geojson_ut=None):
+    """Skriver svacklagret (punkt) och/eller bakfallslagret (linje) ur JSON-filens profilmatt.
+    vagar = {frozenset(brunnspar): (punkter a->b, a, b)} for de par som matchats i kartan.
+    Alla strackor i filen med ett matchat par tas med (aven syskon till avbrutna). Returnerar
+    {'svackor': (fil, antal), 'bakfall': (fil, antal)} for det som skrevs."""
+    ut = {}
+    poster = data.get('strackor', [])
+    rapporter = {}
+
+    def _rapp(post):
+        n = (post.get('fil'), post.get('nr'))
+        if n not in rapporter:
+            rapporter[n] = rapport_sokvag(post)
+        return rapporter[n]
+
+    def _slutfalt(post, max_text):
+        def k(v, langd):
+            return txt(v)[:min(langd, max_text)] if v is not None else ''
+        return [k(post.get('utgangsbrunn'), 50), k(post.get('maskinell_bedomning') or 'E', 2),
+                'Ja' if post.get('profil_osaker') else 'Nej',
+                k(post.get('material'), 50), k(post.get('dimension'), 20), post.get('nr'),
+                k(os.path.basename(txt(post.get('tv3_fil') or '')), 100), k(_rapp(post), 254)]
+
+    def _geojson_namn(suffix):
+        if not geojson_ut:
+            return None
+        stam, andelse = os.path.splitext(geojson_ut)
+        return '%s_%s%s' % (stam, suffix, andelse or '.geojson')
+
+    if svackor_ut:
+        fil, ar_shp, max_text = _skapa_fc(svackor_ut, 'POINT', SVACK_FALT, sr)
+        falt = ['SHAPE@'] + [n for n, t, l, a in SVACK_FALT]
+        typer = ['SHAPE@'] + [t for n, t, l, a in SVACK_FALT]
+        n = 0
+        insert = arcpy.da.InsertCursor(fil, falt)
+        try:
+            for post in poster:
+                djup = _tal(post.get('svackdjup_cm'))
+                pos = _tal(post.get('svackpos_m'))
+                if djup is None or pos is None or djup < svacka_min_cm:
+                    continue
+                par = frozenset((normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))))
+                if par not in vagar:
+                    continue
+                pts, a, b = vagar[par]
+                l_karta = _langd(pts)
+                x, y = _punkt_vid(pts, _kartposition(post, pos, l_karta, a, b))
+                insert.insertRow(_utan_null(
+                    [arcpy.PointGeometry(arcpy.Point(x, y), sr),
+                     txt(post.get('startbrunn') or '')[:50], txt(post.get('slutbrunn') or '')[:50],
+                     int(round(djup)), post.get('svacklangd_m'), post.get('svacka_andel'), pos]
+                    + _slutfalt(post, max_text), typer, ar_shp))
+                n += 1
+        finally:
+            del insert
+        logg('  %d svackor (>= %s cm) skrivna till %s' % (n, svacka_min_cm, fil))
+        ut['svackor'] = (fil, n)
+        g = _geojson_namn('svackor')
+        if g:
+            skriv_geojson(fil, falt[1:], g)
+            logg('  svackor aven som GeoJSON: %s' % g)
+
+    if bakfall_ut:
+        fil, ar_shp, max_text = _skapa_fc(bakfall_ut, 'POLYLINE', BAKFALL_FALT, sr)
+        falt = ['SHAPE@'] + [n for n, t, l, a in BAKFALL_FALT]
+        typer = ['SHAPE@'] + [t for n, t, l, a in BAKFALL_FALT]
+        n = 0
+        insert = arcpy.da.InsertCursor(fil, falt)
+        try:
+            for post in poster:
+                segment = post.get('bakfall_segment') or []
+                if not segment:
+                    continue
+                par = frozenset((normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))))
+                if par not in vagar:
+                    continue
+                pts, a, b = vagar[par]
+                l_karta = _langd(pts)
+                for seg in segment:
+                    f0, t0 = _tal(seg.get('fran_m')), _tal(seg.get('till_m'))
+                    if f0 is None or t0 is None:
+                        continue
+                    d0 = _kartposition(post, f0, l_karta, a, b)
+                    d1 = _kartposition(post, t0, l_karta, a, b)
+                    d0, d1 = min(d0, d1), max(d0, d1)
+                    if d1 - d0 < 0.05:
+                        continue
+                    arr = arcpy.Array()
+                    for x, y in _delstracka(pts, d0, d1):
+                        arr.add(arcpy.Point(x, y))
+                    insert.insertRow(_utan_null(
+                        [arcpy.Polyline(arr, sr, False, False),
+                         txt(post.get('startbrunn') or '')[:50], txt(post.get('slutbrunn') or '')[:50],
+                         seg.get('langd_m'), seg.get('lutning_promille'), f0, t0]
+                        + _slutfalt(post, max_text), typer, ar_shp))
+                    n += 1
+        finally:
+            del insert
+        logg('  %d bakfallssegment skrivna till %s' % (n, fil))
+        ut['bakfall'] = (fil, n)
+    if ut and not (os.path.isfile(LYR_SVACKOR) and os.path.isfile(LYR_BAKFALL)):
+        for rad in SYMBOLOGI_TIPS_SVACKOR:
+            logg('  ' + rad)
+        g = _geojson_namn('bakfall')
+        if g:
+            skriv_geojson(fil, falt[1:], g)
+            logg('  bakfall aven som GeoJSON: %s' % g)
+    return ut
 
 
 def rakna_om_bedomning(fc):
@@ -555,17 +844,21 @@ def skriv_geojson(fc, falt, geojson_ut, decimaler=7):
                 geom = geom.projectAs(wgs84)
             except Exception as e:
                 raise RuntimeError('Kunde inte projicera till WGS84: %s' % txt(e))
-            delar = []
-            for del_ in geom:
-                pts = [[round(p.X, decimaler), round(p.Y, decimaler)] for p in del_ if p is not None]
-                if len(pts) >= 2:
-                    delar.append(pts)
-            if not delar:
-                continue
-            if len(delar) == 1:
-                geometri = {'type': 'LineString', 'coordinates': delar[0]}
+            if txt(getattr(geom, 'type', '')).lower() == 'point':
+                p = geom.firstPoint
+                geometri = {'type': 'Point', 'coordinates': [round(p.X, decimaler), round(p.Y, decimaler)]}
             else:
-                geometri = {'type': 'MultiLineString', 'coordinates': delar}
+                delar = []
+                for del_ in geom:
+                    pts = [[round(p.X, decimaler), round(p.Y, decimaler)] for p in del_ if p is not None]
+                    if len(pts) >= 2:
+                        delar.append(pts)
+                if not delar:
+                    continue
+                if len(delar) == 1:
+                    geometri = {'type': 'LineString', 'coordinates': delar[0]}
+                else:
+                    geometri = {'type': 'MultiLineString', 'coordinates': delar}
             egenskaper = {}
             for namn, v in zip(falt, rad[1:]):
                 if isinstance(v, bytes):
@@ -613,8 +906,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           omradeslager=None, csv_ut=None, lyr_fil=None,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
           kopiera_falt=None, lagg_till_i_kartan=True,
-          rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=8):
-    """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen."""
+          rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=8,
+          svackor_ut=None, bakfall_ut=None, svacka_min_cm=SVACKA_MIN_CM):
+    """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen.
+    svackor_ut/bakfall_ut: valfria lager med svackor (punkt) och bakfall (linje)."""
     kopiera_falt = kopiera_falt or []
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
@@ -730,28 +1025,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # 3D-shapefiler/GeoJSON med fyra koordinater stoppar de flesta webb-GIS.
     har_z = False
 
-    ut_ws = os.path.dirname(ut_fc)
-    ut_namn = os.path.basename(ut_fc)
-    if not os.path.isdir(ut_ws) and not arcpy.Exists(ut_ws):
-        raise RuntimeError('Utdatamappen finns inte: %s' % ut_ws)
-    # Vanlig mapp = shapefil. Geodatabas (.gdb/.mdb/.sde) och feature dataset i en sadan
-    # = featureklass med alias, NULL och vardelista.
-    try:
-        ar_shapefil = txt(arcpy.Describe(ut_ws).dataType) == 'Folder'
-    except Exception:
-        ar_shapefil = os.path.isdir(ut_ws) and not re.search(r'\.(gdb|mdb|sde)(\\|/|$)', ut_ws.lower())
-    if ar_shapefil and not ut_namn.lower().endswith('.shp'):
-        ut_namn = ut_namn + '.shp'
-    ut_fil = os.path.join(ut_ws, ut_namn)
-    max_text = 254 if ar_shapefil else 400
-    # Domanen ligger i geodatabasen, aven nar utdata skrivs i ett feature dataset
-    doman_ws = ut_ws
-    if not ar_shapefil:
-        try:
-            if txt(arcpy.Describe(ut_ws).dataType) == 'FeatureDataset':
-                doman_ws = os.path.dirname(ut_ws)
-        except Exception:
-            pass
+    ut_fil, ut_ws, ut_namn, ar_shapefil, max_text, doman_ws = _utdata(ut_fc)
+    for extra in (svackor_ut, bakfall_ut):
+        if extra:
+            _utdata(extra)          # kontrollerar att mappen finns innan vi borjar
 
     # Manuella bedomningar per brunnspar fran en tidigare korning bevaras
     tidigare_manuella = {}
@@ -770,24 +1047,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         logg('  utdata blir en shapefil - textfalt kapas till %d tecken' % max_text)
         logg('  (skapa en filgeodatabas om du vill ha faltalias som "Maskinell bedomning")')
 
-    # Finns utdata redan: ta bort lagret ur kartan (ArcMap haller annars schemalas pa
-    # featureklassen) och radera den innan den skapas pa nytt.
-    if arcpy.Exists(ut_fil):
-        mxd = _mxd()
-        if mxd is not None:
-            try:
-                for l in arcpy.mapping.ListLayers(mxd):
-                    if getattr(l, 'supports', lambda x: False)('DATASOURCE') and \
-                            os.path.normcase(txt(l.dataSource)) == os.path.normcase(txt(ut_fil)):
-                        arcpy.mapping.RemoveLayer(arcpy.mapping.ListDataFrames(mxd)[0], l)
-                        logg('  lagret "%s" togs bort ur kartan infor omkorningen' % txt(l.name))
-            except Exception as e:
-                logg('  kunde inte ta bort det gamla lagret ur kartan: %s' % txt(e))
-        try:
-            arcpy.Delete_management(ut_fil)
-        except Exception as e:
-            raise RuntimeError('Kan inte skriva over %s - ta bort lagret ur kartan och kor igen (%s)'
-                               % (ut_fil, txt(e)))
+    _radera_utdata(ut_fil)
 
     arcpy.CreateFeatureclass_management(
         ut_ws, ut_namn, 'POLYLINE', '', 'DISABLED',
@@ -940,6 +1200,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         return txt(post.get('video_sokvag') or '')
 
     traffade = set()
+    vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
     n_skrivna = n_flerdelade = 0
 
     insert = arcpy.da.InsertCursor(ut_fil, ut_falt)
@@ -985,6 +1246,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 lager0[:100], oid0,
             ] + extra))
             traffade.add(par)
+            vagar[par] = ([(x, y) for x, y, z in pts], a, b)
             n_skrivna += 1
             if n_objekt > 1:
                 n_flerdelade += 1
@@ -1056,11 +1318,6 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # Varfor? Bada brunnarna pa en ledning men ingen vag = ledningen ligger i ett annat
     # lager, ar bruten, eller passerar fler brunnar an max_hopp. En brunn en bit fran
     # ledningen = hoj toleransen.
-    def _tal(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
     bada_brunnar = [r for r in omatchade if r[2] == 'JA' and r[3] == 'JA']
     pa_ledning = [r for r in bada_brunnar
                   if _tal(r[5]) is not None and _tal(r[5]) <= tolerans
@@ -1085,12 +1342,27 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         n_geo = skriv_geojson(ut_fil, [f for f in ut_falt if f != 'SHAPE@'], geojson_ut)
         logg('  %d objekt skrivna till %s (GeoJSON, WGS84, 2D)' % (n_geo, geojson_ut))
 
+    # ---------------------------------------------------- 8b. Svackor och bakfall
+    extra_lager = {}
+    if svackor_ut or bakfall_ut:
+        logg('Svackor och bakfall')
+        extra_lager = skriv_svackor_bakfall(data, vagar, sr, svackor_ut, bakfall_ut,
+                                            rapport_sokvag, svacka_min_cm, geojson_ut)
+
     # ---------------------------------------------------- 9. Karta
     if lagg_till_i_kartan:
         mxd = _mxd()
         if mxd is not None:
             try:
                 df = arcpy.mapping.ListDataFrames(mxd)[0]
+                for nyckel, namn, lyr_extra in (('bakfall', LAGERNAMN_BAKFALL, LYR_BAKFALL),
+                                                ('svackor', LAGERNAMN_SVACKOR, LYR_SVACKOR)):
+                    if nyckel in extra_lager:
+                        l_extra = arcpy.mapping.Layer(extra_lager[nyckel][0])
+                        l_extra.name = namn
+                        arcpy.mapping.AddLayer(df, l_extra, 'TOP')
+                        if os.path.isfile(lyr_extra):
+                            arcpy.ApplySymbologyFromLayer_management(l_extra, lyr_extra)
                 ny_lyr = arcpy.mapping.Layer(ut_fil)
                 ny_lyr.name = LAGERNAMN
                 arcpy.mapping.AddLayer(df, ny_lyr, 'TOP')
@@ -1126,4 +1398,5 @@ if __name__ == '__main__':
               omradeslager=OMRADESLAGER, csv_ut=CSV_UT, lyr_fil=LYR_FIL,
               tolerans=TOLERANS, marginal=MARGINAL, max_hopp=MAX_HOPP, urval=URVAL,
               kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP,
-              geojson_ut=GEOJSON_UT, max_delar=MAX_DELAR)
+              geojson_ut=GEOJSON_UT, max_delar=MAX_DELAR,
+              svackor_ut=SVACKOR_UT, bakfall_ut=BAKFALL_UT, svacka_min_cm=SVACKA_MIN_CM)

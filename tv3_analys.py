@@ -161,6 +161,10 @@ TROSKEL_B = 25.0
 MINLANGD = 20.0    # m – nämnare vid normering av korta sträckor
 SVACKA_MAX_M = 1.0  # m – större beräknat svackdjup än så är en inklinometerartefakt (driftande
                     # profil); svackan redovisas då som okänd och profilen markeras osäker
+BAKFALL_MIN_PROMILLE = 5.0   # ‰ – lutning mot flödesriktningen som räknas som bakfall
+BAKFALL_SEGMENT_MIN_M = 1.0  # m – kortare bakfallssträckor än så redovisas inte som segment i
+                             # kartunderlaget (cm-upplösningen ger annars ett segment per trappsteg);
+                             # luckor kortare än så mellan två segment slås ihop
 
 # Markprofil (markprofil.json från ArcMap-verktyget "Markprofil"): filmens höjder hängs upp på
 # GIS-vattengången i brunnarna (RH2000), eftersom filmerna ofta har ett lokalt nollplan.
@@ -631,7 +635,8 @@ class Stracka:
                      nedströms om den (t.ex. utloppet vid bakfall) – djup = den nivån − höjden
         svacklangd – total längd (m) där stående vatten > 1 cm
         svackpos   – position (m från kamerans start) för djupaste punkten
-        bakfall    – total längd (m) med lutning mot flödesriktningen (> 5 ‰ över minst 1 m)
+        bakfall    – total längd (m) med lutning mot flödesriktningen (> BAKFALL_MIN_PROMILLE)
+        bakfall_segment – sammanhängande bakfallssträckor (se _bakfall_segment), för kartan
         osaker     – True om profilen verkar opålitlig (starthöjd saknas, eller inklinometerns
                      fall avviker kraftigt från brunnshöjderna i PROFILADM)"""
         pts = self._profil_i_flodesriktning()
@@ -647,10 +652,13 @@ class Stracka:
         i_max = max(range(n), key=lambda i: djup[i])
         svacklangd = sum(abs(pts[i + 1][0] - pts[i][0]) for i in range(n - 1) if djup[i] > 0.01 or djup[i + 1] > 0.01)
         bakfall = 0.0
+        stigande = []                        # (från, till) i kamerans positioner, i flödesordning
         for i in range(n - 1):
             dx = abs(pts[i + 1][0] - pts[i][0])
-            if dx > 0 and (z[i + 1] - z[i]) / dx > 0.005:      # stiger i flödesriktningen
+            if dx > 0 and (z[i + 1] - z[i]) / dx > BAKFALL_MIN_PROMILLE / 1000:   # stiger i flödesriktningen
                 bakfall += dx
+                stigande.append((i, i + 1))
+        segment = self._bakfall_segment(pts, z, stigande)
         osaker = self.profil_start_z is None or self.profil_slut_z is None
         if not osaker:
             h = self.hojdanpassning
@@ -664,9 +672,34 @@ class Stracka:
         if djup[i_max] > SVACKA_MAX_M:
             # Orimligt djup = inklinometern har driftat; svackan går inte att bedöma
             return {"svackdjup": None, "svacklangd": None, "svackpos": None,
-                    "bakfall": bakfall, "osaker": True}
+                    "bakfall": bakfall, "bakfall_segment": segment, "osaker": True}
         return {"svackdjup": djup[i_max], "svacklangd": svacklangd, "svackpos": pts[i_max][0],
-                "bakfall": bakfall, "osaker": osaker}
+                "bakfall": bakfall, "bakfall_segment": segment, "osaker": osaker}
+
+    @staticmethod
+    def _bakfall_segment(pts, z, stigande) -> list[dict]:
+        """Slår ihop stigande delsträckor till bakfallssegment för kartan.
+        Luckor kortare än BAKFALL_SEGMENT_MIN_M slås ihop, segment kortare än så tas bort.
+        Varje segment: {"fran_m", "till_m" (kamerans positioner, fran_m < till_m),
+        "langd_m", "lutning_promille" (stigning i flödesriktningen över segmentet)}."""
+        if not stigande:
+            return []
+        grupper = []                          # [första index, sista index]
+        for i0, i1 in stigande:
+            if grupper and abs(pts[i0][0] - pts[grupper[-1][1]][0]) < BAKFALL_SEGMENT_MIN_M:
+                grupper[-1][1] = i1
+            else:
+                grupper.append([i0, i1])
+        ut = []
+        for i0, i1 in grupper:
+            x0, x1 = pts[i0][0], pts[i1][0]
+            langd = abs(x1 - x0)
+            if langd < BAKFALL_SEGMENT_MIN_M:
+                continue
+            ut.append({"fran_m": round(min(x0, x1), 1), "till_m": round(max(x0, x1), 1),
+                       "langd_m": round(langd, 1),
+                       "lutning_promille": round((z[i1] - z[i0]) / langd * 1000, 1)})
+        return ut
 
     @property
     def svacka_andel(self) -> float | None:
@@ -1465,6 +1498,12 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "svackdjup_cm": round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
             "svacklangd_m": round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
             "bakfall_m": round(pa["bakfall"], 1) if pa else None,
+            # Positioner nedan är kamerans (m från utgångsbrunnen), som i protokollet.
+            # ArcMap-skriptet lägger ut dem längs kartlinjen från utgångsbrunnen, skalat med
+            # kartlängd/filmlängd (ingen skalning vid avbruten inspektion).
+            "svackpos_m": round(pa["svackpos"], 1) if pa and pa["svackpos"] is not None else None,
+            "svacka_andel": s.svacka_andel,
+            "bakfall_segment": pa["bakfall_segment"] if pa else [],
             "lutning_promille": round(lut, 1) if lut is not None else None,
             "profil_osaker": bool(pa["osaker"]) if pa else None,
             "tv3_fil": s.tv3_sokvag,
