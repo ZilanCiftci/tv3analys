@@ -497,8 +497,19 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   poäng med högst en decimal. **Decimalkomma i hela PDF:en** (okt 2026, användarens val): `dk()` byter
   punkt mellan två siffror mot komma och används på infotabellens värden, översiktens etiketter,
   profilens texter och axlar (FuncFormatter), observationstabellen och bildtexterna; kontrollerat med
-  regex över alla 185 rapporter. Excel/JSON/konsol oförändrade. Användaren ska återkomma med hur
-  anslutningarna ska visas.
+  regex över alla 185 rapporter. Excel/JSON/konsol oförändrade. **Designgranskning okt 2026** (rättat):
+  observationstabellen delas aldrig med färre än `TABELL_MIN_RADER` 3 rader på någon sida (`_Tabell`
+  överlagrar `Table.split`, flyttar delningen uppåt; kort tabell hel till nästa sida) och rubriken
+  följer med tabellens första rader (`_RubrikTabell`, KeepTogether-variant som bara flyttar när rubrik +
+  3 rader inte får plats – reportlabs KeepTogether flyttade hela tabellen); cellmarginal 3 pt och
+  kolumnbredder efter uppmätt textbredd (Pos 13, Tid 15, Kod 10, Kl 12, Nivå 10, Foto 32 med 7 pt och ett
+  filnamn per rad – 13-siffriga namn bröts mitt i, Grad 10, Poäng 12, Observation resten ≈ 66 mm så
+  "Anslutning (påstick/grenrör), vänster" ryms på en rad); profil: OBS-texten nere till vänster (låg
+  över brunnsnamnet nere till höger), svacketiketten ovanför när svackan ligger inom 15 % från en ände,
+  `HOJDSKALOR` utökad med 500/1000 (nr 23 med driftande inklinometer ritades utanför diagrammet),
+  `_dk_axlar` ger alla ticks lika många decimaler (23,0 i stället för 23 bredvid 22,8); attributet
+  HINDE heter "hinder" (gav "Kamera/inspektion avbruten, hinder – inspektion avbruten"). Användaren
+  ska återkomma med hur anslutningarna ska visas.
 - Observationstabell med radfärg efter grad (ingen förklaringstext – borttagen på begäran).
   Bildnamnen i kolumnen Foto är **interna PDF-länkar** (`<a href="#foto_…">`) till fotografiet
   längre bak; ankaret (`<a name>` i en 1 pt-paragraf) ligger ovanför bilden så den hamnar i vy.
