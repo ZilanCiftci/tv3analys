@@ -466,6 +466,23 @@ arcpy-geometrin och använder `contains(PointGeometry)` (ren Python-ringtest bar
 med tusentals hörn gjorde punkt-i-polygon per brunn/ledning långsamt), `exportera` loggar tid per fas och var
 5000:e ledning. Användarens lager: Avlopp\A Rensbrunn/tillsynsbrunn, A Nedstign och övriga brunnar,
 A Platsgjuten brunnspunkt, A Ledning, A Servis; Områden\DUF-områden.
+**Etapplager** (okt 2026, användarens önskemål "exportera ett lager för etapper så jag ser de sammanhängande
+etapperna och vilket etappnummer de har – eget verktyg"): `etapper_for_karta(etapper)` i tv3_analys skriver toppfältet
+`etapper` i kartunderlag.json (nr, metod, hogsta_klass, max_konstruktionsindex, antal_strackor, langd_m, schakt_m,
+dimensioner, brunnar, framschaktade, framschakt_manuell, serviser_uppstroms, kostnad_kr (None för schakt), kostnad
+{strumpa, hattar, lagning, brunnar, etablering, summa}, flaggor, strackor [{fil, nr, startbrunn, slutbrunn, bedomning,
+langd_m}]); `skriv_kartunderlag(..., etapper)`. `arcmap/etapplager.py` (Py2.7, ASCII): `las_bedomda(bedomda)` läser
+ETAPP/METOD/KOSTNAD/BEDOMNING/INDEX_K/LANGD_M/FRAN_BRUNN/TILL_BRUNN/NR/TV3_FIL + SHAPE@ via `kalla` (kräver ETAPP),
+`skapa_etapplager(bedomda, ut_fc, json_fil, brunnar_ut, lyr_fil, lyr_brunnar)` grupperar per ETAPP > 0, bygger en
+flerdelad Polyline per etapp (arcpy.Array av delar), fält ETAPP_FALT (ETAPP, METOD, HOGSTA_KL, MAX_IDX, ANT_STR,
+LANGD_M, SCHAKT_M, KOSTNAD, DIMENSION, BRUNNAR, FRAMSCHAKT, ANT_FRAM, SERV_UPP, FLAGGOR, STRACKOR, ETIKETT "Etapp 1 -
+strumpa, 100 m, 285 tkr, 1 brunn att schakta fram"); uppgifter ur JSON:s etapper (`_etapp_ur_json`, varning om
+saknas) annars ur lagret; punktlager BRUNN_FALT för framschaktade brunnar med läge ur `_brunnsposition` (första/sista
+punkt på sträcka med litterat); `_lagg_i_kartan` med `arcmap/etapper.lyr`/`framschaktning.lyr` om de finns, annars
+tips. Verktyget **Etapplager (åtgärdspaket)** i .pyt (bedomda-rullista förvald `LAGERNAMN_BEDOMDA` 'Bedomda ledningar',
+json_in valfri, ut_fc förslag `<bedömda>_etapper`, brunnar_ut valfri, lyr-filer under Symbologi). Test:
+scratchpad/test_etapplager.py (två etapper, flerdelad geometri, brunn K2 på (50,0), utan JSON summeras KOSTNAD).
+Handledning 7.12.
 **SVOA:s fältnamn** (okt 2026, ur användarens kartans_falt.txt, Enkel VA_mall.mxd, sde_geopipe_prod): brunnslagren
 (pipeSewerWellP, samma featureklass för Nedstign/Rensbrunn/Platsgjuten, olika definitionsfrågor): EntityID littera
 (SNBL63489, KNB2635), CoverLevel locknivå, BottomLevel (tom), WellFunction (SNBL/DNB/KNB …), WellType heltal,

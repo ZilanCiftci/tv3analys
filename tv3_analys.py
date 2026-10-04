@@ -3011,7 +3011,39 @@ def _inspektionsgrad_text(gisstat: dict) -> str:
             + (f" – per område: {delar}" if omr else ""))
 
 
-def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None = None) -> int:
+def etapper_for_karta(etapper: list[dict] | None) -> list[dict] | None:
+    """Etapplistan i kartunderlag.json (för ArcMap-verktyget Etapplager): en post per etapp med metod,
+    längd, kostnad, brunnar att schakta fram, flaggor och sträckorna (fil + nr + brunnspar)."""
+    if not etapper:
+        return None
+    ut = []
+    for e in etapper:
+        st = e["strackor"]
+        flaggor = sorted({f for s in st for f in s.atgardsflagga.split("; ")
+                          if f and not f.startswith("medtagen") and not f.startswith("kostnad räknad")})
+        serv = [s.serviser_uppstroms for s in st if s.serviser_uppstroms is not None]
+        ut.append({
+            "nr": e["nr"], "metod": e["metod"],
+            "hogsta_klass": min(s.gallande_klass for s in st),
+            "max_konstruktionsindex": round(max(s.index("K") for s in st), 1),
+            "antal_strackor": len(st), "langd_m": round(e["langd_m"], 1),
+            "schakt_m": round(e["schakt_m"], 1),
+            "dimensioner": sorted({s.dimension_mm for s in st if s.dimension_mm}),
+            "brunnar": sorted({b for s in st for b in (s.startbrunn, s.slutbrunn)}),
+            "framschaktade": list(e["framschaktade"]),
+            "framschakt_manuell": list(e["framschakt_manuell"]),
+            "serviser_uppstroms": max(serv) if serv else None,
+            "kostnad_kr": round(e["kostnad"]["summa"]) if e["metod"] == "strumpa" else None,
+            "kostnad": {k: round(v) for k, v in e["kostnad"].items()},
+            "flaggor": flaggor,
+            "strackor": [{"fil": s.fil, "nr": s.nr, "startbrunn": s.startbrunn, "slutbrunn": s.slutbrunn,
+                          "bedomning": s.gallande_klass, "langd_m": round(s.langd, 1)} for s in st],
+        })
+    return ut
+
+
+def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None = None,
+                       etapper: list[dict] | None = None) -> int:
     """Skriver en JSON-fil med en post per sträcka, avsedd för kartframställning.
 
     Varje post identifierar sträckan med brunnsparet (startbrunn/slutbrunn) så att
@@ -3118,6 +3150,8 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
         # Inspektionsgrad per driftområde och GIS-ledningar utan film (kräver gis: i listfilen)
         "inspektionsgrad": gisstat["rader"] if gisstat else None,
         "ej_inspekterat": gisstat["ej_inspekterat"] if gisstat else None,
+        # Etapper (åtgärdspaket) för ArcMap-verktyget Etapplager
+        "etapper": etapper_for_karta(etapper),
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
@@ -4472,7 +4506,7 @@ def main(argv=None):
                  "Stäng den och kör igen.")
     if a.karta == "ja":
         kartfil = os.path.join(a.utdata, KARTUNDERLAG_FIL)
-        n_poster = skriv_kartunderlag(rakn, kartfil, gisstat)
+        n_poster = skriv_kartunderlag(rakn, kartfil, gisstat, etapper)
         print(f"\n{n_poster} sträckor skrivna till {kartfil} (underlag för ArcMap)")
     if a.pptx:
         try:
