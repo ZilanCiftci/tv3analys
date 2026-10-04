@@ -257,7 +257,7 @@ DOLDA_KOLUMNER = {
                      "Inspekterad flera ggr", "Littera rättat",
                      "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
                      "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga",
-                     "Lutning GIS", "Djup start", "Djup slut", "Anläggningsår",
+                     "Driftområde", "Lutning GIS", "Djup start", "Djup slut", "Anläggningsår",
                      "Brunnstyp start", "Brunnstyp slut"],
     "Etapper": ["Sträckor (lista)"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
@@ -994,6 +994,17 @@ class Stracka:
         return g.get("anlaggningsar") if g else None
 
     @property
+    def driftomrade(self) -> str:
+        """Driftområde ur GIS-data: ledningens, annars startbrunnens, annars slutbrunnens."""
+        if not self.gis:
+            return ""
+        for k in ("ledning", "brunn_start", "brunn_slut"):
+            post = self.gis.get(k)
+            if post and post.get("omrade"):
+                return post["omrade"]
+        return ""
+
+    @property
     def gisflagga(self) -> str:
         """Avvikelser mellan filmen och GIS: brunn/ledning saknas, vattengång, riktning, material,
         dimension. Tom text när allt stämmer eller GIS-data saknas."""
@@ -1533,6 +1544,49 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
             "flaggade": sum(1 for s in strackor if s.gisflagga)}
 
 
+def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
+    """Hur stor del av ledningsnätet i GIS som är filmat, per driftområde ('omrade' i gisdata.json)
+    och ledningstyp. Filmad längd räknas med GIS-ledningens längd så andelen blir konsekvent.
+    Returnerar {"rader": [{omrade, ledningstyp, ledningar, langd_m, filmade, filmad_m, andel}],
+    "ej_inspekterat": [GIS-ledningar utan film], "utan_gis": (sträckor, m) filmade utan GIS-ledning}."""
+    filmade = {id(s.gis["ledning"]) for s in strackor if s.gis and s.gis.get("ledning")}
+    grupp: dict[tuple[str, str], dict] = {}
+
+    def lagg(nyckel, led, ar_filmad):
+        g = grupp.setdefault(nyckel, {"ledningar": 0, "langd_m": 0.0, "filmade": 0, "filmad_m": 0.0})
+        L = led.get("langd_m") or 0.0
+        g["ledningar"] += 1
+        g["langd_m"] += L
+        if ar_filmad:
+            g["filmade"] += 1
+            g["filmad_m"] += L
+
+    ej = []
+    for gf in filer:
+        for led in gf["ledningar"]:
+            if not led.get("fran") or not led.get("till"):
+                continue                                   # fri ände – ingen sträcka mellan brunnar
+            omr = led.get("omrade") or "(utan område)"
+            typ = (led.get("ledningstyp") or "").strip() or "(okänd typ)"
+            f = id(led) in filmade
+            lagg((omr, typ), led, f)
+            lagg((omr, "alla"), led, f)
+            lagg(("alla", typ), led, f)
+            lagg(("alla", "alla"), led, f)
+            if not f:
+                ej.append({"omrade": led.get("omrade") or "", "fran": led["fran"], "till": led["till"],
+                           "langd_m": led.get("langd_m"), "dimension": led.get("dimension"),
+                           "material": led.get("material") or "", "ledningstyp": led.get("ledningstyp") or "",
+                           "anlaggningsar": led.get("anlaggningsar")})
+    rader = []
+    for (omr, typ), g in sorted(grupp.items(), key=lambda kv: (kv[0][0] == "alla", kv[0][0], kv[0][1] == "alla", kv[0][1])):
+        rader.append({"omrade": omr, "ledningstyp": typ, **g,
+                      "andel": g["filmad_m"] / g["langd_m"] if g["langd_m"] else 0.0})
+    ej.sort(key=lambda e: (e["omrade"], e["anlaggningsar"] or 9999, e["material"], -(e["langd_m"] or 0)))
+    utan = [s for s in strackor if s.langd >= 1 and not (s.gis and s.gis.get("ledning"))]
+    return {"rader": rader, "ej_inspekterat": ej, "utan_gis": (len(utan), sum(s.langd for s in utan))}
+
+
 def skriv_litteraforslag(forslag: list[dict], path: str) -> int:
     """Skriver okända brunnar med förslag som en brunnslittera-CSV (fel;ratt;fil;nr;motbrunn;kommentar)
     som kan rättas och användas med littera: i listfilen. Returnerar antal rader."""
@@ -1886,7 +1940,7 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
 # ----------------------------------------------------------------------------
 
 def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], topp: int,
-                etapper: list[dict] | None = None):
+                etapper: list[dict] | None = None, gisstat: dict | None = None):
     from openpyxl import Workbook
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -1995,6 +2049,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         ["GIS-data (från ArcMap)", (f"{sum(1 for s in strackor if s.gis and s.gis.get('ledning'))} sträckor med ledning i GIS, "
                                    f"{sum(1 for s in strackor if s.gisflagga)} med GIS-flagga")
          if any(s.gis for s in strackor) else "saknas"],
+        ["Inspektionsgrad (GIS)", _inspektionsgrad_text(gisstat) if gisstat else "saknas (kräver GIS-data)"],
         ["", ""],
         ["Prioritetsklass", "Antal sträckor", "Andel sträckor", "Längd (m)", "Andel längd"],
     ]
@@ -2078,7 +2133,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
-           "GIS-flagga", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
+           "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
            "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
@@ -2105,7 +2160,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       h["status"] if h else "",
                       round(tk["min"], 2) if tk else None, round(tk["max"], 2) if tk else None,
                       s.hojdflagga,
-                      s.gisflagga,
+                      s.gisflagga, s.driftomrade,
                       round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
                       round(s.djup_start, 2) if s.djup_start is not None else None,
                       round(s.djup_slut, 2) if s.djup_slut is not None else None,
@@ -2268,10 +2323,44 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     for r in range(start, ws.max_row + 1):
         ws.cell(r, 9).number_format = "0%"
 
+    # ---- Inspektionsgrad per driftområde (GIS-data) ----
+    if gisstat:
+        ws = wb.create_sheet("Inspektionsgrad")
+        kol = ["Driftområde", "Ledningstyp", "Ledningar i GIS", "Längd i GIS (m)", "Filmade ledningar",
+               "Filmad längd (m)", "Andel filmad"]
+        rader = [[r["omrade"], r["ledningstyp"], r["ledningar"], round(r["langd_m"]), r["filmade"],
+                  round(r["filmad_m"]), r["andel"]] for r in gisstat["rader"]]
+        n_utan, m_utan = gisstat["utan_gis"]
+        if n_utan:
+            rader.append(["(filmat utan ledning i GIS)", "", None, None, n_utan, round(m_utan), None])
+        start = tabell(ws, kol, rader, {"Driftområde": 18, "Ledningstyp": 14})
+        for r in range(start, ws.max_row + 1):
+            ws.cell(r, 7).number_format = "0%"
+            if ws.cell(r, 2).value == "alla":
+                for c in range(1, 8):
+                    ws.cell(r, c).font = Font(bold=True)
+        ws = wb.create_sheet("Ej inspekterat")
+        kol = ["Driftområde", "Från brunn", "Till brunn", "Längd (m)", "Dim (mm)", "Material", "Ledningstyp",
+               "Anläggningsår"]
+        rader = [[e["omrade"], e["fran"], e["till"], round(e["langd_m"], 1) if e["langd_m"] is not None else None,
+                  e["dimension"], e["material"], e["ledningstyp"], e["anlaggningsar"]]
+                 for e in gisstat["ej_inspekterat"]]
+        tabell(ws, kol, rader, {"Driftområde": 18, "Från brunn": 16, "Till brunn": 16})
+
     wb.save(path)
 
 
-def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
+def _inspektionsgrad_text(gisstat: dict) -> str:
+    tot = next((r for r in gisstat["rader"] if r["omrade"] == "alla" and r["ledningstyp"] == "alla"), None)
+    if not tot or not tot["langd_m"]:
+        return "inga ledningar i GIS-data"
+    omr = [r for r in gisstat["rader"] if r["omrade"] != "alla" and r["ledningstyp"] == "alla"]
+    delar = ", ".join(f"{r['omrade']} {r['andel']:.0%}" for r in omr[:12])
+    return (f"{tot['filmad_m']:,.0f} av {tot['langd_m']:,.0f} m filmade ({tot['andel']:.0%})".replace(",", " ")
+            + (f" – per område: {delar}" if omr else ""))
+
+
+def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None = None) -> int:
     """Skriver en JSON-fil med en post per sträcka, avsedd för kartframställning.
 
     Varje post identifierar sträckan med brunnsparet (startbrunn/slutbrunn) så att
@@ -2351,6 +2440,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
             "djup_slut_m": round(s.djup_slut, 2) if s.djup_slut is not None else None,
             "anlaggningsar": s.anlaggningsar,
+            "driftomrade": s.driftomrade or None,
         })
 
     data = {
@@ -2365,6 +2455,9 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
                                 | {os.path.dirname(o.bild_sokvag) for s in strackor for o in s.observationer
                                    if o.bild_sokvag}),
         "strackor": poster,
+        # Inspektionsgrad per driftområde och GIS-ledningar utan film (kräver gis: i listfilen)
+        "inspektionsgrad": gisstat["rader"] if gisstat else None,
+        "ej_inspekterat": gisstat["ej_inspekterat"] if gisstat else None,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
@@ -3546,7 +3639,7 @@ def main(argv=None):
         if flaggade:
             print(f"  {len(flaggade)} sträckor med höjdflagga, t.ex. "
                   + ", ".join(f"{s.id} ({s.hojdflagga})" for s in flaggade[:3]))
-    gisfiler = []
+    gisfiler, gisstat = [], None
     for gf in globala["gis"] + a.gis:
         if not os.path.isfile(gf):
             fel.append(f"{gf}: GIS-datafilen finns inte")
@@ -3569,6 +3662,10 @@ def main(argv=None):
             for o in g["okanda"][:6]:
                 print(f"    {o['littera']} (nr {o['nr']}) → "
                       + (", ".join(f"{lit} ({txt})" for lit, txt in o["forslag"]) or "inget förslag"))
+        gisstat = inspektionsgrad(strackor, gisfiler)
+        print("  inspektionsgrad: " + _inspektionsgrad_text(gisstat))
+        if gisstat["utan_gis"][0]:
+            print(f"  {gisstat['utan_gis'][0]} filmade sträckor ({gisstat['utan_gis'][1]:.0f} m) saknar ledning i GIS")
     uppposter = []
     for uf in globala["uppstroms"] + a.uppstroms:
         if not os.path.isfile(uf):
@@ -3640,13 +3737,13 @@ def main(argv=None):
               + (f", {behallna} befintliga behållna" if behallna else ""))
     excel_fil = os.path.join(a.utdata, "prioritering.xlsx")
     try:
-        skriv_excel(strackor, excel_fil, diagram, a.topp, etapper)
+        skriv_excel(strackor, excel_fil, diagram, a.topp, etapper, gisstat)
     except PermissionError:
         sys.exit(f"\nKan inte skriva {excel_fil} – filen är troligen öppen i Excel. "
                  "Stäng den och kör igen.")
     if a.karta == "ja":
         kartfil = os.path.join(a.utdata, KARTUNDERLAG_FIL)
-        n_poster = skriv_kartunderlag(strackor, kartfil)
+        n_poster = skriv_kartunderlag(strackor, kartfil, gisstat)
         print(f"\n{n_poster} sträckor skrivna till {kartfil} (underlag för ArcMap)")
     if a.pptx:
         try:
