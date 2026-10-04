@@ -225,7 +225,7 @@ finally) eller SelectLayerByAttribute (CLEAR_SELECTION efteråt). Textelement TI
 fylls om de finns (ListLayoutElements TEXT_ELEMENT, namn skiftlägesoberoende). ExportToPDF
 PAGE_LAYOUT, PDFDocumentCreate → kartor_strackor.pdf/kartor_etapper.pdf, fält KARTA (254) med
 sökväg (kartmapp för Citrix). Filnamn `<klass>_<fil>_<nr>_<fran>-<till>.pdf` / `etapp_NN.pdf`.
-**Liggande/stående** (okt 2026): `mall_liggande`/`mall_staende` (.mxd, DEMapDocument i dialogen,
+**Liggande/stående** (okt 2026; okt 2026 b: användarens SVOA-mallar UtskriftA4_Liggande/Stående.mxd saknade lagret → `Layout(kopiera_fran=(lyr, mark_lyr))`/`_lagg_in` kopierar lagret och markeringslagret från den öppna kartan in i mallens dataram med `arcpy.mapping.AddLayer` när `_lager_i_doc` inte hittar dem, loggat "kopierades in"; test OK2 i test_kartexport.py): `mall_liggande`/`mall_staende` (.mxd, DEMapDocument i dialogen,
 kategori Mallar) öppnas med `arcpy.mapping.MapDocument(path)`; klassen `Layout` (mxd, df, ram,
 liggande, lyr via `_lager_i_doc` på lagernamnet från den öppna kartan, mark_lyr, markera via
 `setSelectionSet('NEW', oids)` med SelectLayerByAttribute som reserv, aterstall); `valj_layout` tar
