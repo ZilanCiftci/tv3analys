@@ -505,8 +505,8 @@ class Markprofil(object):
         return
 
     def execute(self, parameters, messages):
-        m = _ladda_modul('markprofil')
         _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('markprofil')
         m.markprofil(
             parameters[0].valueAsText.strip("'"),
             _lagerlista(parameters[1]),
@@ -828,10 +828,10 @@ class ExporteraGisdata(object):
         return
 
     def execute(self, parameters, messages):
-        m = _ladda_modul('gisexport')
-        _ladda_modul('skapa_ledningslager')
+        _ladda_modul('skapa_ledningslager')     # beroendena forst, annars binder gisexport gamla versioner
         _ladda_modul('natverk')
         _ladda_modul('markprofil')
+        m = _ladda_modul('gisexport')
 
         def v(i):
             t = (parameters[i].valueAsText or '').strip().strip("'")
