@@ -364,6 +364,31 @@ Test: test_gisexport.py (två polygoner, hål, gräns) och gisdata_omr.json för
 ofilmade ledningar → 83 %, DUF 701 91 %, 702 60 %, 703 0 %).
 Idéer kvar: eget kartlager för ej inspekterade ledningar i Skapa ledningslager, uppströmsanalys ur
 exporten utan ArcMap, djupklass i schaktlistan, ålder som konsekvensfaktor.
+**Omfilmning och sammanslagning** (okt 2026, användarens fråga "ibland filmas ledningen en andra gång efter
+spolning, eller från andra hållet – bygg båda"): KONFIG `OMFILMNING` True, `OMFILMNING_MIN_ANDEL` 0,85,
+`SAMMANSLAGNING` True. `hantera_omfilmningar(strackor)` grupperar per (fil, brunnspar): hela filmer (langd ≥ 1,
+ej ofullstandig) → nyaste gäller, äldre hela "ersatt av nr X (omfilmning datum)" (en kortare nyare än 85 %
+av den äldre → den längre gäller, "(längre film)"), ofullständiga "ersatt av nr X (hel film)", tomma (langd
+< 1) "ersatt av nr X"; utan hel film: per utgångsbrunn gäller den längsta delfilmen ("längre film från
+samma brunn"), och finns en delfilm från vardera brunnen slås de ihop med `_sammanslagen(a, b, nr)`: a från
+startbrunn, b från slutbrunn, L = langd_karta (markprofil/GIS) annars a+b (status "kartlängd okänd –
+filmerna antas mötas utan överlapp"), överlapp = a+b−L (nyare filmens observationer gäller i
+överlappet; lucka flaggas), b:s observationer speglas (lage' = L − lage − löpande längd, klocka
+`_spegla_klocka` 3→9, 12/6 oförändrade, från/till byter), KAM och b:s brunnskod vid 0 tas bort, slutmarkör
+vid L, `dataclasses.replace` av a med nr = max nr i filen + 1, profil tom (ingen profilbild/lutning), videofil
+"a + b", manuell bedömning/gis/langd_karta ur a annars b, `sammanslagen_av=[a.nr, b.nr]`, delfilmerna
+"ingår i sammanslagen nr Y". `_ersatt()` lägger till "– OBS: den ersatta filmen var klass B, den gällande
+är C" när den ersatta hade sämre klass (DUF 701 nr 118, B, 58,8 m avbruten, ersatt av hela 123 efter
+litterarättning). `Stracka.filmstatus`, `aktiva(strackor)` = varken "ersatt" eller "ingår".
+I main används `rakn = aktiva(...)` för statistik, diagram, kartunderlag, åtgärdspaket, PPTX, inspektionsgrad
+och topplistan; rapporter skrivs för alla (även sammanslagna: positioner från startbrunnen, foton från båda).
+Excel: Prioritering listar alla, ersatta/delfilmer sist utan rang, kolumn **Filmstatus** (synlig) efter
+Inspekterad flera ggr; statistikflikar på aktiva; Observationer hoppar över sammanslagna (dubbletter); rad
+"Omfilmningar" i Sammanfattning; JSON `filmstatus`, `sammanslagen_av`; PDF-rad Filmstatus. DUF 701: 62 (E)
+ersatt av 74, 179 ersatt av 184 (hel film), 72+73 → nr 186 (C, 42,2 m), 170+171 → nr 187 (B, 48,6 m, 171
+ensam var B 78 p/100 m, sammanslagen 44,9) ⇒ **facit med omfilmning 40/55/20/61/5** för filen ensam och
+**40/54/20/61/5 med filer.txt** (litterarättningen gör 118/123 till samma par; 40/55/22/62/6 med
+`OMFILMNING = SAMMANSLAGNING = False`). Överlapptest: 170/171 med langd_karta 40 → överlapp 8,6 m.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
 `skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med
@@ -450,8 +475,8 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   DF dimensionsförändring, MF materialförändring, ST stalp, PP.
 - Klockposition för anslutningar: kl 7–11 = vänster, 1–5 = höger, 12 hjässa, 6 botten –
   **sett i inspektionsriktningen**.
-- Samma brunnspar kan förekomma två gånger (filmat från båda håll efter avbrott) – flaggas,
-  slås inte ihop automatiskt.
+- Samma brunnspar kan förekomma två gånger (filmat från båda håll efter avbrott, eller omfilmat) –
+  flaggas; sedan okt 2026 ersätter hel film ofullständiga och två delfilmer slås ihop (se Omfilmning).
 
 ## 4. Poängmodell och prioritetsklass (alla parametrar under KONFIG i skriptet)
 
