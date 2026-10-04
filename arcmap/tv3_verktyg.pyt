@@ -1043,8 +1043,13 @@ class ExporteraKartor(object):
         mall_sta = arcpy.Parameter(
             displayName='Mall med st\u00e5ende layout (.mxd, valfritt)', name='mall_staende',
             datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
+        kopiera = arcpy.Parameter(
+            displayName='Kopiera kartans synliga lager till mallarna (kartan ser ut som p\u00e5 sk\u00e4rmen)',
+            name='kopiera_synliga', datatype='GPBoolean', parameterType='Optional', direction='Input',
+            category=K_MALL)
+        kopiera.value = True
         return _minne_fyll(self, [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
-                skriv_falt, kartmapp, mall_ligg, mall_sta])
+                skriv_falt, kartmapp, mall_ligg, mall_sta, kopiera])
 
     def isLicensed(self):
         return True
@@ -1093,7 +1098,8 @@ class ExporteraKartor(object):
                     skriv_falt=bool(parameters[9].value),
                     kartmapp=parameters[10].valueAsText or None,
                     mall_liggande=parameters[11].valueAsText or None,
-                    mall_staende=parameters[12].valueAsText or None)
+                    mall_staende=parameters[12].valueAsText or None,
+                    kopiera_synliga=parameters[13].value is not False)
         try:
             arcpy.RefreshActiveView()
         except Exception:
