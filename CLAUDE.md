@@ -454,6 +454,18 @@ och verktyget **Lista fält** först i .pyt (param: textfil, rader, bara-lager m
 arcpy. Avsikt: användaren skickar textfilen så att STANDARD_*-gissningarna i .pyt kan kompletteras med SVOA:s
 riktiga fältnamn (ledningslager: vg upp/ned, dimension, material, ledningstyp, anläggningsår; brunnslager:
 littera/EntityID, brunnstyp, locknivå; DUF-lager: områdesnamn).
+**Lista fält hängde + minne av senaste val** (okt 2026, användaren: "tar superlång tid … 2 min 30 s, avbröt";
+"pre-selecta de fält jag valt i senaste körningen"): `lista_falt.py` räknar inte längre objekt (GetCount mot SDE
+tog minuter per lager), hoppar lager som inte är featurelager, skriver filen lager för lager med flush och
+AddMessage "Laser X … klart pa N s" (kvar efter avbrott). `.pyt`: `MINNESFIL` = `arcmap/senaste_val.json`
+(.gitignore), `_minne_fyll(verktyg, params)` i slutet av varje `getParameterInfo` fyller tomma inparametrar
+(multiValue via `_satt_varden`) med senaste körningens värden per verktygsklass, `_minne_spara` först i varje
+`execute` (valueAsText, citattecken bort för multiValue); gissningarna i `updateParameters` sker bara när
+fältet är tomt (`not altered and not valueAsText`), så minnet inte skrivs över. gisexport: `Omraden` behåller
+arcpy-geometrin och använder `contains(PointGeometry)` (ren Python-ringtest bara som reserv/test – DUF-polygoner
+med tusentals hörn gjorde punkt-i-polygon per brunn/ledning långsamt), `exportera` loggar tid per fas och var
+5000:e ledning. Användarens lager: Avlopp\A Rensbrunn/tillsynsbrunn, A Nedstign och övriga brunnar,
+A Platsgjuten brunnspunkt, A Ledning, A Servis; Områden\DUF-områden.
 **Skarv utan brunn i GIS** (okt 2026, användaren: "ledningen är bruten i mitten, materialförändring, delad som två
 ledningar utan ände – ändarna har nästan exakt samma koordinat"; "kan vara uppdelad i mer än två delar"): exporten
 skriver sådana delar som `fran`/`till` = "" (fri ände, `_nodnamn`) med `fran_xy`/`till_xy`. `las_gis` kör
