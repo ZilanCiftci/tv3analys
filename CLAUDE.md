@@ -377,7 +377,7 @@ filmerna antas mötas utan överlapp"), överlapp = a+b−L (nyare filmens obser
 `_spegla_klocka` 3→9, 12/6 oförändrade, från/till byter), KAM och b:s brunnskod vid 0 tas bort, slutmarkör
 vid L, `dataclasses.replace` av a med nr = max nr i filen + 1, profil tom (ingen profilbild/lutning), videofil
 "a + b", manuell bedömning/gis/langd_karta ur a annars b, `sammanslagen_av=[a.nr, b.nr]`, delfilmerna
-"ingår i sammanslagen nr Y". `_ersatt()` lägger till "– OBS: den ersatta filmen var klass B, den gällande
+"ingår i sammanslagen nr Y tillsammans med nr X (filmad från BRUNN, L m) – se protokollet för sträcka Y" (okt 2026, användaren letade efter tvåfilmsritningen i delfilmens protokoll). `_ersatt()` lägger till "– OBS: den ersatta filmen var klass B, den gällande
 är C" när den ersatta hade sämre klass (DUF 701 nr 118, B, 58,8 m avbruten, ersatt av hela 123 efter
 litterarättning). `Stracka.filmstatus`, `aktiva(strackor)` = varken "ersatt" eller "ingår".
 I main används `rakn = aktiva(...)` för statistik, diagram, kartunderlag, åtgärdspaket, PPTX, inspektionsgrad

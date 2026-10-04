@@ -1937,8 +1937,9 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
                 if a is not None and b is not None and _normlittera(b.fran_brunn) == _normlittera(b.slutbrunn):
                     max_nr[fil] += 1
                     ny = _sammanslagen(a, b, max_nr[fil])
-                    for s in (a, b):
-                        s.filmstatus = f"ingår i sammanslagen nr {ny.nr}"
+                    for s, andra in ((a, b), (b, a)):
+                        s.filmstatus = (f"ingår i sammanslagen nr {ny.nr} tillsammans med nr {andra.nr} "
+                                        f"(filmad från {andra.fran_brunn}, {andra.langd:.1f} m) – se protokollet för sträcka {ny.nr}")
                     nya.append(ny)
             if OMFILMNING:
                 for s in tomma:
