@@ -221,8 +221,14 @@ BEHALL_RAPPORTER = False
 # att skriva; 960 = halva full-HD, vilket JPEG-avkodaren klarar i ett steg). None = originalstorlek.
 # RAPPORT_PROCESSER = antal parallella processer (None = antal kärnor − 1, 1 = en i taget).
 FOTO_MAX_PX = 960
-FOTO_JPEG_KVALITET = 82
+FOTO_JPEG_KVALITET = 76          # 76 ger ~30 % mindre filer än 82 utan synlig skillnad i A4
 RAPPORT_PROCESSER: int | None = None
+# Upplösning på översikts- och profilbilden i PDF-rapporten (dpi vid 180 mm bredd). 150 räcker för
+# utskrift i A4 och halverar nästan bildernas storlek och rittid mot 200.
+RAPPORT_BILD_DPI = 150
+# Diagrambilderna i rapporten sparas som palett-PNG (256 färger): ca 65 % mindre än RGB utan
+# synlig skillnad på linjediagram. Kostar ~0,1 s per rapport. False = vanlig RGB-PNG.
+RAPPORT_BILD_PALETT = True
 
 # Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
 # kolumnrubrikerna, eller Data > Dela upp grupp). Allt finns kvar i filen. Tom lista = visa allt.
@@ -2296,6 +2302,20 @@ def anslutning_sida(klocka: str) -> str:
     return ""
 
 
+def _spara_rapportbild(fig, path: str) -> None:
+    """Sparar en matplotlib-figur för rapporten: RAPPORT_BILD_DPI och, om RAPPORT_BILD_PALETT,
+    som palett-PNG med 256 färger (mycket mindre fil, samma utseende på linjediagram)."""
+    fig.savefig(path, dpi=RAPPORT_BILD_DPI)
+    if not RAPPORT_BILD_PALETT:
+        return
+    try:
+        from PIL import Image as PILImage
+        with PILImage.open(path) as im:
+            im.convert("RGB").quantize(colors=256).save(path, "PNG", optimize=False)
+    except Exception:
+        pass                                   # RGB-bilden ligger kvar
+
+
 def rita_schema(s: Stracka, path: str) -> None:
     """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador."""
     import matplotlib
@@ -2367,7 +2387,7 @@ def rita_schema(s: Stracka, path: str) -> None:
     ax.text(L * 0.315, 1.75, "höger (kl 1–5)", va="center", fontsize=6.5)
     ax.text(L * 0.02, 1.5, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6, color="#52514e")
     fig.tight_layout(pad=0.2)
-    fig.savefig(path, dpi=200)
+    _spara_rapportbild(fig, path)
     plt.close(fig)
 
 
@@ -2429,10 +2449,20 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     # Höjderna i TV3-filen är avrundade till hela cm, vilket ger en trappstegsformad linje på flacka
     # ledningar. Linjen jämnas ut med ett glidande medelvärde (±0,3 m) enbart för uppritningen;
     # svacka, bakfall och lutning beräknas på rådata.
-    zj = []
-    for i, xi in enumerate(x):
-        grannar = [zk for xk, zk in zip(x, z) if abs(xk - xi) <= 0.3]
-        zj.append(sum(grannar) / len(grannar))
+    # Glidande fönster över de positionssorterade punkterna (O(n), inte O(n²) – en lång profil
+    # med tusentals punkter tog annars sekunder per rapport)
+    ordn = sorted(range(len(x)), key=lambda i: x[i])
+    xs_, zs_ = [x[i] for i in ordn], [z[i] for i in ordn]
+    zj_sort, lo, hi, summa = [], 0, 0, 0.0
+    for i, xi in enumerate(xs_):
+        while hi < len(xs_) and xs_[hi] <= xi + 0.3 + 1e-9:     # ±0,3 m inklusive, entydigt vid cm-gränser
+            summa += zs_[hi]; hi += 1
+        while xs_[lo] < xi - 0.3 - 1e-9:
+            summa -= zs_[lo]; lo += 1
+        zj_sort.append(summa / (hi - lo))
+    zj = [0.0] * len(x)
+    for k, i in enumerate(ordn):
+        zj[i] = zj_sort[k]
     ax.plot(x, zj, color="#2a78d6", lw=1.6,
             label="uppmätt profil (utjämnad, cm-upplösning i filen)" if len(s.profil) >= 3
             else "vattengång enligt GIS (rät linje, ingen inklinometer)")
@@ -2481,7 +2511,7 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     ax.legend(fontsize=7, frameon=False, loc="upper right")
-    fig.savefig(path, dpi=200)
+    _spara_rapportbild(fig, path)
     plt.close(fig)
     return True
 
@@ -2732,7 +2762,7 @@ def forminska_foto(pth: str, tmp: str) -> str:
             if max(im.size) > FOTO_MAX_PX:
                 im.thumbnail((FOTO_MAX_PX, FOTO_MAX_PX))
             ut = os.path.join(tmp, f"foto_{len(_FOTO_CACHE)}_{os.getpid()}.jpg")
-            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET)
+            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True)
         _FOTO_CACHE[nyckel] = ut
         return ut
     except Exception:
