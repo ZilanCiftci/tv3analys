@@ -986,9 +986,8 @@ class ListaFalt(object):
             displayName='Rader att l\u00e4sa per lager f\u00f6r exempelv\u00e4rden', name='rader',
             datatype='GPLong', parameterType='Required', direction='Input')
         rader.value = 2000
-        bara = arcpy.Parameter(
-            displayName='Bara lager vars namn inneh\u00e5ller (tomt = alla)', name='bara',
-            datatype='GPString', parameterType='Optional', direction='Input', multiValue=True)
+        bara = _lagerparam('Lager att lista (tomt = alla lager i kartan)', 'bara', True, _kartlager(),
+                           'Optional')
         return [ut, rader, bara]
 
     def isLicensed(self):
@@ -998,8 +997,7 @@ class ListaFalt(object):
         import lista_falt
         reload(lista_falt)
         lista_falt.RADER = int(parameters[1].value or 2000)
-        bara = [b.strip("'\"") for b in (parameters[2].valueAsText or '').split(';') if b.strip()]
-        lista_falt.lista(parameters[0].valueAsText, bara)
+        lista_falt.lista(parameters[0].valueAsText, _lagerlista(parameters[2]))
         return
 
 
