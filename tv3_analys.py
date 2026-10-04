@@ -219,7 +219,8 @@ GIS_SKARV_TOL_M = None      # m – två ledningars fria ändar (ingen brunn) n�
                             # None = exportens tolerans (tolerans_m i gisdata.json), annars talet.
                             # sträcka när bara en av brunnarna är okänd (den andra brunnens grannar i GIS prövas)
 # Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
-GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
+GIS_MATERIAL = {"BTG": "Betong", "BT": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
+                "SEG": "Segjärn", "GJ": "Gjutjärn", "ODEF": "",     # SVOA: Bt, Seg, PVC, odef (odefinierat)
                 "PVC": "Plast", "PE": "Plast", "PEH": "Plast", "PP": "Plast", "PLAST": "Plast", "PLASTIC": "Plast",
                 "PEM": "Plast", "PEH": "Plast", "PRC": "Plast",
                 "GAP": "GAP", "GRP": "GAP", "LERA": "Lera", "LER": "Lera", "LERGODS": "Lera", "TEGEL": "Tegel",
@@ -293,7 +294,7 @@ DOLDA_KOLUMNER = {
                      "Inspekterad flera ggr", "Littera rättat",
                      "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
                      "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga",
-                     "Driftområde", "Lutning GIS", "Djup start", "Djup slut", "Anläggningsår",
+                     "Driftområde", "Lutning GIS", "Djup start", "Djup slut", "Anläggningsår", "Renoveringsår GIS",
                      "Brunnstyp start", "Brunnstyp slut"],
     "Etapper": ["Sträckor (lista)"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
@@ -1048,6 +1049,12 @@ class Stracka:
         return g.get("anlaggningsar") if g else None
 
     @property
+    def gis_renoveringsar(self) -> int | None:
+        """Renoveringsår (infodring) enligt GIS, om fältet exporterats."""
+        g = self.gis and self.gis.get("ledning")
+        return g.get("renoveringsar") if g else None
+
+    @property
     def driftomrade(self) -> str:
         """Driftområde ur GIS-data: ledningens, annars startbrunnens, annars slutbrunnens."""
         if not self.gis:
@@ -1113,6 +1120,12 @@ class Stracka:
         df, dg = self.dimension_mm, g.get("dimension")
         if df and dg and df != dg:
             fl.append(f"dimension: {df} i filmen, {dg} i GIS")
+        # renovering: GIS säger infodrad men filmen visar inget foder, eller tvärtom
+        ren = g.get("renoveringsar")
+        if ren and not self.relinad and self.langd >= 1:
+            fl.append(f"renoverad {ren} enligt GIS men inte relinad enligt filmen")
+        elif self.relinad and not ren and g.get("_ren_exporterad"):
+            fl.append("relinad enligt filmen men inget renoveringsår i GIS")
         return fl
 
 
@@ -1570,11 +1583,14 @@ def las_gis(path: str) -> dict:
         if n and n not in brunnar:
             brunnar[n] = b
     ledningar = []
+    har_ren = bool((data.get("lager") or {}).get("renoveringsar"))     # fältet valt i exporten?
     for led in data.get("ledningar", []):
         led["vg_fran"], led["vg_till"] = tal(led.get("vg_fran")), tal(led.get("vg_till"))
         led["langd_m"] = tal(led.get("langd_m"))
         led["dimension"] = heltal(led.get("dimension")) if led.get("dimension") is not None else None
         led["anlaggningsar"] = heltal(led.get("anlaggningsar"))
+        led["renoveringsar"] = heltal(led.get("renoveringsar")) if har_ren else None
+        led["_ren_exporterad"] = har_ren
         ledningar.append(led)
     tol = GIS_SKARV_TOL_M if GIS_SKARV_TOL_M is not None else (tal(data.get("tolerans_m")) or 1.0)
     n_fog = _sammanfoga_fria_andar(ledningar, tol)
@@ -1657,6 +1673,7 @@ def _sammanfoga_fria_andar(ledningar: list[dict], tolerans: float) -> int:
                 "vg_fran": forsta.get("vg_" + fs), "vg_till": sista.get("vg_" + andra(ss)),
                 "dimension": gemensamt("dimension"), "material": gemensamt("material"),
                 "ledningstyp": gemensamt("ledningstyp"), "anlaggningsar": gemensamt("anlaggningsar"),
+                "renoveringsar": gemensamt("renoveringsar"),
                 "omrade": next((d.get("omrade") for d, _ in kedja if d.get("omrade")), None),
                 "antal_delar": len(kedja),
                 "delar": [{"langd_m": d.get("langd_m"), "material": d.get("material"), "dimension": d.get("dimension"),
@@ -1697,6 +1714,8 @@ def _gis_vag(ns: str, ne: str, grannar: dict, langd: float) -> dict | None:
             return {"fran": ns, "till": ne, "langd_m": L, "vg_fran": vg0, "vg_till": vg1,
                     "dimension": _gemensamt("dimension"), "material": _gemensamt("material"),
                     "ledningstyp": _gemensamt("ledningstyp"), "anlaggningsar": _gemensamt("anlaggningsar"),
+                    "renoveringsar": _gemensamt("renoveringsar"),
+                    "_ren_exporterad": any(d.get("_ren_exporterad") for d in delar),
                     "omrade": delar[0].get("omrade"), "_syntetisk": "via", "_via": via, "_delar": delar}
         if hopp >= GIS_VAG_MAX_HOPP:
             continue
@@ -2738,7 +2757,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Filmstatus", "Tidigare inspektion", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
-           "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
+           "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår", "Renoveringsår GIS",
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
            "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
     raknas = {id(s) for s in strackor}
@@ -2773,7 +2792,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
                       round(s.djup_start, 2) if s.djup_start is not None else None,
                       round(s.djup_slut, 2) if s.djup_slut is not None else None,
-                      s.anlaggningsar,
+                      s.anlaggningsar, s.gis_renoveringsar,
                       s.brunnstyp(s.startbrunn), s.brunnstyp(s.slutbrunn),
                       s.etapp if rang else None,
                       (s.metod if s.metod != "ingen" else "") if rang else "",
@@ -3080,6 +3099,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
             "djup_slut_m": round(s.djup_slut, 2) if s.djup_slut is not None else None,
             "anlaggningsar": s.anlaggningsar,
+            "renoveringsar_gis": s.gis_renoveringsar,
             "driftomrade": s.driftomrade or None,
         })
 

@@ -466,6 +466,21 @@ arcpy-geometrin och använder `contains(PointGeometry)` (ren Python-ringtest bar
 med tusentals hörn gjorde punkt-i-polygon per brunn/ledning långsamt), `exportera` loggar tid per fas och var
 5000:e ledning. Användarens lager: Avlopp\A Rensbrunn/tillsynsbrunn, A Nedstign och övriga brunnar,
 A Platsgjuten brunnspunkt, A Ledning, A Servis; Områden\DUF-områden.
+**SVOA:s fältnamn** (okt 2026, ur användarens kartans_falt.txt, Enkel VA_mall.mxd, sde_geopipe_prod): brunnslagren
+(pipeSewerWellP, samma featureklass för Nedstign/Rensbrunn/Platsgjuten, olika definitionsfrågor): EntityID littera
+(SNBL63489, KNB2635), CoverLevel locknivå, BottomLevel (tom), WellFunction (SNBL/DNB/KNB …), WellType heltal,
+ConstructionYear. Ledningar (pipeSewerPipe): EntityID (DSL127791), PipeType DSL/SSL/KSL/SHL (första bokstaven
+D/S/K), PipeMaterial Bt/Seg/PVC, PipeDimension text "300", ConstructionYear, RestorationYear/RestorationMethod,
+LevelFrom/LevelTo (vattengång, RH2000-nivåer ~20–40), Slope, Length, SewerFunction/SewerWaterType heltal,
+Commentary ("Digitaliseringsriktning flippad"). Servis (pipeSewerServicePipe) samma fält, Serviskopplingspunkt
+(pipeSewerServicePoint) EntityID SKP/KKP/DKP, Ledningsände avlopp (pipeSewerPipeEnd). DUF-områden (geodata
+Admindelning Dufomr): DUF heltal, DRIFTOMR. STANDARD_* i .pyt har SVOA-namnen först (+ STANDARD_RENOVERINGSAR,
+STANDARD_SERVIS 'A Servis' som förval i Uppströms). Nytt exportfält `ren_falt` (param 17) → `renoveringsar` i
+gisdata.json/CSV + `lager.renoveringsar`; tv3_analys: `las_gis` sätter `_ren_exporterad` per post (bara när
+fältet valdes), `Stracka.gis_renoveringsar`, gisflagga "renoverad 2015 enligt GIS men inte relinad enligt filmen"
+/ "relinad enligt filmen men inget renoveringsår i GIS" (16 i DUF 701 med syntetiskt fält), dold kolumn
+"Renoveringsår GIS", JSON `renoveringsar_gis`; GIS_MATERIAL har BT/SEG/GJ/ODEF(""). lista_falt läser via
+dataSource + definitionQuery (lagernamn med "/" gav "does not exist" i ListFields).
 **Skarv utan brunn i GIS** (okt 2026, användaren: "ledningen är bruten i mitten, materialförändring, delad som två
 ledningar utan ände – ändarna har nästan exakt samma koordinat"; "kan vara uppdelad i mer än två delar"): exporten
 skriver sådana delar som `fran`/`till` = "" (fri ände, `_nodnamn`) med `fran_xy`/`till_xy`. `las_gis` kör
