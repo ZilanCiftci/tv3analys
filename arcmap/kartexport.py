@@ -179,9 +179,12 @@ class Layout(object):
     """Ett kartdokument att exportera ur: det oppna (CURRENT) eller en mall (.mxd). Haller
     dataramen, dess matt per skalenhet, lagret med strackorna och ev. markeringslagret."""
 
-    def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None, kopiera_fran=None):
+    def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None, kopiera_fran=None,
+                 kopiera_synliga=None):
         """kopiera_fran: (lager, markeringslager) ur den oppna kartan - saknas de i mallen laggs de
-        in i mallens dataram for exporten (mallen sparas inte)."""
+        in i mallens dataram for exporten (mallen sparas inte). kopiera_synliga: den oppna kartans
+        kartdokument - alla dess synliga toppnivalager (inkl. grupplager) laggs in i mallen i samma
+        ordning, sa att kartan ser ut som pa skarmen."""
         self.mxd = mxd
         self.namn = namn
         try:
@@ -200,6 +203,8 @@ class Layout(object):
         except Exception:
             pass
         kop_lyr, kop_mark = (kopiera_fran or (None, None))
+        if kopiera_synliga is not None:
+            self._kopiera_synliga(kopiera_synliga)
         self.lyr = lyr if lyr is not None else _lager_i_doc(mxd, lagernamn)
         if self.lyr is None and kop_lyr is not None:
             self.lyr = self._lagg_in(kop_lyr, lagernamn)
@@ -223,6 +228,45 @@ class Layout(object):
             self._gammalt_urval = list(self.lyr.getSelectionSet() or [])
         except Exception:
             pass
+
+    def _kopiera_synliga(self, oppen):
+        """Lagger in den oppna kartans synliga toppnivalager i mallens dataram, i samma ordning
+        (nederst forst med 'TOP' sa att det oversta hamnar overst). Lager som redan finns i mallen
+        (samma namn) hoppas over."""
+        try:
+            odf = _huvudram(oppen)
+            alla = arcpy.mapping.ListLayers(oppen, '', odf)
+        except Exception as e:
+            logg('  kunde inte lasa den oppna kartans lager: %s' % txt(e))
+            return
+        finns = set()
+        for l in arcpy.mapping.ListLayers(self.mxd):
+            try:
+                finns.add(txt(l.name).strip().lower())
+            except Exception:
+                pass
+        topp = []
+        for l in alla:
+            try:
+                if txt(l.longName) != txt(l.name):
+                    continue                  # ligger i ett grupplager - foljer med gruppen
+                if not l.visible:
+                    continue
+                if txt(l.name).strip().lower() in finns:
+                    continue
+                topp.append(l)
+            except Exception:
+                continue
+        n = 0
+        for l in reversed(topp):
+            try:
+                arcpy.mapping.AddLayer(self.df, l, 'TOP')
+                n += 1
+            except Exception as e:
+                logg('  kunde inte lagga in lagret "%s" i %s: %s' % (txt(getattr(l, 'name', '?')), self.namn, txt(e)))
+        if n:
+            logg('  %d synliga lager ur den oppna kartan inlagda i %s (%s)'
+                 % (n, self.namn, ', '.join(txt(l.name) for l in topp[:6]) + (' ...' if len(topp) > 6 else '')))
 
     def _lagg_in(self, lager, namn):
         """Lagger in en kopia av ett lager ur den oppna kartan overst i mallens dataram (med dess
@@ -314,7 +358,8 @@ def valj_layout(layouter, utb, skalor, marginal):
 
 def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL_M, dpi=200,
               markeringslager=None, samlad=True, per_etapp=False, skriv_falt=True,
-              kartmapp=None, bara_valda_klasser=KLASSER, mall_liggande=None, mall_staende=None):
+              kartmapp=None, bara_valda_klasser=KLASSER, mall_liggande=None, mall_staende=None,
+              kopiera_synliga=True):
     """Exporterar en PDF per stracka (eller per etapp) till ut_mapp. Returnerar lista med
     (filnamn, skala, ryms, layoutnamn). urval: 'atgard' (METOD ifyllt), 'AB' (BEDOMNING i A/B),
     'valda' (markerade i kartan), 'alla'. markeringslager: lager som pekar pa samma featureklass
@@ -322,7 +367,9 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     mall_liggande/mall_staende: .mxd-filer med liggande resp. staende layout; anges bada valjs
     per stracka den som ger minsta skala (vid lika skala den dar strackan fyller sidan bast).
     Saknar mallarna lagret med strackorna (eller markeringslagret) kopieras det in fran den oppna
-    kartan under korningen (mallen sparas inte). Utan mallar anvands den oppna kartans layout.
+    kartan under korningen (mallen sparas inte). kopiera_synliga: alla synliga lager i den oppna
+    kartan laggs in i mallen i samma ordning, sa att kartan ser ut som pa skarmen (annars bara
+    strack- och markeringslagret). Utan mallar anvands den oppna kartans layout.
     kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
     mxd = _mxd()
     if mxd is None:
@@ -364,7 +411,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                     except Exception:
                         mark_lyr_oppen = None
                 lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn,
-                            kopiera_fran=(lyr, mark_lyr_oppen))
+                            kopiera_fran=(lyr, mark_lyr_oppen), kopiera_synliga=mxd if kopiera_synliga else None)
                 lo.kontrollera_kalla(src)
                 layouter.append(lo)
                 logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
