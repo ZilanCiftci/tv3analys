@@ -2,13 +2,13 @@
 # Alla belopp är SCHABLON (F4) – byt mot egna erfarenhetsvärden/anbud. Schakt kalkyleras inte (F8).
 # post;dimension_fran;dimension_till;enhet;kr;kommentar
 post;dimension_fran;dimension_till;enhet;kr;kommentar
-strumpa;0;200;m;2500;schablon – flexibelt foder (CIPP) inkl. rengöring och TV-kontroll
-strumpa;201;300;m;3200;schablon
-strumpa;301;400;m;4200;schablon
-strumpa;401;600;m;6000;schablon
-strumpa;601;1200;m;9500;schablon
-hatt;;;st;9000;schablon – anslutning som öppnas och tätas med hatt
+strumpa;0;200;m;2600;schablon – flexibelt foder (CIPP) inkl. rengöring och TV-kontroll
+strumpa;201;300;m;2750;schablon
+strumpa;301;400;m;3000;schablon
+strumpa;401;600;m;4000;schablon
+strumpa;601;1200;m;8100;schablon
+hatt;;;st;25000;schablon – anslutning som öppnas och tätas med hatt
 lagning;;;m;25000;schablon – punktschakt och lagning före strumpning, meter enligt Lagning (m)
 framschaktning;;;st;60000;schablon – schakta fram brunn när bara tillsynsbrunnar finns (per brunn i etappen, F9)
 ny_brunn;;;st;45000;schablon – ny nedstigningsbrunn i varje framschaktad brunn
-etablering;;;etapp;40000;schablon – fast kostnad per etapp
+etablering;;;etapp;45000;schablon – fast kostnad per etapp
