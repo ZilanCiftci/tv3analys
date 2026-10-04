@@ -417,6 +417,14 @@ tomma filmer pekar på den sammanslagna, SAMMANSLAGNING fungerar utan OMFILMNING
 Prioritering blankar Etapp/Metod/Kostnad/Åtgärdsflagga för rader utan rang, `id()`-mängd i stället för
 `in`. Kvar/design: samma brunnspar i olika TV3-filer (olika år) hanteras inte (grupperas per fil);
 testfiler (gis_test/, mp/, upp*.csv) som hamnat i repot togs bort och .gitignore:ades.
+**Sammanslagen sträcka i översikten** (okt 2026, användarens begäran "syns i ritningen att den är sammansatt
+av två avbrutna filmningar"): `Stracka.sammanslagning` = {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L,
+overlapp} sätts av `_sammanslagen`; `rita_schema` ritar film b:s del [L − b_langd, L] i blågrå ton
+(#d6dde8) ovanpå röret, överlapp skrafferat, lucka vit, streckade skarvlinjer vid a_slut/b_start, och under
+skalan två pilar (blå → för film a från a_fran, mörkblå ← för film b från b_fran) med "film nr X från
+BRUNN, 0–17,0 m" samt raden "sammanslagen av två avbrutna filmer – skarv vid/överlapp/lucka …";
+figurhöjden får 0,3 extra. Samtidigt: hjässa/botten-etiketter packas tillsammans med höger-etiketterna
+(båda under röret; "17,0 m kl 12" låg över "17,1 m kl 1").
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
 `skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med

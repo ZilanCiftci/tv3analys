@@ -478,6 +478,7 @@ class Stracka:
     flerinspekterad: bool = False   # samma brunnspar förekommer flera gånger (t.ex. från båda håll)
     filmstatus: str = ""            # "", "ersatt av nr X (…)", "ingår i sammanslagen nr Y", "sammanslagen av nr 72 + 73 …"
     sammanslagen_av: list = field(default_factory=list)   # [nr, nr] för en sammanslagen sträcka
+    sammanslagning: dict | None = None   # {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L, overlapp} för ritningen
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
     # Från markprofil.json (ArcMap-verktyget Markprofil): markhöjder längs kartlinjen
     # [(m från startbrunn, höjd)], GIS-vattengång i brunnarna och kartlinjens längd
@@ -1741,6 +1742,8 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     else:
         noter.insert(1, "filmerna antas mötas utan överlapp")
     ny.filmstatus = f"sammanslagen av nr {a.nr} + {b.nr}" + (" (" + "; ".join(noter) + ")" if noter else "")
+    ny.sammanslagning = {"a_nr": a.nr, "b_nr": b.nr, "a_fran": a.fran_brunn, "b_fran": b.fran_brunn,
+                         "a_langd": a.langd, "b_langd": b.langd, "L": L, "overlapp": overlapp if L_karta else 0.0}
     return ny
 
 
@@ -3030,11 +3033,19 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
             ansl[""].append((o, "inspektion avbruten"))
     ansl[""].sort(key=lambda par: par[0].lage)
     ansl_rad = {}
-    for sida in ("vänster", "höger", ""):
-        halv = [len(e) * tecken55 / 2 + L * 0.008 for _, e in ansl[sida]]
-        ansl_rad[sida] = _packa_band([(o.lage - h, o.lage + h) for (o, _), h in zip(ansl[sida], halv)])
+    halv = [len(e) * tecken55 / 2 + L * 0.008 for _, e in ansl["vänster"]]
+    ansl_rad["vänster"] = _packa_band([(o.lage - h, o.lage + h) for (o, _), h in zip(ansl["vänster"], halv)])
+    # höger och hjässa/botten har etiketterna under röret – packas tillsammans så de inte krockar
+    under = sorted([(o, e, "höger") for o, e in ansl["höger"]] + [(o, e, "") for o, e in ansl[""]],
+                   key=lambda t: t[0].lage)
+    halv = [len(e) * tecken55 / 2 + L * 0.008 for _, e, _ in under]
+    rad_under = _packa_band([(o.lage - h, o.lage + h) for (o, _, _), h in zip(under, halv)])
+    ansl["höger"] = [(o, e) for o, e, sida in under if sida == "höger"]
+    ansl[""] = [(o, e) for o, e, sida in under if sida == ""]
+    ansl_rad["höger"] = [r for (o, e, sida), r in zip(under, rad_under) if sida == "höger"]
+    ansl_rad[""] = [r for (o, e, sida), r in zip(under, rad_under) if sida == ""]
     rader_ovan = max(ansl_rad["vänster"], default=-1) + 1
-    rader_under = max(max(ansl_rad["höger"], default=-1), max(ansl_rad[""], default=-1)) + 1
+    rader_under = max(rad_under, default=-1) + 1
 
     # punktskador: romber inom samma bredd läggs i egna rader innanför röret
     punkt = sorted((o for o in s.observationer if o.raknas and not (o.lopande.startswith("A") and o.lopande_langd)),
@@ -3047,16 +3058,30 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
     antal_band = max(1, max(band_rad) + 1 if band_rad else 0)
     y_topp = y_band0 + SCHEMA_RADHOJD * antal_band + 0.55           # plats för band + förklaring
     y_skala = -(0.42 + ANSL_RAD * max(rader_under, 1) + 0.3)        # skalan under alla etiketter
-    y_pil = y_skala - 0.7
-    y_botten = y_skala - 0.95
+    y_pil = y_skala - 0.75
+    y_botten = y_skala - (1.25 if s.sammanslagning else 0.95)
     hojd_tum = SCHEMA_HOJD_TUM * (y_topp - y_botten) / 4.3
     fig, ax = plt.subplots(figsize=(SCHEMA_BREDD_TUM, hojd_tum))
     ax.set_xlim(-L * 0.06, L * 1.06)
     ax.set_ylim(y_botten, y_topp)
     ax.axis("off")
-    # röret
+    # röret – vid sammanslagning av två avbrutna filmer ritas delfilmernas täckning i olika ton,
+    # överlapp skrafferat och en streckad skarvlinje där filmerna möts
+    sm = s.sammanslagning
     ax.add_patch(FancyBboxPatch((0, -0.25), L, 0.5, boxstyle="round,pad=0,rounding_size=0.02",
                                 fc="#e8e8e8", ec="#7f7f7f", lw=1.2))
+    if sm:
+        from matplotlib.patches import Rectangle
+        a_slut = min(sm["a_langd"], L)
+        b_start = max(0.0, L - sm["b_langd"])
+        ax.add_patch(Rectangle((b_start, -0.25), L - b_start, 0.5, fc="#d6dde8", ec="none", zorder=1.5))
+        if sm["overlapp"] > 0.5:
+            ax.add_patch(Rectangle((b_start, -0.25), a_slut - b_start, 0.5, fc="none", ec="#7f7f7f",
+                                   hatch="////", lw=0, zorder=1.6))
+        elif sm["overlapp"] < -0.5:
+            ax.add_patch(Rectangle((a_slut, -0.25), b_start - a_slut, 0.5, fc="white", ec="none", zorder=1.5))
+        for x in sorted({round(a_slut, 2), round(b_start, 2)}):
+            ax.plot([x, x], [-0.32, 0.32], color="#333333", lw=1.0, ls=(0, (3, 2)), zorder=4)
     # brunnar – större än rörets diameter; vid avbruten inspektion nåddes inte slutbrunnen (ihålig)
     for x, namn, ha, nadd in ((0, s.fran_brunn, "right", True), (L, s.till_brunn, "left", not s.ofullstandig)):
         ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf" if nadd else "white", mec="#4d4d4d", mew=1.2,
@@ -3095,10 +3120,24 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
     for x in range(0, int(L) + 1, max(1, int(L // 8) or 1)):
         ax.plot([x, x], [y_skala, y_skala - 0.1], color="#7f7f7f", lw=0.6)
         ax.text(x, y_skala - 0.13, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
-    ax.annotate("", xy=(L * 0.10, y_pil), xytext=(L * 0.0, y_pil),
-                arrowprops=dict(arrowstyle="->", color=bla, lw=1.2))
-    ax.text(L * 0.11, y_pil, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
-            va="center", fontsize=7, color=bla)
+    if sm:
+        a_slut = min(sm["a_langd"], L)
+        b_start = max(0.0, L - sm["b_langd"])
+        ax.annotate("", xy=(a_slut, y_pil), xytext=(0, y_pil), arrowprops=dict(arrowstyle="->", color=bla, lw=1.2))
+        ax.annotate("", xy=(b_start, y_pil), xytext=(L, y_pil), arrowprops=dict(arrowstyle="->", color="#4a5d7a", lw=1.2))
+        ax.text(a_slut / 2, y_pil - 0.12, dk(f"film nr {sm['a_nr']} från {sm['a_fran']}, 0–{a_slut:.1f} m"),
+                ha="center", va="top", fontsize=6.5, color=bla)
+        ax.text((b_start + L) / 2, y_pil - 0.12, dk(f"film nr {sm['b_nr']} från {sm['b_fran']}, {b_start:.1f}–{L:.1f} m"),
+                ha="center", va="top", fontsize=6.5, color="#4a5d7a")
+        skarv = (dk(f"överlapp {sm['overlapp']:.1f} m") if sm["overlapp"] > 0.5 else
+                 dk(f"lucka {-sm['overlapp']:.1f} m") if sm["overlapp"] < -0.5 else dk(f"skarv vid {a_slut:.1f} m"))
+        ax.text(L / 2, y_pil + 0.14, f"sammanslagen av två avbrutna filmer – {skarv}, position (m) mätt från {s.fran_brunn}",
+                ha="center", va="bottom", fontsize=6.5, color="#333333")
+    else:
+        ax.annotate("", xy=(L * 0.10, y_pil), xytext=(L * 0.0, y_pil),
+                    arrowprops=dict(arrowstyle="->", color=bla, lw=1.2))
+        ax.text(L * 0.11, y_pil, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
+                va="center", fontsize=7, color=bla)
     # legend
     y_leg = y_topp - 0.2
     for i, g in enumerate((1, 2, 3, 4)):
