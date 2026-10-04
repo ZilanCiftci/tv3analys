@@ -181,6 +181,8 @@ GIS_FALL_TOL_M = 0.3        # m – fallet mellan brunnarna (film mot GIS) får 
 GIS_FALL_TOL_ANDEL = 0.5    # … eller så stor andel av GIS-fallet (det största gäller) innan det flaggas
 GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från start- till slutbrunn flaggas riktningen
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
+GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
+                            # sträcka när bara en av brunnarna är okänd (den andra brunnens grannar i GIS prövas)
 # Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
 GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
                 "PVC": "Plast", "PE": "Plast", "PEH": "Plast", "PP": "Plast", "PLAST": "Plast", "PLASTIC": "Plast",
@@ -1472,17 +1474,24 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
             for n, vg in ((a, led.get("vg_fran")), (b, led.get("vg_till"))):
                 if n and vg is not None and (n not in vg_min or vg < vg_min[n]):
                     vg_min[n] = vg
+    grannar: dict[str, list[tuple[str, dict]]] = {}      # brunn -> [(granne, ledning)] i GIS
+    for par, leds in pa_par.items():
+        a, b = tuple(par) if len(par) == 2 else (next(iter(par)),) * 2
+        for led in leds:
+            grannar.setdefault(a, []).append((b, led))
+            grannar.setdefault(b, []).append((a, led))
     n_led = n_vg = 0
-    okanda: dict[str, set] = {}
+    okanda: list[dict] = []
     for s in strackor:
         ns, ne = _normlittera(s.startbrunn), _normlittera(s.slutbrunn)
         kand = pa_par.get(frozenset((ns, ne)), [])
         led = min(kand, key=lambda l: abs((l.get("langd_m") or 0) - s.langd)) if kand else None
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"]}
-        for b, n in ((s.startbrunn, ns), (s.slutbrunn, ne)):
+        for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
             if n and n not in brunnar:
-                okanda.setdefault(b, set()).add((s.fil, s.nr))
+                okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd,
+                               "motbrunn": annan if n_annan in brunnar else "", "n_mot": n_annan})
         if led:
             n_led += 1
             if s.langd_karta is None:        # ingen markprofil – GIS-exporten ger nivåer och kartlängd
@@ -1492,14 +1501,35 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                 s.hojdsystem = system
                 n_vg += a is not None and b is not None
         s._cache.clear()
-    # Förslag på rätt littera för okända brunnar (liknande namn i GIS)
+    # Förslag på rätt littera för okända brunnar, per sträcka. Är den andra brunnen känd prövas
+    # dess grannar i GIS: en granne vars ledning har ungefär filmens längd (GIS_LANGD_TOL) är
+    # troligen rätt brunn, även om namnet inte liknar. Annars (båda okända) bara liknande namn.
     alla = {n: b.get("littera") for n, b in brunnar.items()}
-    forslag = []
-    for b, var in sorted(okanda.items()):
-        lika = difflib.get_close_matches(_normlittera(b), list(alla), n=3, cutoff=GIS_LITTERA_LIKHET)
-        forslag.append({"littera": b, "forslag": [alla[n] for n in lika],
-                        "strackor": sorted(var, key=lambda v: (v[0], v[1]))})
-    return {"ledningar": n_led, "vg": n_vg, "okanda": forslag, "brunnar_i_gis": len(brunnar),
+    for o in okanda:
+        nn = _normlittera(o["littera"])
+        kand = []                   # (poäng, littera, text)
+        if o["motbrunn"] and o["langd"] >= 1:
+            for n_granne, led in grannar.get(o["n_mot"], []):
+                L = led.get("langd_m")
+                if not L:
+                    continue
+                diff = abs(L - o["langd"]) / max(o["langd"], 1.0)
+                likhet = difflib.SequenceMatcher(None, nn, n_granne).ratio()
+                if diff <= GIS_LANGD_TOL:
+                    kand.append((diff - 0.5 * likhet, alla[n_granne],
+                                 dk(f"ledning {L:.1f} m mot {o['langd']:.1f} m i filmen"
+                                    + (f", namnlikhet {likhet:.2f}" if likhet >= GIS_LITTERA_LIKHET else ""))))
+            o["metod"] = "längd från " + o["motbrunn"]
+        if not kand:
+            for n_lik in difflib.get_close_matches(nn, list(alla), n=3, cutoff=GIS_LITTERA_LIKHET):
+                likhet = difflib.SequenceMatcher(None, nn, n_lik).ratio()
+                kand.append((1 - likhet, alla[n_lik], dk(f"liknande namn ({likhet:.2f})")))
+            o["metod"] = "liknande namn" if kand else "inget förslag"
+        kand.sort()
+        sedda = set()
+        o["forslag"] = [(lit, txt) for _, lit, txt in kand if not (lit in sedda or sedda.add(lit))][:3]
+    okanda.sort(key=lambda o: (o["littera"], os.path.basename(o["fil"]), o["nr"]))
+    return {"ledningar": n_led, "vg": n_vg, "okanda": okanda, "brunnar_i_gis": len(brunnar),
             "flaggade": sum(1 for s in strackor if s.gisflagga)}
 
 
@@ -1507,11 +1537,11 @@ def skriv_litteraforslag(forslag: list[dict], path: str) -> int:
     """Skriver okända brunnar med förslag som en brunnslittera-CSV (fel;ratt;fil;nr;motbrunn;kommentar)
     som kan rättas och användas med littera: i listfilen. Returnerar antal rader."""
     rader = ["fel;ratt;fil;nr;motbrunn;kommentar"]
-    for f in forslag:
-        ratt = f["forslag"][0] if f["forslag"] else ""
-        komm = ("förslag ur GIS: " + ", ".join(f["forslag"])) if f["forslag"] else "inget liknande littera i GIS"
-        for fil, nr in f["strackor"]:
-            rader.append(f"{f['littera']};{ratt};{os.path.basename(fil)};{nr};;{komm}")
+    for o in forslag:
+        ratt = o["forslag"][0][0] if o["forslag"] else ""
+        komm = (f"förslag ({o['metod']}): " + "; ".join(f"{lit} – {txt}" for lit, txt in o["forslag"])
+                if o["forslag"] else "inget förslag: ingen ledning med passande längd och inget liknande littera i GIS")
+        rader.append(f"{o['littera']};{ratt};{os.path.basename(o['fil'])};{o['nr']};{o['motbrunn']};{komm}")
     with open(path, "w", encoding="utf-8-sig", newline="") as fh:
         fh.write("\r\n".join(rader) + "\r\n")
     return len(rader) - 1
@@ -3526,7 +3556,8 @@ def main(argv=None):
     if gisfiler:
         g = koppla_gis(strackor, gisfiler)
         print(f"GIS-data: {g['ledningar']} av {len(strackor)} sträckor har ledning i GIS, "
-              f"{g['vg']} fick vattengång ur GIS, {g['flaggade']} flaggade, {len(g['okanda'])} okända brunnar")
+              f"{g['vg']} fick vattengång ur GIS, {g['flaggade']} flaggade, "
+              f"{len(set(o['littera'] for o in g['okanda']))} okända brunnar")
         typer = Counter(fl.split(":")[0] for s in strackor for fl in s.gisflagga.split("; ") if fl)
         for typ, n in typer.most_common():
             print(f"  {n:>4} {typ}")
@@ -3535,8 +3566,9 @@ def main(argv=None):
             lf = os.path.join(a.utdata, "littera_forslag.csv")
             skriv_litteraforslag(g["okanda"], lf)
             print(f"  okända brunnar med förslag ur GIS skrivna till {lf}")
-            for f in g["okanda"][:5]:
-                print(f"    {f['littera']} → {', '.join(f['forslag']) or '?'}")
+            for o in g["okanda"][:6]:
+                print(f"    {o['littera']} (nr {o['nr']}) → "
+                      + (", ".join(f"{lit} ({txt})" for lit, txt in o["forslag"]) or "inget förslag"))
     uppposter = []
     for uf in globala["uppstroms"] + a.uppstroms:
         if not os.path.isfile(uf):
