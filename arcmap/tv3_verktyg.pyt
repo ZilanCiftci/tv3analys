@@ -197,7 +197,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
+        self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
                       ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
                       SkapaProjekteringslager, Projekteringsprofil]
 
@@ -963,6 +963,43 @@ class ExporteraKartor(object):
             arcpy.RefreshActiveView()
         except Exception:
             pass
+        return
+
+
+class ListaFalt(object):
+    def __init__(self):
+        self.label = 'Lista f\u00e4lt'
+        self.description = (
+            'Skriver en textfil med alla lager i kartan, deras f\u00e4lt (namn, alias, typ) och '
+            'exempelv\u00e4rden. Anv\u00e4nd den f\u00f6r att se vilka f\u00e4lt som ska v\u00e4ljas i '
+            'Exportera GIS-data, Markprofil och Uppstr\u00f6ms (vatteng\u00e5ng, dimension, material, '
+            'lockniv\u00e5, anl\u00e4ggnings\u00e5r, DUF-omr\u00e5de).')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        ut = arcpy.Parameter(
+            displayName='Textfil att skriva', name='ut', datatype='DEFile', parameterType='Required',
+            direction='Output')
+        ut.filter.list = ['txt']
+        ut.value = os.path.join(os.path.expanduser('~'), 'kartans_falt.txt')
+        rader = arcpy.Parameter(
+            displayName='Rader att l\u00e4sa per lager f\u00f6r exempelv\u00e4rden', name='rader',
+            datatype='GPLong', parameterType='Required', direction='Input')
+        rader.value = 2000
+        bara = arcpy.Parameter(
+            displayName='Bara lager vars namn inneh\u00e5ller (tomt = alla)', name='bara',
+            datatype='GPString', parameterType='Optional', direction='Input', multiValue=True)
+        return [ut, rader, bara]
+
+    def isLicensed(self):
+        return True
+
+    def execute(self, parameters, messages):
+        import lista_falt
+        reload(lista_falt)
+        lista_falt.RADER = int(parameters[1].value or 2000)
+        bara = [b.strip("'\"") for b in (parameters[2].valueAsText or '').split(';') if b.strip()]
+        lista_falt.lista(parameters[0].valueAsText, bara)
         return
 
 
