@@ -459,6 +459,12 @@ anlaggningsar, oid}], `skarvar` [xy]; konsolrad "N ledningar hopfogade …". gis
 ledning (delarna hoppades förut över som fria ändar). Test: scratchpad/gisvag/gisdata_skarv.json (två delar + en
 trevägsförgrening som inte fogas) och gisdata_skarv3.json (tre delar, blandad ordning, mittdelen vänd → 28,86 m,
 187 överlapp 19,8 m).
+**Delfilmer göms** (okt 2026, användaren: "när vi slagit samman två delsträckor vill jag inte att den individuella
+listas separat i Excel eller som egen rapport"): KONFIG `DELFILMER_SEPARAT` False; `delfilm(s)` (filmstatus "ingår…"),
+`visade(strackor)` = alla utom delfilmer om inte flaggan. Prioritering listar bara `visade(alla)` utan rang (ersatta
+kvar), Observationer tar den sammanslagna sträckans observationer (delfilmerna hoppas över; med flaggan tvärtom som
+förut), `skriv_rapporter` skriver bara `visade` och `rensa_gamla_rapporter` tar bort delfilmernas gamla PDF:er
+(aktuella = visade, prefix = alla), Sammanfattning-texten anpassad. DUF 701: 187 rader i Prioritering (var 191).
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter

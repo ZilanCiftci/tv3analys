@@ -199,6 +199,8 @@ OMFILMNING = True
 OMFILMNING_MIN_ANDEL = 0.85
 SAMMANSLAGNING = True
 OMFILMNING_OVER_FILER = True
+DELFILMER_SEPARAT = False     # True: delfilmerna i en sammanslagning listas även var för sig i Prioritering/
+                              # Observationer och får egna protokoll; False: bara den sammanslagna sträckan
 TIDIGARE_INDEX_ANDEL = 0.2    # konstruktionsindex ändrat mer än så (och minst 5 p/100 m) inom samma klass = förvärrad/förbättrad
 GIS_FALL_TOL_M = 0.3        # m – fallet mellan brunnarna (film mot GIS) får avvika så mycket …
 GIS_FALL_TOL_ANDEL = 0.5    # … eller så stor andel av GIS-fallet (det största gäller) innan det flaggas
@@ -1811,6 +1813,17 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
             "flaggade": sum(1 for s in strackor if s.gisflagga)}
 
 
+def delfilm(s: Stracka) -> bool:
+    """Sträckan är en delfilm som ingår i en sammanslagen sträcka."""
+    return s.filmstatus.startswith("ingår")
+
+
+def visade(strackor: list[Stracka]) -> list[Stracka]:
+    """Sträckor som redovisas var för sig (Prioritering, Observationer, protokoll): alla utom delfilmer,
+    om inte DELFILMER_SEPARAT."""
+    return [s for s in strackor if DELFILMER_SEPARAT or not delfilm(s)]
+
+
 def aktiva(strackor: list[Stracka]) -> list[Stracka]:
     """Sträckor som räknas: inte ersatta av en nyare film och inte delfilmer i en sammanslagning."""
     return [s for s in strackor if not (s.filmstatus.startswith("ersatt") or s.filmstatus.startswith("ingår"))]
@@ -2627,7 +2640,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
         ["Relinade sträckor", sum(1 for s in strackor if s.relinad)],
         ["Omfilmningar", (f"{sum(1 for s in alla if s.filmstatus.startswith('ersatt'))} filmer ersatta av nyare/hel film, "
                           f"{sum(1 for s in alla if s.sammanslagen_av)} brunnspar sammanslagna av två delfilmer "
-                          f"(räknas en gång; delfilmerna listas i Prioritering utan rang)")
+                          + ("(räknas en gång; delfilmerna listas i Prioritering utan rang)" if DELFILMER_SEPARAT
+                             else "(räknas en gång; delfilmerna redovisas bara i den sammanslagna sträckan)"))
          if any(s.filmstatus for s in alla) else "inga"],
         ["Ny inspektion i senare fil", _tidigare_text_summa(strackor)],
         ["Höjdfel i TV3-filen", (f"{sum(1 for s in alla if s.hojdfel)} sträckor med orimliga höjder (brunnshöjder eller "
@@ -2728,7 +2742,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
            "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
     raknas = {id(s) for s in strackor}
-    sorterade = sorterade_strackor(strackor) + sorted((s for s in alla if id(s) not in raknas), key=lambda s: (s.fil, s.nr))
+    sorterade = sorterade_strackor(strackor) + sorted((s for s in visade(alla) if id(s) not in raknas), key=lambda s: (s.fil, s.nr))
     rader = []
     for rang, s in enumerate(sorterade, 1):
         if rang > len(strackor):
@@ -2828,7 +2842,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Klocka från", "Klocka till", "Vattennivå (%)", "Bild", "Kommentar", "Videofil"]
     rader, bild_urls, video_urls = [], [], []
     for s in sorterade:
-        if s.sammanslagen_av:
+        if s.sammanslagen_av and DELFILMER_SEPARAT:
             continue                       # observationerna finns redan under delfilmerna
         for o in s.observationer:
             if not (o.kod or o.infokod):
@@ -3886,10 +3900,11 @@ def rapport_filnamn(s: Stracka) -> str:
 
 def rensa_gamla_rapporter(strackor: list[Stracka], katalog: str) -> int:
     """Tar bort PDF:er i katalogen som hör till en sträcka men har ett annat namn än det
-    aktuella (t.ex. gammal klassbokstav efter ändrade parametrar, eller rättat littera)."""
+    aktuella (t.ex. gammal klassbokstav efter ändrade parametrar, eller rättat littera), samt
+    protokoll för delfilmer som inte längre redovisas separat."""
     if not os.path.isdir(katalog):
         return 0
-    aktuella = {rapport_filnamn(s) for s in strackor}
+    aktuella = {rapport_filnamn(s) for s in visade(strackor)}
     prefix = {rapport_prefix(s) for s in strackor}
     n = 0
     for namn in os.listdir(katalog):
@@ -3985,7 +4000,7 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
     gamla = rensa_gamla_rapporter(strackor, katalog)
     if gamla:
         print(f"  {gamla} inaktuella rapporter borttagna (annan klass eller littera än nu)")
-    valda = [s for s in strackor if urval == "alla" or s.klass in urval]
+    valda = [s for s in visade(strackor) if urval == "alla" or s.klass in urval]
     n = behallna = 0
     att_skriva: list[tuple[Stracka, str]] = []
     for s in valda:
