@@ -4,6 +4,7 @@
 littera: brunnslittera.csv              # ersättningslittera för felmärkta brunnar
 # markprofil: Karta\markprofil.json      <- från ArcMap-verktyget Markprofil (markhöjder + GIS-vattengång)
 # uppstroms: Karta\uppstroms.csv         <- från ArcMap-verktyget Uppströms, batchläge (serviser/längd uppströms)
+# gis: Karta\gisdata.json               <- från ArcMap-verktyget Exportera GIS-data (brunnar + ledningar; kontroll mot kartan)
 # manuell: bedomd\prioritering.xlsx      <- tidigare Excel med Manuell bedömning, Kommentar, Lagning (m) ifyllda
 # kostnader: kostnader.csv               <- kostnadsposter för åtgärdspaketet (standard: filen bredvid skriptet)
 

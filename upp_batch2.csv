@@ -1,0 +1,5 @@
+fil;nr;startbrunn;slutbrunn;serviser_uppstroms;langd_uppstroms_m;antal_ledningar;antal_brunnar;serviser_kalla;stoppade
+t.TV3;1;B;C;2;400,0;4;5;skattning (ANT_ANSL);1
+t.TV3;2;C;D;5;641,4;6;7;skattning (ANT_ANSL);1
+t.TV3;3;D;U;6;741,4;7;8;skattning (ANT_ANSL);1
+t.TV3;4;E;B;0;300,0;3;4;skattning (ANT_ANSL);1

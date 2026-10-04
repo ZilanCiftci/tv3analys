@@ -174,6 +174,20 @@ HOJD_FALL_TOL_M = 0.3   # m – skiljer sig fallet mellan brunnarna mer än så 
                         #     lutningen linjärt (inklinometerdrift), annars bara en förskjutning
 TACKNING_MIN_M = 1.0    # m – mindre täckning (mark − hjässa) än så flaggas
 OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartlängden nådde kameran inte
+# GIS-data (gisdata.json från ArcMap-verktyget "Exportera GIS-data"): brunnar med locknivå och
+# ledningssträckor mellan brunnar med vattengång, dimension, material och år. Analysen kontrollerar
+# filmen mot GIS och sätter en GIS-flagga per sträcka (kolumn i Prioritering, fält i JSON).
+GIS_FALL_TOL_M = 0.3        # m – fallet mellan brunnarna (film mot GIS) får avvika så mycket …
+GIS_FALL_TOL_ANDEL = 0.5    # … eller så stor andel av GIS-fallet (det största gäller) innan det flaggas
+GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från start- till slutbrunn flaggas riktningen
+GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
+# Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
+GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
+                "PVC": "Plast", "PE": "Plast", "PEH": "Plast", "PP": "Plast", "PLAST": "Plast", "PLASTIC": "Plast",
+                "GAP": "GAP", "GRP": "GAP", "LERA": "Lera", "LER": "Lera", "TEGEL": "Tegel",
+                "GJJ": "Gjutjärn", "GJUTJÄRN": "Gjutjärn", "SEGJ": "Segjärn", "SEGJÄRN": "Segjärn",
+                "STÅL": "Stål", "ST": "Stål", "ASBEST": "Asbestcement", "ETERNIT": "Asbestcement",
+                "AC": "Asbestcement"}
                            # fram – profilen hängs då bara upp i den brunn kameran startade i
 
 # Relinade (infodrade) sträckor redovisas som ett eget material i fliken Material och i
@@ -241,6 +255,7 @@ DOLDA_KOLUMNER = {
                      "Inspekterad flera ggr", "Littera rättat",
                      "Svackdjup/diameter", "Svacklängd", "Bakfall längd", "Lutning", "Profil osäker",
                      "Höjdanpassning", "Täckning min", "Täckning max", "Höjdflagga",
+                     "Lutning GIS", "Djup start", "Djup slut", "Anläggningsår",
                      "Brunnstyp start", "Brunnstyp slut"],
     "Etapper": ["Sträckor (lista)"],
     "Observationer": ["Fil", "Typ", "Löpande", "Klocka till", "Vattennivå (%)"],
@@ -452,6 +467,10 @@ class Stracka:
     gis_vg_slut: float | None = None
     langd_karta: float | None = None
     hojdsystem: str = "RH2000"           # kartans höjdsystem enligt markprofil.json
+    # Från gisdata.json (ArcMap-verktyget Exportera GIS-data), satt av koppla_gis:
+    # {"ledning": post|None, "brunn_start": post|None, "brunn_slut": post|None,
+    #  "vg_min_start", "vg_min_slut" (lägsta vattengång vid brunnen), "fil": sökväg}
+    gis: dict | None = None
     # Från uppströmsanalysen i ArcMap (verktyget Uppströms, batchläge; CSV via uppstroms: i listfilen)
     serviser_uppstroms: int | None = None      # serviser/anslutningar uppströms, inkl. sträckans egna
     langd_uppstroms: float | None = None       # m ledning uppströms, inkl. sträckan
@@ -930,6 +949,105 @@ class Stracka:
         m = re.search(r"\d+", self.dimension or "")
         return int(m.group(0)) if m else None
 
+    # --- GIS-data (gisdata.json) ---------------------------------------------------------
+    def _gis_vg(self) -> tuple[float | None, float | None]:
+        """GIS-vattengång vid start- och slutbrunn (flödesriktning) ur den kopplade ledningen."""
+        g = self.gis and self.gis.get("ledning")
+        if not g:
+            return None, None
+        if _normlittera(g.get("fran")) == _normlittera(self.startbrunn):
+            return g.get("vg_fran"), g.get("vg_till")
+        return g.get("vg_till"), g.get("vg_fran")
+
+    @property
+    def gis_lutning_promille(self) -> float | None:
+        """Fall enligt GIS-vattengångarna, ‰ (positiv = fall i flödesriktningen)."""
+        a, b = self._gis_vg()
+        g = self.gis and self.gis.get("ledning")
+        if a is None or b is None or not g or not g.get("langd_m"):
+            return None
+        return (a - b) / g["langd_m"] * 1000
+
+    def _djup(self, vilken: str) -> float | None:
+        """Djup vid brunnen = locknivå − lägsta vattengång bland ledningarna i brunnen (m)."""
+        if not self.gis:
+            return None
+        b = self.gis.get("brunn_" + vilken)
+        vg = self.gis.get("vg_min_" + vilken)
+        if not b or b.get("lockniva") is None or vg is None:
+            return None
+        return b["lockniva"] - vg
+
+    @property
+    def djup_start(self) -> float | None:
+        return self._djup("start")
+
+    @property
+    def djup_slut(self) -> float | None:
+        return self._djup("slut")
+
+    @property
+    def anlaggningsar(self) -> int | None:
+        g = self.gis and self.gis.get("ledning")
+        return g.get("anlaggningsar") if g else None
+
+    @property
+    def gisflagga(self) -> str:
+        """Avvikelser mellan filmen och GIS: brunn/ledning saknas, vattengång, riktning, material,
+        dimension. Tom text när allt stämmer eller GIS-data saknas."""
+        if "gisflagga" not in self._cache:
+            self._cache["gisflagga"] = "; ".join(self._gisflaggor())
+        return self._cache["gisflagga"]
+
+    def _gisflaggor(self) -> list[str]:
+        if not self.gis:
+            return []
+        fl = []
+        saknas = [b for b, k in ((self.startbrunn, "brunn_start"), (self.slutbrunn, "brunn_slut"))
+                  if not self.gis.get(k)]
+        if saknas:
+            fl.append("brunn saknas i GIS: " + ", ".join(saknas))
+        g = self.gis.get("ledning")
+        if not g:
+            if not saknas:
+                fl.append("ingen ledning i GIS mellan brunnarna")
+            return fl
+        if self.langd >= 1:
+            # vattengång: fallet mellan brunnarna enligt filmen mot GIS
+            gs, ge = self._gis_vg()
+            zs, ze = self._filens_brunnshojder()
+            if gs is not None and ge is not None:
+                fall_gis = gs - ge
+                if fall_gis < -GIS_RIKTNING_MIN_M:
+                    fl.append(dk(f"riktning: GIS-vattengången stiger {-fall_gis:.2f} m från {self.startbrunn} "
+                                 f"till {self.slutbrunn}"))
+                if zs is not None and ze is not None and not self.ofullstandig:
+                    fall_film = zs - ze
+                    if abs(fall_film - fall_gis) > max(GIS_FALL_TOL_M, GIS_FALL_TOL_ANDEL * abs(fall_gis)):
+                        fl.append(dk(f"vattengång: fall {fall_film:.2f} m i filmen, {fall_gis:.2f} m i GIS"))
+            elif gs is None and ge is None:
+                fl.append("vattengång saknas i GIS")
+        # material och dimension
+        mf, mg = _materialgrupp(self.material), _materialgrupp(g.get("material"))
+        if mf and mg and mf != mg:
+            fl.append(f"material: {self.material} i filmen, {g.get('material')} i GIS")
+        df, dg = self.dimension_mm, g.get("dimension")
+        if df and dg and df != dg:
+            fl.append(f"dimension: {df} i filmen, {dg} i GIS")
+        return fl
+
+
+def _materialgrupp(text: str | None) -> str:
+    """Materialnamn → grupp enligt GIS_MATERIAL ("BTG"/"Betong" → "Betong"); okänt namn ger sig
+    självt med stor bokstav, tomt ger ''. Foderuppgifter inom parentes räknas inte."""
+    t = re.sub(r"\(.*?\)", "", text or "").strip().upper()
+    if not t:
+        return ""
+    for nyckel, grupp in GIS_MATERIAL.items():
+        if t == nyckel or t.startswith(nyckel + " ") or t.startswith(nyckel + "-"):
+            return grupp
+    return t.capitalize()
+
 
 def manuell_klass(text: str) -> str:
     """A–E ur Manuell bedömning: en ensam bokstav ("A", "b", "A – går strumpa"), inte första
@@ -1316,6 +1434,87 @@ def koppla_markprofil(strackor: list[Stracka], filer: list[dict]) -> tuple[int, 
         n_mark += bool(s.mark)
         n_vg += s.gis_vg_start is not None and s.gis_vg_slut is not None
     return n_mark, n_vg
+
+
+def las_gis(path: str) -> dict:
+    """Läser gisdata.json från ArcMap-verktyget Exportera GIS-data. Returnerar {"brunnar": {littera:
+    post}, "ledningar": [post], "hojdsystem", "fil"}; littera normaliseras som i _normlittera."""
+    import json
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    brunnar = {}
+    for b in data.get("brunnar", []):
+        n = _normlittera(b.get("littera"))
+        if n and n not in brunnar:
+            brunnar[n] = b
+    return {"brunnar": brunnar, "ledningar": data.get("ledningar", []),
+            "hojdsystem": data.get("hojdsystem", "") or "RH2000", "fil": path}
+
+
+def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
+    """Kopplar GIS-data till sträckorna på brunnspar (båda riktningarna). Finns flera ledningar
+    mellan samma brunnar tas den vars längd ligger närmast filmens. Utan markprofil används
+    GIS-vattengång och kartlängd även till höjdanpassningen. Returnerar statistik + lista
+    över brunnar i TV3-filerna som saknas i GIS med förslag på rätt littera."""
+    import difflib
+    brunnar: dict[str, dict] = {}
+    pa_par: dict[frozenset, list[dict]] = {}
+    vg_min: dict[str, float] = {}
+    system = "RH2000"
+    for gf in filer:
+        system = gf["hojdsystem"] or system
+        for n, b in gf["brunnar"].items():
+            brunnar.setdefault(n, b)
+        for led in gf["ledningar"]:
+            a, b = _normlittera(led.get("fran")), _normlittera(led.get("till"))
+            if a and b:
+                pa_par.setdefault(frozenset((a, b)), []).append(led)
+            for n, vg in ((a, led.get("vg_fran")), (b, led.get("vg_till"))):
+                if n and vg is not None and (n not in vg_min or vg < vg_min[n]):
+                    vg_min[n] = vg
+    n_led = n_vg = 0
+    okanda: dict[str, set] = {}
+    for s in strackor:
+        ns, ne = _normlittera(s.startbrunn), _normlittera(s.slutbrunn)
+        kand = pa_par.get(frozenset((ns, ne)), [])
+        led = min(kand, key=lambda l: abs((l.get("langd_m") or 0) - s.langd)) if kand else None
+        s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
+                 "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"]}
+        for b, n in ((s.startbrunn, ns), (s.slutbrunn, ne)):
+            if n and n not in brunnar:
+                okanda.setdefault(b, set()).add((s.fil, s.nr))
+        if led:
+            n_led += 1
+            if s.langd_karta is None:        # ingen markprofil – GIS-exporten ger nivåer och kartlängd
+                a, b = s._gis_vg()
+                s.gis_vg_start, s.gis_vg_slut = a, b
+                s.langd_karta = led.get("langd_m")
+                s.hojdsystem = system
+                n_vg += a is not None and b is not None
+        s._cache.clear()
+    # Förslag på rätt littera för okända brunnar (liknande namn i GIS)
+    alla = {n: b.get("littera") for n, b in brunnar.items()}
+    forslag = []
+    for b, var in sorted(okanda.items()):
+        lika = difflib.get_close_matches(_normlittera(b), list(alla), n=3, cutoff=GIS_LITTERA_LIKHET)
+        forslag.append({"littera": b, "forslag": [alla[n] for n in lika],
+                        "strackor": sorted(var, key=lambda v: (v[0], v[1]))})
+    return {"ledningar": n_led, "vg": n_vg, "okanda": forslag, "brunnar_i_gis": len(brunnar),
+            "flaggade": sum(1 for s in strackor if s.gisflagga)}
+
+
+def skriv_litteraforslag(forslag: list[dict], path: str) -> int:
+    """Skriver okända brunnar med förslag som en brunnslittera-CSV (fel;ratt;fil;nr;motbrunn;kommentar)
+    som kan rättas och användas med littera: i listfilen. Returnerar antal rader."""
+    rader = ["fel;ratt;fil;nr;motbrunn;kommentar"]
+    for f in forslag:
+        ratt = f["forslag"][0] if f["forslag"] else ""
+        komm = ("förslag ur GIS: " + ", ".join(f["forslag"])) if f["forslag"] else "inget liknande littera i GIS"
+        for fil, nr in f["strackor"]:
+            rader.append(f"{f['littera']};{ratt};{os.path.basename(fil)};{nr};;{komm}")
+    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write("\r\n".join(rader) + "\r\n")
+    return len(rader) - 1
 
 
 def las_uppstroms(path: str) -> list[dict]:
@@ -1763,6 +1962,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                                      f"{sum(1 for s in strackor if s.hojdanpassning and s.hojdanpassning['offset'] is not None and s.gis_vg_start is not None)} "
                                      f"med GIS-vattengång, {sum(1 for s in strackor if s.hojdflagga)} flaggade")
          if any(s.mark or s.gis_vg_start is not None for s in strackor) else "saknas"],
+        ["GIS-data (från ArcMap)", (f"{sum(1 for s in strackor if s.gis and s.gis.get('ledning'))} sträckor med ledning i GIS, "
+                                   f"{sum(1 for s in strackor if s.gisflagga)} med GIS-flagga")
+         if any(s.gis for s in strackor) else "saknas"],
         ["", ""],
         ["Prioritetsklass", "Antal sträckor", "Andel sträckor", "Längd (m)", "Andel längd"],
     ]
@@ -1846,6 +2048,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
+           "GIS-flagga", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
            "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
     sorterade = sorterade_strackor(strackor)
@@ -1872,6 +2075,11 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       h["status"] if h else "",
                       round(tk["min"], 2) if tk else None, round(tk["max"], 2) if tk else None,
                       s.hojdflagga,
+                      s.gisflagga,
+                      round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
+                      round(s.djup_start, 2) if s.djup_start is not None else None,
+                      round(s.djup_slut, 2) if s.djup_slut is not None else None,
+                      s.anlaggningsar,
                       s.brunnstyp(s.startbrunn), s.brunnstyp(s.slutbrunn), s.etapp,
                       s.metod if s.metod != "ingen" else "",
                       (round(s.kostnad["summa"]) if s.kostnad else ("ej beräknad" if s.metod == "schakt" else None)),
@@ -1881,7 +2089,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     start = tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
-                                    "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26,
+                                    "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26, "GIS-flagga": 40,
                                     "Åtgärdsflagga": 40, "Kostnad": 12, "Lagning": 10},
                    klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
                    dolda=DOLDA_KOLUMNER.get("Prioritering"))
@@ -2108,6 +2316,11 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str) -> int:
             "tackning_min_m": round(s.tackning["min"], 2) if s.tackning else None,
             "tackning_max_m": round(s.tackning["max"], 2) if s.tackning else None,
             "hojdflagga": s.hojdflagga,
+            "gis_flagga": s.gisflagga or None,
+            "gis_lutning_promille": round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
+            "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
+            "djup_slut_m": round(s.djup_slut, 2) if s.djup_slut is not None else None,
+            "anlaggningsar": s.anlaggningsar,
         })
 
     data = {
@@ -3047,6 +3260,7 @@ _BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
 _MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
 _MARK_NYCKLAR = ("markprofil", "mark")
 _UPP_NYCKLAR = ("uppstroms", "uppströms", "uppstrom")
+_GIS_NYCKLAR = ("gis", "gisdata")
 _MANUELL_NYCKLAR = ("manuell", "manuellt", "bedomning", "bedömning")
 _KOSTNAD_NYCKLAR = ("kostnader", "kostnad", "priser")
 
@@ -3063,6 +3277,7 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
         littera: brunnslittera.csv               ersättningslittera för felmärkta brunnar
         markprofil: Karta\\markprofil.json        från ArcMap-verktyget Markprofil
         uppstroms: Karta\\uppstroms.csv           från ArcMap-verktyget Uppströms (batchläge)
+        gis: Karta\\gisdata.json                  från ArcMap-verktyget Exportera GIS-data
         manuell: forra_korningen\\prioritering.xlsx  manuella bedömningar, kommentarer, Lagning (m)
         kostnader: kostnader.csv                 kostnadsposter för åtgärdspaketet
         DUF 701.TV3                              TV3-fil; media söks i filens egen katalog
@@ -3079,11 +3294,12 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
 
     nyckel_re = re.compile(r"^(%s)\s*[:=]\s*(.*)$" % "|".join(_BILD_NYCKLAR + _MEDIA_NYCKLAR + _MARK_NYCKLAR
                                                              + _UPP_NYCKLAR + _MANUELL_NYCKLAR + _KOSTNAD_NYCKLAR
+                                                             + _GIS_NYCKLAR
                                                              + ("littera", "brunnslittera", "brunnar")),
                            re.IGNORECASE)
     poster: list[Listpost] = []
     globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": [],
-                        "manuell": [], "kostnader": []}
+                        "manuell": [], "kostnader": [], "gis": []}
     for rad in las_text(path).splitlines():
         rad = re.split(r"\s+#", rad, 1)[0].strip()      # kommentar efter blanksteg + # tillåts
         if not rad or rad.startswith("#"):
@@ -3094,6 +3310,7 @@ def las_listfil(path: str) -> tuple[list[Listpost], Globala]:
             slag = ("bild" if nyckel in _BILD_NYCKLAR else "media" if nyckel in _MEDIA_NYCKLAR
                     else "markprofil" if nyckel in _MARK_NYCKLAR
                     else "uppstroms" if nyckel in _UPP_NYCKLAR
+                    else "gis" if nyckel in _GIS_NYCKLAR
                     else "manuell" if nyckel in _MANUELL_NYCKLAR
                     else "kostnader" if nyckel in _KOSTNAD_NYCKLAR else "littera")
             globala[slag] += [abs_(d) for d in m.group(2).split(";") if d.strip()]
@@ -3124,7 +3341,7 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Lis
     import glob
     kandidater: list[Listpost] = []
     globala: Globala = {"media": [], "bild": [], "littera": [], "markprofil": [], "uppstroms": [],
-                        "manuell": [], "kostnader": []}
+                        "manuell": [], "kostnader": [], "gis": []}
 
     def lagg_till_lista(lf: str) -> None:
         p, g = las_listfil(lf)
@@ -3195,6 +3412,10 @@ def main(argv=None):
     ap.add_argument("--uppstroms", action="append", default=[], metavar="FIL.CSV",
                     help="CSV från ArcMap-verktyget Uppströms (batchläge): serviser och längd uppströms "
                          "per sträcka; kan även anges i listfilen som 'uppstroms: FIL'")
+    ap.add_argument("--gis", action="append", default=[], metavar="FIL.JSON",
+                    help="gisdata.json från ArcMap-verktyget Exportera GIS-data (brunnar och ledningar): "
+                         "kontroll av vattengång, littera, riktning, material och dimension samt djup; "
+                         "kan även anges i listfilen som 'gis: FIL'")
     ap.add_argument("--manuell", action="append", default=[], metavar="FIL.XLSX",
                     help="tidigare prioritering.xlsx med ifyllda Manuell bedömning, Kommentar och Lagning (m); "
                          "kan även anges i listfilen som 'manuell: FIL'")
@@ -3295,6 +3516,27 @@ def main(argv=None):
         if flaggade:
             print(f"  {len(flaggade)} sträckor med höjdflagga, t.ex. "
                   + ", ".join(f"{s.id} ({s.hojdflagga})" for s in flaggade[:3]))
+    gisfiler = []
+    for gf in globala["gis"] + a.gis:
+        if not os.path.isfile(gf):
+            fel.append(f"{gf}: GIS-datafilen finns inte")
+            print(f"  VARNING GIS-data saknas: {gf}")
+            continue
+        gisfiler.append(las_gis(gf))
+    if gisfiler:
+        g = koppla_gis(strackor, gisfiler)
+        print(f"GIS-data: {g['ledningar']} av {len(strackor)} sträckor har ledning i GIS, "
+              f"{g['vg']} fick vattengång ur GIS, {g['flaggade']} flaggade, {len(g['okanda'])} okända brunnar")
+        typer = Counter(fl.split(":")[0] for s in strackor for fl in s.gisflagga.split("; ") if fl)
+        for typ, n in typer.most_common():
+            print(f"  {n:>4} {typ}")
+        if g["okanda"]:
+            os.makedirs(a.utdata, exist_ok=True)
+            lf = os.path.join(a.utdata, "littera_forslag.csv")
+            skriv_litteraforslag(g["okanda"], lf)
+            print(f"  okända brunnar med förslag ur GIS skrivna till {lf}")
+            for f in g["okanda"][:5]:
+                print(f"    {f['littera']} → {', '.join(f['forslag']) or '?'}")
     uppposter = []
     for uf in globala["uppstroms"] + a.uppstroms:
         if not os.path.isfile(uf):

@@ -51,7 +51,7 @@ C:\Inspektioner\2022\                  # katalog: alla .TV3 i den
 markprofil: Karta\markprofil.json      # från ArcMap-verktyget Markprofil (sep 2026), alias mark:
 ```
 Internt: `las_listfil` → `(poster, globala)` med poster `(tv3, filmkataloger, bildkataloger)` och
-`globala = {"media", "bild", "littera", "markprofil"}`; `Stracka.media_kataloger`/`bild_kataloger`;
+`globala = {"media", "bild", "littera", "markprofil", "uppstroms", "manuell", "kostnader", "gis"}`; `Stracka.media_kataloger`/`bild_kataloger`;
 `koppla_media(strackor, media, bild)` söker bilder i bildkataloger + TV3-mappen om några angetts,
 annars i filmkatalogerna.
 
@@ -316,6 +316,35 @@ GIS-nivå)"); statustexten använder `Stracka.hojdsystem` ur markprofil.json; `d
 hojdflagga "Filmad längd X m mot Y m i kartan – fel sträcka?" när langd > 1,25 × langd_karta;
 profilbilden ritas även utan inklinometer när GIS-vattengång och mark finns (rät linje). Utan markprofil är allt oförändrat (regressionstestat). Testad med syntetisk
 markprofil för DUF 701 (scratchpad) och låtsas-arcpy för verktyget.
+**GIS-export och kontroll mot kartan** (okt 2026, `arcmap/gisexport.py` + verktyget Exportera GIS-data i
+.pyt, oprövat i riktig ArcMap; användarens önskemål "exportera brunnarna och ledningssträckorna mellan
+brunnar så vi kan kolla vg-nivåerna"): `exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt,
+typ_falt, vg_fran, vg_till, dim_falt, mat_falt, ledntyp_falt, ar_falt, tolerans, omradeslager, hojdsystem)`
+bygger `natverk.Graf` med ALLA brunnar som noder, tar varje bit en gång (`fram_ids`, ej `noll`) och
+interpolerar vattengången i delningspunkterna längs originalledningen (`markprofil._station`, `_vg_vid`:
+ändvärden vid ≤ 0,05 m från änden). Locknivån ligger på brunnarna, vattengången på ledningarna (vg upp/ned
+vid start-/slutvertex) – ingen bottennivå på brunnen (användaren). Skriver `gisdata.json` ({brunnar:
+[littera, typ, lockniva, x, y, lager], ledningar: [fran, till, fran_xy, till_xy, langd_m, vg_fran, vg_till,
+dimension, material, ledningstyp, anlaggningsar, lager, oid, del, antal_delar]}; fri ände = tomt namn) +
+`gisdata_brunnar.csv`/`_ledningar.csv` (utf-8-sig, decimalkomma). Dialogen gissar fält (STANDARD_LOCKNIVA,
+_BRUNNSTYP, _DIMENSION, _MATERIAL, _LEDNTYP, _AR, VG_FRAN/TILL). I `tv3_analys.py`: `gis:`/`--gis`,
+`las_gis`, `koppla_gis` (brunnspar oavsett riktning, vid flera den med längd närmast filmens; sätter
+`Stracka.gis` = {ledning, brunn_start, brunn_slut, vg_min_start/slut}; utan markprofil fylls gis_vg_start/
+slut, langd_karta, hojdsystem så hojdanpassning, "fel sträcka?" och ofullstandig fungerar som med
+markprofil), `Stracka.gisflagga` ("brunn saknas i GIS: X", "ingen ledning i GIS mellan brunnarna",
+"vattengång: fall X m i filmen, Y m i GIS" när |diff| > max(`GIS_FALL_TOL_M` 0,3, `GIS_FALL_TOL_ANDEL`
+0,5 × |GIS-fall|), "riktning: GIS-vattengången stiger …" (> `GIS_RIKTNING_MIN_M` 0,05), "vattengång
+saknas i GIS", "material: …" via `_materialgrupp`/`GIS_MATERIAL` (BTG=Betong, PVC/PE/PP=Plast …),
+"dimension: …"), `gis_lutning_promille`, `djup_start/slut` (locknivå − lägsta vg i brunnen),
+`anlaggningsar`. Okända brunnar → `littera_forslag.csv` i utdata (brunnslittera-format, förslag via
+`difflib.get_close_matches` cutoff `GIS_LITTERA_LIKHET` 0,75 = två omkastade siffror). Excel: GIS-flagga
+(synlig), Lutning GIS, Djup start/slut, Anläggningsår (dolda), Sammanfattning-rad; JSON gis_flagga,
+gis_lutning_promille, djup_start_m, djup_slut_m, anlaggningsar. Test: scratchpad/test_gisexport.py
+(låtsas-arcpy: brunn mitt på ledning + snett 0,5 m, interpolerad vg, fri ände, brunn utan ledning) och
+syntetisk gisdata för DUF 701 med inlagda fel (dimension, material, omvänd vg, fel fall, vg saknas,
+ledning saknas, omkastat/borttaget littera) – alla hittades; facit utan gis oförändrat. Handledning 7.11.
+Idéer kvar: inspektionsgrad (GIS-ledningar utan film), uppströmsanalys ur exporten utan ArcMap,
+djupklass i schaktlistan, ålder som konsekvensfaktor.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
 `skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med
