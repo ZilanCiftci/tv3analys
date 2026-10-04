@@ -173,6 +173,12 @@ HOJD_SAMMA_M = 0.3      # m – avviker filens brunnshöjder mindre än så frå
 HOJD_FALL_TOL_M = 0.3   # m – skiljer sig fallet mellan brunnarna mer än så från GIS korrigeras
                         #     lutningen linjärt (inklinometerdrift), annars bara en förskjutning
 TACKNING_MIN_M = 1.0    # m – mindre täckning (mark − hjässa) än så flaggas
+# Rimlighet hos höjderna i TV3-filen (PROFILADM/PROFILDAT): värden under HOJD_SAKNAS_UNDER (SVOA: −9999)
+# räknas som saknade; skiljer brunnshöjderna mer än HOJD_ORIMLIG_M, eller spänner inklinometerprofilen över
+# mer än så, är höjderna fel i filen – lutning och profil redovisas då som okända ("höjdfel i filen" i
+# Höjdflagga, protokollet och kartunderlaget) i stället för som −26 000 ‰ och en lodrät profil.
+HOJD_SAKNAS_UNDER = -999
+HOJD_ORIMLIG_M = 50
 OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartlängden nådde kameran inte
 # GIS-data (gisdata.json från ArcMap-verktyget "Exportera GIS-data"): brunnar med locknivå och
 # ledningssträckor mellan brunnar med vattengång, dimension, material och år. Analysen kontrollerar
@@ -401,6 +407,7 @@ class Stracka:
     vader: str
     observationer: list[Observation] = field(default_factory=list)
     profil: list[tuple[float, float, float]] = field(default_factory=list)  # (m, rel z, z)
+    hojdfel: str = ""               # höjderna i filen är orimliga (satt vid inläsning), t.ex. "brunnshöjder 20,63 / 2444,33 m"
     profil_start_z: float | None = None
     profil_slut_z: float | None = None
     tv3_sokvag: str = ""                 # absolut sökväg till TV3-filen
@@ -697,6 +704,8 @@ class Stracka:
 
     @property
     def hojdflagga(self) -> str:
+        if self.hojdfel:
+            return self.hojdfel[0].upper() + self.hojdfel[1:]
         if self.langd_karta and not self.ofullstandig and self.langd > 1.25 * self.langd_karta:
             return f"Filmad längd {self.langd:.0f} m mot {self.langd_karta:.0f} m i kartan – fel sträcka?"
         t = self.tackning
@@ -828,9 +837,18 @@ class Stracka:
         h = self.hojdanpassning
         if h and h["offset"] is not None:
             return (h["z_start"] - h["z_slut"]) / self.langd * 1000
-        if self.profil_start_z is None or self.profil_slut_z is None:
+        zs, ze = self._filens_brunnshojder()     # PROFILADM, annars inklinometerns ändpunkter
+        if zs is None or ze is None:
             return None
-        return (self.profil_start_z - self.profil_slut_z) / self.langd * 1000
+        return (zs - ze) / self.langd * 1000
+
+    @property
+    def lutning_ur_inklinometer(self) -> bool:
+        """Lutningen är räknad på inklinometerns ändpunkter (PROFILADM saknas eller är orimlig)."""
+        h = self.hojdanpassning
+        if h and h["offset"] is not None:
+            return False
+        return (self.profil_start_z is None or self.profil_slut_z is None) and len(self.profil) >= 2
 
     @property
     def fran_brunn(self) -> str:
@@ -1249,6 +1267,23 @@ def ratta_littera(strackor: list[Stracka], regler: list[dict]) -> int:
     return n
 
 
+def kontrollera_hojder(s: Stracka) -> str:
+    """Rimlighetskontroll av filens höjder. Skiljer brunnshöjderna i PROFILADM mer än HOJD_ORIMLIG_M,
+    eller spänner inklinometerprofilen över mer än så, tas höjderna bort (lutning, svacka och
+    profilbild blir okända) och orsaken returneras som text; annars ""."""
+    fel = []
+    zs, ze = s.profil_start_z, s.profil_slut_z
+    if zs is not None and ze is not None and abs(zs - ze) > HOJD_ORIMLIG_M:
+        fel.append(f"brunnshöjder {zs:.2f} / {ze:.2f} m")
+        s.profil_start_z = s.profil_slut_z = None
+    if s.profil:
+        z = [p[2] for p in s.profil]
+        if max(z) - min(z) > HOJD_ORIMLIG_M:
+            fel.append(f"inklinometerprofil {min(z):.1f} till {max(z):.1f} m")
+            s.profil = []
+    return ("höjdfel i filen: " + ", ".join(fel)) if fel else ""
+
+
 def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
     text = las_text(path)
     filnamn = os.path.basename(path)
@@ -1305,20 +1340,31 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
                 if a:
                     a.lopande_langd = round(o.lage - a.lage, 2)
 
+    def _hojd(v):
+        z = _f(v)
+        return None if z is None or z <= HOJD_SAKNAS_UNDER else z
+
     for r in sektioner.get("PROFILADM", []):
         nr = _i(g(r, 0))
         if nr in strackor:
-            strackor[nr].profil_start_z = _f(g(r, 16))
-            strackor[nr].profil_slut_z = _f(g(r, 17))
+            strackor[nr].profil_start_z = _hojd(g(r, 16))
+            strackor[nr].profil_slut_z = _hojd(g(r, 17))
     for r in sektioner.get("PROFILDAT", []):
         nr = _i(g(r, 0))
         if nr in strackor:
-            x, rz, z = _f(g(r, 1)), _f(g(r, 2)), _f(g(r, 3))
+            x, rz, z = _f(g(r, 1)), _f(g(r, 2)), _hojd(g(r, 3))
             if x is not None and z is not None:
                 strackor[nr].profil.append((x, rz or 0.0, z))
 
+    hojdfel = []
     for s in strackor.values():
         s.profil.sort(key=lambda p: p[0])
+        s.hojdfel = kontrollera_hojder(s)
+        if s.hojdfel:
+            hojdfel.append(s)
+    if hojdfel:
+        print(f"  OBS     {filnamn}: {len(hojdfel)} sträckor har orimliga höjder i filen – lutning/profil redovisas "
+              f"som okända (nr {', '.join(str(s.nr) for s in hojdfel[:8])}" + (" …" if len(hojdfel) > 8 else "") + ")")
 
     if littera:
         ratta_littera(list(strackor.values()), littera)
@@ -2423,6 +2469,9 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                           f"(räknas en gång; delfilmerna listas i Prioritering utan rang)")
          if any(s.filmstatus for s in alla) else "inga"],
         ["Ny inspektion i senare fil", _tidigare_text_summa(strackor)],
+        ["Höjdfel i TV3-filen", (f"{sum(1 for s in alla if s.hojdfel)} sträckor med orimliga höjder (brunnshöjder eller "
+                                 f"inklinometer skiljer > {HOJD_ORIMLIG_M} m) – lutning och profil redovisas som okända")
+         if any(s.hojdfel for s in alla) else "inga"],
         ["Höjdläge (markprofil/GIS från ArcMap)", (f"{sum(1 for s in strackor if s.mark)} sträckor med markhöjder, "
                                      f"{sum(1 for s in strackor if s.hojdanpassning and s.hojdanpassning['offset'] is not None and s.gis_vg_start is not None)} "
                                      f"med GIS-vattengång, {sum(1 for s in strackor if s.hojdflagga)} flaggade")
@@ -2850,6 +2899,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "tackning_min_m": round(s.tackning["min"], 2) if s.tackning else None,
             "tackning_max_m": round(s.tackning["max"], 2) if s.tackning else None,
             "hojdflagga": s.hojdflagga,
+            "hojdfel": s.hojdfel or None,
             "gis_flagga": s.gisflagga or None,
             "gis_lutning_promille": round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
             "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
@@ -3353,7 +3403,9 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
                     xytext=(0, 10 if nara_ande else -14), textcoords="offset points",   # ovanför nära brunnsnamnen
                     ha="center", fontsize=7.5, color="#d03b3b")
     if pa and pa["osaker"]:
-        ax.text(0.01, 0.03, "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
+        ax.text(0.01, 0.03, "OBS: brunnshöjder saknas eller är orimliga i filen – profilen kan inte kontrolleras"
+                if s.profil_start_z is None or s.profil_slut_z is None
+                else "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
                 ha="left", va="bottom", fontsize=7, color="#d03b3b")   # nere till vänster: tomt när höga änden är vänster
     if mark:
         ax.plot([xm for xm, _ in mark], [zm for _, zm in mark], color="#8c6d46", lw=1.4,
@@ -3516,7 +3568,9 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
          "Totalindex", f"{s.index():.1f} p/100 m"),
         ("Svacka (djup / längd)", f"{pa['svackdjup'] * 100:.0f} cm / {pa['svacklangd']:.1f} m"
          if pa and pa["svackdjup"] is not None else ("okänd (profil osäker)" if pa else "–"),
-         "Lutning", (f"{lut:.1f} ‰" if lut is not None else "–") + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
+         "Lutning", (f"{lut:.1f} ‰" + (" (ur inklinometern)" if s.lutning_ur_inklinometer else "") if lut is not None
+                     else ("okänd (höjdfel i filen)" if s.hojdfel else "–"))
+         + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
         ("Videofil", s.videofil or "–", "TV3-fil", s.fil),
     ]
@@ -3526,6 +3580,8 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                      "Täckning (min / max)",
                      (f"{tk['min']:.2f} / {tk['max']:.2f} m" + (f"  ·  {s.hojdflagga}" if s.hojdflagga else ""))
                      if tk else "–"))
+    if s.hojdfel and not h:
+        info.append(("Höjdfel", s.hojdfel[0].upper() + s.hojdfel[1:] + " – de värdena används inte", "", ""))
     if s.littera_rattat:
         info.append(("Littera rättat", s.littera_rattat, "", ""))
     if s.filmstatus:
@@ -3561,7 +3617,8 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                                 Image(profil, width=bredd, height=bredd * PROFIL_FIG[1] / PROFIL_FIG[0])]))
     else:
         el.append(Paragraph("Profil", st_h2))
-        el.append(P("Ingen inklinometerprofil finns registrerad för sträckan.", st_liten))
+        el.append(P(dk(s.hojdfel[0].upper() + s.hojdfel[1:] + " – profilen ritas inte.") if s.hojdfel
+                    else "Ingen inklinometerprofil finns registrerad för sträckan.", st_liten))
 
     # --- observationstabell ---
     huvud = [P(h, st_vit) for h in ("Pos. m", "Tid", "Kod", "Observation", "Kl.", "Nivå", "Foto", "Grad", "Poäng")]
