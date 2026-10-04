@@ -1549,17 +1549,28 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     och ledningstyp. Filmad längd räknas med GIS-ledningens längd så andelen blir konsekvent.
     Returnerar {"rader": [{omrade, ledningstyp, ledningar, langd_m, filmade, filmad_m, andel}],
     "ej_inspekterat": [GIS-ledningar utan film], "utan_gis": (sträckor, m) filmade utan GIS-ledning}."""
-    filmade = {id(s.gis["ledning"]) for s in strackor if s.gis and s.gis.get("ledning")}
+    # GIS-ledning -> sämsta gällande klass bland sträckorna på den (syskon filmade från båda håll)
+    klass_pa: dict[int, str] = {}
+    for s in strackor:
+        if s.gis and s.gis.get("ledning"):
+            k = s.gallande_klass
+            i = id(s.gis["ledning"])
+            if i not in klass_pa or k < klass_pa[i]:
+                klass_pa[i] = k
     grupp: dict[tuple[str, str], dict] = {}
 
-    def lagg(nyckel, led, ar_filmad):
-        g = grupp.setdefault(nyckel, {"ledningar": 0, "langd_m": 0.0, "filmade": 0, "filmad_m": 0.0})
+    def lagg(nyckel, led, klass):
+        g = grupp.setdefault(nyckel, {"ledningar": 0, "langd_m": 0.0, "filmade": 0, "filmad_m": 0.0,
+                                      "A": 0, "B": 0, "AB_m": 0.0})
         L = led.get("langd_m") or 0.0
         g["ledningar"] += 1
         g["langd_m"] += L
-        if ar_filmad:
+        if klass:
             g["filmade"] += 1
             g["filmad_m"] += L
+            if klass in ("A", "B"):
+                g[klass] += 1
+                g["AB_m"] += L
 
     ej = []
     for gf in filer:
@@ -1568,7 +1579,7 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
                 continue                                   # fri ände – ingen sträcka mellan brunnar
             omr = led.get("omrade") or "(utan område)"
             typ = (led.get("ledningstyp") or "").strip() or "(okänd typ)"
-            f = id(led) in filmade
+            f = klass_pa.get(id(led))
             lagg((omr, typ), led, f)
             lagg((omr, "alla"), led, f)
             lagg(("alla", typ), led, f)
@@ -1581,7 +1592,8 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     rader = []
     for (omr, typ), g in sorted(grupp.items(), key=lambda kv: (kv[0][0] == "alla", kv[0][0], kv[0][1] == "alla", kv[0][1])):
         rader.append({"omrade": omr, "ledningstyp": typ, **g,
-                      "andel": g["filmad_m"] / g["langd_m"] if g["langd_m"] else 0.0})
+                      "andel": g["filmad_m"] / g["langd_m"] if g["langd_m"] else 0.0,
+                      "andel_AB": g["AB_m"] / g["filmad_m"] if g["filmad_m"] else None})
     ej.sort(key=lambda e: (e["omrade"], e["anlaggningsar"] or 9999, e["material"], -(e["langd_m"] or 0)))
     utan = [s for s in strackor if s.langd >= 1 and not (s.gis and s.gis.get("ledning"))]
     return {"rader": rader, "ej_inspekterat": ej, "utan_gis": (len(utan), sum(s.langd for s in utan))}
@@ -2327,17 +2339,21 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     if gisstat:
         ws = wb.create_sheet("Inspektionsgrad")
         kol = ["Driftområde", "Ledningstyp", "Ledningar i GIS", "Längd i GIS (m)", "Filmade ledningar",
-               "Filmad längd (m)", "Andel filmad"]
+               "Filmad längd (m)", "Andel filmad", "Klass A (st)", "Klass B (st)", "Längd A+B (m)",
+               "Andel A+B av filmat"]
         rader = [[r["omrade"], r["ledningstyp"], r["ledningar"], round(r["langd_m"]), r["filmade"],
-                  round(r["filmad_m"]), r["andel"]] for r in gisstat["rader"]]
+                  round(r["filmad_m"]), r["andel"], r["A"], r["B"], round(r["AB_m"]), r["andel_AB"]]
+                 for r in gisstat["rader"]]
         n_utan, m_utan = gisstat["utan_gis"]
         if n_utan:
-            rader.append(["(filmat utan ledning i GIS)", "", None, None, n_utan, round(m_utan), None])
-        start = tabell(ws, kol, rader, {"Driftområde": 18, "Ledningstyp": 14})
+            rader.append(["(filmat utan ledning i GIS)", "", None, None, n_utan, round(m_utan), None,
+                          None, None, None, None])
+        start = tabell(ws, kol, rader, {"Driftområde": 18, "Ledningstyp": 14, "Andel A+B av filmat": 14})
         for r in range(start, ws.max_row + 1):
             ws.cell(r, 7).number_format = "0%"
+            ws.cell(r, 11).number_format = "0%"
             if ws.cell(r, 2).value == "alla":
-                for c in range(1, 8):
+                for c in range(1, 12):
                     ws.cell(r, c).font = Font(bold=True)
         ws = wb.create_sheet("Ej inspekterat")
         kol = ["Driftområde", "Från brunn", "Till brunn", "Längd (m)", "Dim (mm)", "Material", "Ledningstyp",
@@ -2355,8 +2371,13 @@ def _inspektionsgrad_text(gisstat: dict) -> str:
     if not tot or not tot["langd_m"]:
         return "inga ledningar i GIS-data"
     omr = [r for r in gisstat["rader"] if r["omrade"] != "alla" and r["ledningstyp"] == "alla"]
-    delar = ", ".join(f"{r['omrade']} {r['andel']:.0%}" for r in omr[:12])
-    return (f"{tot['filmad_m']:,.0f} av {tot['langd_m']:,.0f} m filmade ({tot['andel']:.0%})".replace(",", " ")
+    def ab(r):
+        return f" varav A+B {r['andel_AB']:.0%}" if r["andel_AB"] is not None else ""
+
+    def tusen(x):
+        return f"{x:,.0f}".replace(",", " ")
+    delar = "; ".join(f"{r['omrade']} {r['andel']:.0%}{ab(r)}" for r in omr[:12])
+    return (f"{tusen(tot['filmad_m'])} av {tusen(tot['langd_m'])} m filmade ({tot['andel']:.0%}{ab(tot)})"
             + (f" – per område: {delar}" if omr else ""))
 
 
