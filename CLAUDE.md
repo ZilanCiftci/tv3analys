@@ -336,8 +336,12 @@ markprofil), `Stracka.gisflagga` ("brunn saknas i GIS: X", "ingen ledning i GIS 
 0,5 × |GIS-fall|), "riktning: GIS-vattengången stiger …" (> `GIS_RIKTNING_MIN_M` 0,05), "vattengång
 saknas i GIS", "material: …" via `_materialgrupp`/`GIS_MATERIAL` (BTG=Betong, PVC/PE/PP=Plast …),
 "dimension: …"), `gis_lutning_promille`, `djup_start/slut` (locknivå − lägsta vg i brunnen),
-`anlaggningsar`. Okända brunnar → `littera_forslag.csv` i utdata (brunnslittera-format, förslag via
-`difflib.get_close_matches` cutoff `GIS_LITTERA_LIKHET` 0,75 = två omkastade siffror). Excel: GIS-flagga
+`anlaggningsar`. Okända brunnar → `littera_forslag.csv` i utdata (brunnslittera-format med motbrunn, en rad
+per sträcka): är den andra brunnen känd prövas dess grannar i GIS (`grannar` ur pa_par) och grannar vars
+ledning har längd inom `GIS_LANGD_TOL` 0,15 av filmens föreslås, rankade på längddiff − 0,5·namnlikhet
+(användarens idé okt 2026: "enbart en brunn fel – gissa rätt brunn med längden"); annars/utan träff
+`difflib.get_close_matches` cutoff `GIS_LITTERA_LIKHET` 0,75 (= två omkastade siffror); kommentaren anger
+metod och längder. Excel: GIS-flagga
 (synlig), Lutning GIS, Djup start/slut, Anläggningsår (dolda), Sammanfattning-rad; JSON gis_flagga,
 gis_lutning_promille, djup_start_m, djup_slut_m, anlaggningsar. Test: scratchpad/test_gisexport.py
 (låtsas-arcpy: brunn mitt på ledning + snett 0,5 m, interpolerad vg, fri ände, brunn utan ledning) och
