@@ -175,18 +175,26 @@ def _huvudram(mxd):
         return ramar[0]
 
 
+KOPIANAMN = 'Aktuell stracka (export)'   # tillfallig kopia av strackslagret nar det slacks
+
+
 class Layout(object):
     """Ett kartdokument att exportera ur: det oppna (CURRENT) eller en mall (.mxd). Haller
     dataramen, dess matt per skalenhet, lagret med strackorna och ev. markeringslagret."""
 
     def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None, kopiera_fran=None,
-                 kopiera_synliga=None):
+                 kopiera_synliga=None, dolj_strackor=False):
         """kopiera_fran: (lager, markeringslager) ur den oppna kartan - saknas de i mallen laggs de
         in i mallens dataram for exporten (mallen sparas inte). kopiera_synliga: den oppna kartans
         kartdokument - alla dess synliga toppnivalager (inkl. grupplager) laggs in i mallen i samma
-        ordning, sa att kartan ser ut som pa skarmen."""
+        ordning, sa att kartan ser ut som pa skarmen. dolj_strackor: slack lagret med alla strackor
+        under exporten och visa bara den aktuella (markeringslagret, eller en tillfallig kopia av
+        lagret med definitionsfraga nar inget markeringslager finns). Ar lagret redan slackt i
+        kartan gors detsamma automatiskt."""
         self.mxd = mxd
         self.namn = namn
+        self._kopia = None
+        self._gammal_synlig = None
         try:
             if txt(mxd.activeView).upper() != 'PAGE_LAYOUT':
                 mxd.activeView = 'PAGE_LAYOUT'      # dataramens utbredning galler layouten, inte datavyn
@@ -228,6 +236,64 @@ class Layout(object):
             self._gammalt_urval = list(self.lyr.getSelectionSet() or [])
         except Exception:
             pass
+        try:
+            synligt = bool(self.lyr.visible)
+        except Exception:
+            synligt = True
+        if dolj_strackor or not synligt:
+            self._dolj(lagernamn, dolj_strackor)
+
+    def _dolj(self, lagernamn, begart):
+        """Slacker lagret med alla strackor under exporten. Finns inget markeringslager laggs en
+        kopia av lagret overst i dataramen (namn KOPIANAMN) och anvands som markeringslager - dess
+        definitionsfraga satts till den aktuella strackan. Kopian tas bort i aterstall()."""
+        try:
+            self._gammal_synlig = bool(self.lyr.visible)
+        except Exception:
+            self._gammal_synlig = None
+        if self.mark_lyr is None:
+            kopia = None
+            try:
+                arcpy.mapping.AddLayer(self.df, self.lyr, 'TOP')
+                # Kopian ligger overst i dataramen, dvs. forst bland lagren med samma namn
+                kort = txt(getattr(self.lyr, 'name', lagernamn)).strip().lower()
+                for l in arcpy.mapping.ListLayers(self.mxd, '', self.df):
+                    try:
+                        if txt(l.name).strip().lower() == kort and not getattr(l, 'isGroupLayer', False):
+                            kopia = l
+                            break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logg('  kunde inte lagga in en kopia av strackslagret i %s: %s' % (self.namn, txt(e)))
+            if kopia is None:
+                logg('  OBS: %s - strackslagret kan inte slackas utan markeringslager (ingen kopia kunde '
+                     'laggas in); lagret visas tant' % self.namn)
+                try:
+                    self.lyr.visible = True
+                except Exception:
+                    pass
+                return
+            try:
+                kopia.name = KOPIANAMN
+            except Exception:
+                pass
+            try:
+                kopia.definitionQuery = ''
+                kopia.visible = True
+            except Exception:
+                pass
+            self._kopia = kopia
+            self.mark_lyr = kopia
+            self._gammal_dq = ''
+        try:
+            self.lyr.visible = False
+        except Exception as e:
+            logg('  kunde inte slacka strackslagret i %s: %s' % (self.namn, txt(e)))
+            return
+        logg('  %s: strackslagret ar slackt%s - bara den aktuella strackan visas%s'
+             % (self.namn, '' if begart else ' i kartan',
+                '' if self._kopia is None else ' (tillfallig kopia "%s" med definitionsfraga)' % KOPIANAMN))
 
     def _kopiera_synliga(self, oppen):
         """Lagger in den oppna kartans synliga toppnivalager i mallens dataram, i samma ordning
@@ -285,7 +351,7 @@ class Layout(object):
     def kontrollera_kalla(self, src):
         """Varnar om mallens lager pekar pa en annan featureklass an den oppna kartans."""
         for l, vad in ((self.lyr, 'lagret'), (self.mark_lyr, 'markeringslagret')):
-            if l is None:
+            if l is None or l is self._kopia:
                 continue
             try:
                 k = kalla(l)[0]
@@ -322,8 +388,23 @@ class Layout(object):
             arcpy.SelectLayerByAttribute_management(self.lyr, 'NEW_SELECTION', where)
 
     def aterstall(self):
-        """Aterstaller definitionsfragan respektive anvandarens ursprungliga urval."""
+        """Aterstaller definitionsfragan respektive anvandarens ursprungliga urval, tander
+        strackslagret igen och tar bort den tillfalliga kopian."""
         if self.lyr is None:
+            return
+        if self._gammal_synlig is not None:
+            try:
+                self.lyr.visible = self._gammal_synlig
+            except Exception:
+                pass
+        if self._kopia is not None:
+            try:
+                arcpy.mapping.RemoveLayer(self.df, self._kopia)
+            except Exception as e:
+                logg('  kunde inte ta bort den tillfalliga kopian "%s" ur %s: %s - ta bort den for hand'
+                     % (KOPIANAMN, self.namn, txt(e)))
+            self._kopia = None
+            self.mark_lyr = None
             return
         try:
             if self.mark_lyr is not None:
@@ -359,7 +440,7 @@ def valj_layout(layouter, utb, skalor, marginal):
 def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL_M, dpi=200,
               markeringslager=None, samlad=True, per_etapp=False, skriv_falt=True,
               kartmapp=None, bara_valda_klasser=KLASSER, mall_liggande=None, mall_staende=None,
-              kopiera_synliga=True):
+              kopiera_synliga=True, dolj_strackor=False):
     """Exporterar en PDF per stracka (eller per etapp) till ut_mapp. Returnerar lista med
     (filnamn, skala, ryms, layoutnamn). urval: 'atgard' (METOD ifyllt), 'AB' (BEDOMNING i A/B),
     'valda' (markerade i kartan), 'alla'. markeringslager: lager som pekar pa samma featureklass
@@ -370,6 +451,9 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     kartan under korningen (mallen sparas inte). kopiera_synliga: alla synliga lager i den oppna
     kartan laggs in i mallen i samma ordning, sa att kartan ser ut som pa skarmen (annars bara
     strack- och markeringslagret). Utan mallar anvands den oppna kartans layout.
+    dolj_strackor: slack lagret med alla strackor under exporten sa att bara den aktuella strackan
+    syns (markeringslagret, eller en tillfallig kopia av lagret med definitionsfraga); gors ocksa
+    automatiskt nar lagret ar slackt i kartan.
     kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
     mxd = _mxd()
     if mxd is None:
@@ -411,7 +495,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                     except Exception:
                         mark_lyr_oppen = None
                 lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn,
-                            kopiera_fran=(lyr, mark_lyr_oppen), kopiera_synliga=mxd if kopiera_synliga else None)
+                            kopiera_fran=(lyr, mark_lyr_oppen), kopiera_synliga=mxd if kopiera_synliga else None,
+                            dolj_strackor=dolj_strackor)
                 lo.kontrollera_kalla(src)
                 layouter.append(lo)
                 logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
@@ -423,7 +508,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                 lo.stang()
             raise
     else:
-        lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr)
+        lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr, dolj_strackor=dolj_strackor)
         layouter.append(lo)
         logg('Dataramen ar %.0f x %.0f m i skala 1:%d' % (lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0]))
 

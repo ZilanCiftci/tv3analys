@@ -231,7 +231,7 @@ liggande, lyr via `_lager_i_doc` på lagernamnet från den öppna kartan, mark_l
 `setSelectionSet('NEW', oids)` med SelectLayerByAttribute som reserv, aterstall); `valj_layout` tar
 layouten med nyckel (ryms inte, skala, −fyllnad) = minsta skala, vid lika den där sträckan fyller
 ramen bäst; textelement och export sker i den valda mallens dokument; mallarna sparas inte (del).
-Utan mallar en `Layout` för CURRENT. Resultat-tupler (fil, skala, ryms, layoutnamn).
+Utan mallar en `Layout` för CURRENT. Resultat-tupler (fil, skala, ryms, layoutnamn). **Släckt sträcklager** (okt 2026, användaren: "exportera utan filmlagret tänt"): param 14 `dolj_strackor` (GPBoolean, False) → `exportera(dolj_strackor=)` → `Layout._dolj`: sparar `lyr.visible`, sätter False; utan markeringslager läggs en kopia av lagret överst (`AddLayer 'TOP'`, första lagret med samma namn i `ListLayers(mxd, '', df)`), döps `KOPIANAMN` 'Aktuell stracka (export)', blir `mark_lyr` (definitionsfråga per sträcka) och tas bort i `aterstall` med `RemoveLayer`; görs automatiskt när lagret redan är släckt i kartan (loggat "slackt i kartan"); `kontrollera_kalla` hoppar kopian. Test OK4/OK5 i test_kartexport.py.
 Granskning okt 2026 (rättat): nyckeln i `valj_layout` är (ryms inte, skala, fyll om inte ryms annars
 −fyll) – minst överskjutning när inget ryms; användarens urval sparas (`_gammalt_urval`) och
 återställs i `aterstall`; `_lager_i_doc` provar långt namn, sedan kortnamn, hoppar grupplager;
