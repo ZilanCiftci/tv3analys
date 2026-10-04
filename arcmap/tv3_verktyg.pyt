@@ -1048,8 +1048,12 @@ class ExporteraKartor(object):
             name='kopiera_synliga', datatype='GPBoolean', parameterType='Optional', direction='Input',
             category=K_MALL)
         kopiera.value = True
+        dolj = arcpy.Parameter(
+            displayName='Sl\u00e4ck lagret med alla str\u00e4ckor - visa bara den aktuella str\u00e4ckan',
+            name='dolj_strackor', datatype='GPBoolean', parameterType='Optional', direction='Input')
+        dolj.value = False
         return _minne_fyll(self, [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
-                skriv_falt, kartmapp, mall_ligg, mall_sta, kopiera])
+                skriv_falt, kartmapp, mall_ligg, mall_sta, kopiera, dolj])
 
     def isLicensed(self):
         return True
@@ -1099,7 +1103,8 @@ class ExporteraKartor(object):
                     kartmapp=parameters[10].valueAsText or None,
                     mall_liggande=parameters[11].valueAsText or None,
                     mall_staende=parameters[12].valueAsText or None,
-                    kopiera_synliga=parameters[13].value is not False)
+                    kopiera_synliga=parameters[13].value is not False,
+                    dolj_strackor=bool(parameters[14].value))
         try:
             arcpy.RefreshActiveView()
         except Exception:
