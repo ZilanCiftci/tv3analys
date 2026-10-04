@@ -484,8 +484,17 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   rad = löpnummer mod 3 så band fyra hamnade på band ett, okt 2026),
   anslutningar som trianglar ovanför (vänster) / under (höger) röret med etikett "15.6 m kl 9",
   meterskala som egen linje under anslutningarna med siffrorna direkt under ticksen och riktningspil
-  under skalan (okt 2026, användarens begäran); förklaringen högst upp. Användaren ska återkomma
-  med hur anslutningarna ska visas.
+  under skalan (okt 2026, användarens begäran); förklaringen högst upp. Layoutgenomgång okt 2026
+  ("fixa efter eget omdöme"): anslutningsetiketter packas per sida i rader (`_packa_band` på
+  etikettbredden, inte varannan rad), punktskadornas romber packas i tre rader innanför röret
+  (0, +0,15, −0,15) när de ligger inom samma bredd, banden börjar ovanför anslutningsetiketterna och
+  skalan läggs under alla etiketter (figurhöjden följer med; tomt band-utrymme borta), avbruten
+  inspektion = rött kryss med "inspektion avbruten" (packas med hjässa/botten-etiketter) och slut-
+  brunnen ritas ihålig med "(ej nådd)" (`ofullstandig`). Sektionsordning i PDF:en: info, Översikt,
+  **Profil**, Observationer, foton (profilen före tabellen så båda graferna oftast får plats på sida 1;
+  tabellen delas bra över sidor, bilder inte). Observationstabellen: Pos 15 mm, Tid 17, Kod 12, Kl 13,
+  Nivå 11, Foto 32, Grad 12, Poäng 14 ("110.04", "KAM", "Poäng", "Nivå" bröts i två rader);
+  poäng med högst en decimal. Användaren ska återkomma med hur anslutningarna ska visas.
 - Observationstabell med radfärg efter grad (ingen förklaringstext – borttagen på begäran).
   Bildnamnen i kolumnen Foto är **interna PDF-länkar** (`<a href="#foto_…">`) till fotografiet
   längre bak; ankaret (`<a name>` i en 1 pt-paragraf) ligger ovanför bilden så den hamnar i vy.

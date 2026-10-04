@@ -2342,87 +2342,121 @@ def _packa_band(band: list[tuple[float, float]]) -> list[int]:
 
 def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
     """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador.
-    Returnerar figurens (bredd, höjd) i tum – höjden växer när de löpande skadorna behöver fler rader."""
+    Returnerar figurens (bredd, höjd) i tum – höjden växer när band eller anslutningsetiketter behöver
+    fler rader. Allt som kan krocka packas i rader (`_packa_band`): löpande skador ovanför röret,
+    anslutningsetiketter per sida och romber för punktskador som ligger inom samma bredd."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyBboxPatch
 
     L = max(s.langd, 1.0)
+    per_pt = L * 1.12 / (SCHEMA_BREDD_TUM * 72)        # dataenheter (x) per punkt
+    tecken6 = per_pt * 3.9                              # bredd per tecken vid 6 pt
+    tecken55 = per_pt * 3.6                             # vid 5,5 pt
+    bla = "#2a78d6"
+
     # löpande skador: rad per band så de inte hamnar på varandra (etikettbredden räknas med)
     lopande = [o for o in s.observationer if o.raknas and o.lopande.startswith("A") and o.lopande_langd]
     lopande.sort(key=lambda o: o.lage)
-    etikett_bredd = L * 1.12 / (SCHEMA_BREDD_TUM * 72) * 3.9   # dataenheter per tecken vid 6 pt
     intervall = []
     for o in lopande:
         text = f"{o.kod}{o.grad} {o.lopande_langd:.1f} m"
-        intervall.append((o.lage, max(o.lage + o.lopande_langd, o.lage + len(text) * etikett_bredd) + L * 0.015))
-    rad = _packa_band(intervall)
-    antal_rader = max(3, max(rad) + 1 if rad else 0)
-    y_topp = 0.95 + SCHEMA_RADHOJD * antal_rader + 0.6      # plats för band + förklaring
-    hojd_tum = SCHEMA_HOJD_TUM * (y_topp + 2.1) / 4.3
+        intervall.append((o.lage, max(o.lage + o.lopande_langd, o.lage + len(text) * tecken6) + L * 0.015))
+    band_rad = _packa_band(intervall)
+
+    # anslutningar – sida enligt klockposition sett i inspektionsriktningen:
+    # kl 7–11 = vänster (ritas ovanför röret), kl 1–5 = höger (under röret), kl 12/6 = hjässa/botten (på röret)
+    ansl = {"vänster": [], "höger": [], "": []}
+    for o in sorted((o for o in s.observationer if o.infokod in ("AS", "AG")), key=lambda o: o.lage):
+        etikett = f"{o.lage:.1f} m" + (f" kl {o.klocka_fran.lstrip('0')}" if o.klocka_fran else "")
+        sida = anslutning_sida(o.klocka_fran)
+        ansl["vänster" if sida == "vänster" else "höger" if sida == "höger" else ""].append((o, etikett))
+    # avbrott (KAM) packas med hjässa/botten-etiketterna så texten inte hamnar på en anslutning i samma punkt
+    for o in s.observationer:
+        if o.kod == "KAM":
+            ansl[""].append((o, "inspektion avbruten"))
+    ansl[""].sort(key=lambda par: par[0].lage)
+    ansl_rad = {}
+    for sida in ("vänster", "höger", ""):
+        halv = [len(e) * tecken55 / 2 + L * 0.008 for _, e in ansl[sida]]
+        ansl_rad[sida] = _packa_band([(o.lage - h, o.lage + h) for (o, _), h in zip(ansl[sida], halv)])
+    rader_ovan = max(ansl_rad["vänster"], default=-1) + 1
+    rader_under = max(max(ansl_rad["höger"], default=-1), max(ansl_rad[""], default=-1)) + 1
+
+    # punktskador: romber inom samma bredd läggs i egna rader innanför röret
+    punkt = sorted((o for o in s.observationer if o.raknas and not (o.lopande.startswith("A") and o.lopande_langd)),
+                   key=lambda o: o.lage)
+    romb = per_pt * 7.5
+    punkt_rad = _packa_band([(o.lage - romb / 2, o.lage + romb / 2) for o in punkt])
+
+    ANSL_RAD = 0.28
+    y_band0 = 0.42 + ANSL_RAD * max(rader_ovan, 1) + 0.25           # banden börjar ovanför etiketterna
+    antal_band = max(1, max(band_rad) + 1 if band_rad else 0)
+    y_topp = y_band0 + SCHEMA_RADHOJD * antal_band + 0.55           # plats för band + förklaring
+    y_skala = -(0.42 + ANSL_RAD * max(rader_under, 1) + 0.3)        # skalan under alla etiketter
+    y_pil = y_skala - 0.7
+    y_botten = y_skala - 0.95
+    hojd_tum = SCHEMA_HOJD_TUM * (y_topp - y_botten) / 4.3
     fig, ax = plt.subplots(figsize=(SCHEMA_BREDD_TUM, hojd_tum))
     ax.set_xlim(-L * 0.06, L * 1.06)
-    ax.set_ylim(-2.1, y_topp)
+    ax.set_ylim(y_botten, y_topp)
     ax.axis("off")
     # röret
     ax.add_patch(FancyBboxPatch((0, -0.25), L, 0.5, boxstyle="round,pad=0,rounding_size=0.02",
                                 fc="#e8e8e8", ec="#7f7f7f", lw=1.2))
-    # brunnar
-    for x, namn, ha in ((0, s.fran_brunn, "right"), (L, s.till_brunn, "left")):
-        # brunnen ritas större än rörets diameter (0,5 enheter ≈ 20 pt i figuren)
-        ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
-        ax.text(x + (-0.03 if ha == "right" else 0.03) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
+    # brunnar – större än rörets diameter; vid avbruten inspektion nåddes inte slutbrunnen (ihålig)
+    for x, namn, ha, nadd in ((0, s.fran_brunn, "right", True), (L, s.till_brunn, "left", not s.ofullstandig)):
+        ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf" if nadd else "white", mec="#4d4d4d", mew=1.2,
+                ls="none", zorder=5, alpha=1.0 if nadd else 0.6)
+        ax.text(x + (-0.03 if ha == "right" else 0.03) * L, 0.55, namn + ("" if nadd else " (ej nådd)"),
+                ha=ha, va="bottom", fontsize=8, fontweight="bold", color="#000000" if nadd else "#7f7f7f")
     # löpande skador som band
-    for o, r in zip(lopande, rad):
-        y = 0.95 + SCHEMA_RADHOJD * r
+    for o, r in zip(lopande, band_rad):
+        y = y_band0 + SCHEMA_RADHOJD * r
         ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
                 solid_capstyle="butt", alpha=0.9)
         ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
     # punktskador
-    for o in s.observationer:
-        if o.raknas and not (o.lopande.startswith("A") and o.lopande_langd):
-            ax.plot(o.lage, 0, "D", ms=7, mfc=GRAD_FARG_HEX.get(o.grad, "#888"), mec="white", mew=0.8, zorder=6)
-        elif o.kod == "KAM":
-            ax.plot(o.lage, 0, "X", ms=9, mfc="#4d4d4d", mec="white", zorder=6)
-    # anslutningar – sida enligt klockposition sett i inspektionsriktningen:
-    # kl 7–11 = vänster (ritas ovanför röret), kl 1–5 = höger (under röret), kl 12/6 = hjässa/botten (på röret)
-    ovan = under = 0
-    for o in s.observationer:
-        if o.infokod in ("AS", "AG"):
-            sida = anslutning_sida(o.klocka_fran)
-            etikett = f"{o.lage:.1f} m" + (f" kl {o.klocka_fran.lstrip('0')}" if o.klocka_fran else "")
-            if sida == "vänster":
-                y = 0.42 + 0.28 * (ovan % 2); ovan += 1
-                ax.plot(o.lage, y, "v", ms=7, mfc="#2a78d6", mec="white", zorder=6)
-                ax.text(o.lage, y + 0.13, etikett, ha="center", va="bottom", fontsize=5.5, color="#2a78d6")
-            elif sida == "höger":
-                y = -0.42 - 0.28 * (under % 2); under += 1
-                ax.plot(o.lage, y, "^", ms=7, mfc="#2a78d6", mec="white", zorder=6)
-                ax.text(o.lage, y - 0.13, etikett, ha="center", va="top", fontsize=5.5, color="#2a78d6")
-            else:
-                ax.plot(o.lage, 0, "s", ms=6, mfc="#2a78d6", mec="white", zorder=6)
-                ax.text(o.lage, -0.42, etikett, ha="center", va="top", fontsize=5.5, color="#2a78d6")
+    for o, r in zip(punkt, punkt_rad):
+        y = (0, 0.15, -0.15)[r % 3]
+        ax.plot(o.lage, y, "D", ms=7, mfc=GRAD_FARG_HEX.get(o.grad, "#888"), mec="white", mew=0.8, zorder=6)
+    # anslutningar
+    for (o, etikett), r in zip(ansl["vänster"], ansl_rad["vänster"]):
+        y = 0.42 + ANSL_RAD * r
+        ax.plot(o.lage, y, "v", ms=7, mfc=bla, mec="white", zorder=6)
+        ax.text(o.lage, y + 0.13, etikett, ha="center", va="bottom", fontsize=5.5, color=bla)
+    for (o, etikett), r in zip(ansl["höger"], ansl_rad["höger"]):
+        y = -0.42 - ANSL_RAD * r
+        ax.plot(o.lage, y, "^", ms=7, mfc=bla, mec="white", zorder=6)
+        ax.text(o.lage, y - 0.13, etikett, ha="center", va="top", fontsize=5.5, color=bla)
+    for (o, etikett), r in zip(ansl[""], ansl_rad[""]):
+        if o.kod == "KAM":      # avbrott – rött kryss där kameran stannade
+            ax.plot(o.lage, 0, "X", ms=10, mfc="#c00000", mec="white", mew=0.8, zorder=7)
+            farg = "#c00000"
+        else:
+            ax.plot(o.lage, 0, "s", ms=6, mfc=bla, mec="white", zorder=6)
+            farg = bla
+        ax.text(o.lage, -0.42 - ANSL_RAD * r, etikett, ha="center", va="top", fontsize=5.5, color=farg, zorder=7)
     # meterskala – egen linje under anslutningarna, siffrorna direkt under ticksen
-    y_skala = -1.15
     ax.plot([0, L], [y_skala, y_skala], color="#7f7f7f", lw=0.8)
     for x in range(0, int(L) + 1, max(1, int(L // 8) or 1)):
         ax.plot([x, x], [y_skala, y_skala - 0.1], color="#7f7f7f", lw=0.6)
         ax.text(x, y_skala - 0.13, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
-    ax.annotate("", xy=(L * 0.10, -1.85), xytext=(L * 0.0, -1.85),
-                arrowprops=dict(arrowstyle="->", color="#2a78d6", lw=1.2))
-    ax.text(L * 0.11, -1.85, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
-            va="center", fontsize=7, color="#2a78d6")
+    ax.annotate("", xy=(L * 0.10, y_pil), xytext=(L * 0.0, y_pil),
+                arrowprops=dict(arrowstyle="->", color=bla, lw=1.2))
+    ax.text(L * 0.11, y_pil, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
+            va="center", fontsize=7, color=bla)
     # legend
-    y_leg = y_topp - 0.23
+    y_leg = y_topp - 0.2
     for i, g in enumerate((1, 2, 3, 4)):
         ax.plot(L * (0.55 + 0.11 * i), y_leg, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
         ax.text(L * (0.565 + 0.11 * i), y_leg, f"grad {g}", va="center", fontsize=6.5)
-    ax.plot(L * 0.02, y_leg, "v", ms=6, mfc="#2a78d6", mec="white")
+    ax.plot(L * 0.02, y_leg, "v", ms=6, mfc=bla, mec="white")
     ax.text(L * 0.035, y_leg, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
-    ax.plot(L * 0.3, y_leg, "^", ms=6, mfc="#2a78d6", mec="white")
+    ax.plot(L * 0.3, y_leg, "^", ms=6, mfc=bla, mec="white")
     ax.text(L * 0.315, y_leg, "höger (kl 1–5)", va="center", fontsize=6.5)
-    ax.text(L * 0.02, y_leg - 0.23, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6,
+    ax.text(L * 0.02, y_leg - 0.22, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6,
             color="#52514e")
     fig.tight_layout(pad=0.2)
     _spara_rapportbild(fig, path)
@@ -2651,6 +2685,15 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
     el.append(Paragraph("Översikt", st_h2))
     el.append(Image(schema, width=bredd, height=bredd * sh / sb))
 
+    # --- profil ---
+    profil = os.path.join(tmp, f"profil_{s.nr}.png")
+    if rita_profil(s, profil, bredd / mm):
+        el.append(KeepTogether([Paragraph("Profil", st_h2),
+                                Image(profil, width=bredd, height=bredd * PROFIL_FIG[1] / PROFIL_FIG[0])]))
+    else:
+        el.append(Paragraph("Profil", st_h2))
+        el.append(P("Ingen inklinometerprofil finns registrerad för sträckan.", st_liten))
+
     # --- observationstabell ---
     el.append(Paragraph("Observationer", st_h2))
     huvud = [P(h, st_vit) for h in ("Pos. m", "Tid", "Kod", "Observation", "Kl.", "Nivå", "Foto", "Grad", "Poäng")]
@@ -2685,26 +2728,17 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         rader.append([P(f"{o.lage:.2f}", st_cell), P(o.tid, st_cell), P(o.kod or o.infokod, st_cell),
                       P(o.beskrivning(), st_cell), P(klocka, st_cell),
                       P(f"{o.vattenniva}%" if o.vattenniva and o.vattenniva != "0" else "", st_cell),
-                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(f"{o.poang:g}" if o.poang else "", st_cell)])
+                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(f"{o.poang:.1f}".rstrip("0").rstrip(".") if o.poang else "", st_cell)])
         if o.grad and o.ar_skada:
             stil.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor(GRAD_FARG_LJUS.get(o.grad, "#ffffff"))))
     if len(rader) == 1:
         rader.append([P("Inga observationer registrerade", st_cell)] + [P("", st_cell)] * 8)
-    cw = [13 * mm, 17 * mm, 10 * mm, None, 14 * mm, 11 * mm, 36 * mm, 12 * mm, 12 * mm]
+    cw = [15 * mm, 17 * mm, 12 * mm, None, 13 * mm, 11 * mm, 32 * mm, 12 * mm, 14 * mm]
     cw[3] = bredd - sum(w for w in cw if w)
     t = Table(rader, colWidths=cw, repeatRows=1)
     t.setStyle(TableStyle(stil))
     el.append(t)
     el.append(Spacer(1, 4))
-
-    # --- profil ---
-    profil = os.path.join(tmp, f"profil_{s.nr}.png")
-    if rita_profil(s, profil, bredd / mm):
-        el.append(KeepTogether([Paragraph("Profil", st_h2),
-                                Image(profil, width=bredd, height=bredd * PROFIL_FIG[1] / PROFIL_FIG[0])]))
-    else:
-        el.append(Paragraph("Profil", st_h2))
-        el.append(P("Ingen inklinometerprofil finns registrerad för sträckan.", st_liten))
 
     # --- foton ---
     bilder = [(o, n, pth) for o in s.observationer for n, pth in o.bilder]
