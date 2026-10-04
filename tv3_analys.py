@@ -212,6 +212,9 @@ GIS_VAG_MAX_HOPP = 4        # saknas direkt ledning i GIS mellan brunnarna söks
                             # många ledningar, högst GIS_VAG_MAX_ANDEL × filmens längd + 20 m); annars tas brunnarnas
                             # avstånd fågelvägen som kartlängd ("kartlängd fågelvägen")
 GIS_VAG_MAX_ANDEL = 2.0
+GIS_SKARV_TOL_M = None      # m – två ledningars fria ändar (ingen brunn) närmare varandra än så är en skarv (t.ex.
+                            # materialbyte mitt på sträckan): delarna fogas ihop till en ledning mellan brunnarna.
+                            # None = exportens tolerans (tolerans_m i gisdata.json), annars talet.
                             # sträcka när bara en av brunnarna är okänd (den andra brunnens grannar i GIS prövas)
 # Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
 GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
@@ -1080,6 +1083,10 @@ class Stracka:
         if g.get("_syntetisk") == "via":
             fl.append(dk(f"ingen direkt ledning i GIS – kartlängd {g['langd_m']:.1f} m via "
                          f"{', '.join(g['_via'])} ({len(g['_delar'])} ledningar)"))
+        if g.get("delar") and len(g["delar"]) > 1 and len({(d.get("material"), d.get("dimension")) for d in g["delar"]}) > 1:
+            fl.append(dk("GIS: ledningen består av " + " + ".join(
+                f"{d.get('material') or '?'} {d.get('dimension') or ''} {d.get('langd_m') or 0:.1f} m".replace("  ", " ")
+                for d in g["delar"]) + " (skarv utan brunn)"))
         if self.langd >= 1:
             # vattengång: fallet mellan brunnarna enligt filmen mot GIS
             gs, ge = self._gis_vg()
@@ -1567,8 +1574,99 @@ def las_gis(path: str) -> dict:
         led["dimension"] = heltal(led.get("dimension")) if led.get("dimension") is not None else None
         led["anlaggningsar"] = heltal(led.get("anlaggningsar"))
         ledningar.append(led)
+    tol = GIS_SKARV_TOL_M if GIS_SKARV_TOL_M is not None else (tal(data.get("tolerans_m")) or 1.0)
+    n_fog = _sammanfoga_fria_andar(ledningar, tol)
+    if n_fog:
+        print(f"  {os.path.basename(path)}: {n_fog} ledningar hopfogade av delar som möts i en skarv utan brunn")
     return {"brunnar": brunnar, "ledningar": ledningar,
             "hojdsystem": data.get("hojdsystem", "") or "RH2000", "fil": path}
+
+
+def _sammanfoga_fria_andar(ledningar: list[dict], tolerans: float) -> int:
+    """Ledningsdelar som slutar i en fri ände (ingen brunn) där en annan dels fria ände ligger inom
+    toleransen – t.ex. materialbyte mitt på sträckan – fogas ihop till en ledning mellan brunnarna.
+    Bara parvisa möten fogas (tre ändar på samma ställe är en förgrening). Den hopfogade posten
+    ersätter delarna i listan: längd = summan, vattengång ur ändarna, dimension/material/typ/år bara
+    om alla delar är lika, `delar` = [{langd_m, material, dimension, anlaggningsar}], `skarvar` = [xy].
+    Returnerar antalet hopfogade ledningar."""
+    def namn(led, sida):
+        return _normlittera(led.get(sida))
+
+    def xy(led, sida):
+        v = led.get(sida + "_xy")
+        return tuple(v) if isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(c, (int, float)) for c in v) else None
+
+    def andra(sida):
+        return "till" if sida == "fran" else "fran"
+
+    cell = max(tolerans, 0.01)
+    rut: dict[tuple[int, int], list] = {}
+    fria = []
+    for led in ledningar:
+        for sida in ("fran", "till"):
+            if not namn(led, sida) and xy(led, sida):
+                x, y = xy(led, sida)
+                rut.setdefault((round(x / cell), round(y / cell)), []).append((led, sida))
+                fria.append((led, sida))
+    partner: dict[tuple[int, str], tuple] = {}
+    for led, sida in fria:
+        x, y = xy(led, sida)
+        cx, cy = round(x / cell), round(y / cell)
+        nara = [(l2, s2) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for l2, s2 in rut.get((cx + dx, cy + dy), [])
+                if l2 is not led and math.hypot(xy(l2, s2)[0] - x, xy(l2, s2)[1] - y) <= tolerans]
+        if len(nara) == 1:
+            partner[(id(led), sida)] = nara[0]
+    # bara ömsesidiga par
+    per_id = {id(l): l for l in ledningar}
+    partner = {k: v for k, v in partner.items() if partner.get((id(v[0]), v[1])) == (per_id[k[0]], k[1])}
+    anv: set[int] = set()
+    nya = []
+    for led in ledningar:
+        if id(led) in anv:
+            continue
+        for brunnsida in ("fran", "till"):
+            if not namn(led, brunnsida) or (id(led), andra(brunnsida)) not in partner:
+                continue
+            kedja = [(led, brunnsida)]                 # (del, sidan som vetter mot föregående/brunnen)
+            cur, in_sida = led, brunnsida
+            klar = False
+            while True:
+                p = partner.get((id(cur), andra(in_sida)))
+                if not p or id(p[0]) in {id(d) for d, _ in kedja} or id(p[0]) in anv:
+                    break
+                cur, in_sida = p
+                kedja.append((cur, in_sida))
+                if namn(cur, andra(in_sida)):
+                    klar = True
+                    break
+            if not klar:
+                continue
+            forsta, fs = kedja[0]
+            sista, ss = kedja[-1]
+
+            def gemensamt(nyckel):
+                v = {d.get(nyckel) for d, _ in kedja}
+                return v.pop() if len(v) == 1 else None
+            post = dict(forsta)
+            post.update({
+                "fran": forsta.get(fs), "till": sista.get(andra(ss)),
+                "fran_xy": forsta.get(fs + "_xy"), "till_xy": sista.get(andra(ss) + "_xy"),
+                "langd_m": sum(d.get("langd_m") or 0.0 for d, _ in kedja),
+                "vg_fran": forsta.get("vg_" + fs), "vg_till": sista.get("vg_" + andra(ss)),
+                "dimension": gemensamt("dimension"), "material": gemensamt("material"),
+                "ledningstyp": gemensamt("ledningstyp"), "anlaggningsar": gemensamt("anlaggningsar"),
+                "omrade": next((d.get("omrade") for d, _ in kedja if d.get("omrade")), None),
+                "antal_delar": len(kedja),
+                "delar": [{"langd_m": d.get("langd_m"), "material": d.get("material"), "dimension": d.get("dimension"),
+                           "anlaggningsar": d.get("anlaggningsar"), "oid": d.get("oid")} for d, _ in kedja],
+                "skarvar": [d.get(andra(s) + "_xy") for d, s in kedja[:-1]],
+            })
+            nya.append(post)
+            anv.update(id(d) for d, _ in kedja)
+            break
+    if nya:
+        ledningar[:] = [l for l in ledningar if id(l) not in anv] + nya
+    return len(nya)
 
 
 def _gis_vag(ns: str, ne: str, grannar: dict, langd: float) -> dict | None:

@@ -446,6 +446,19 @@ fågelvägen 44,7 m" (fågelvägen ger inga fler flaggor). `inspektionsgrad` rä
 som utan GIS-ledning (`utan_gis`). Effekt: sammanslagningen får kartlängd och överlapp. Test: scratchpad/gisvag/
 (gisdata med KTB72028–KTB61192 delad via KTB99999 och SRB63043–SRB62385 borttagen med koordinater → 187 överlapp
 3,9 m); gisdata_omr och filer.txt oförändrade.
+**Skarv utan brunn i GIS** (okt 2026, användaren: "ledningen är bruten i mitten, materialförändring, delad som två
+ledningar utan ände – ändarna har nästan exakt samma koordinat"; "kan vara uppdelad i mer än två delar"): exporten
+skriver sådana delar som `fran`/`till` = "" (fri ände, `_nodnamn`) med `fran_xy`/`till_xy`. `las_gis` kör
+`_sammanfoga_fria_andar(ledningar, tol)` (tol = `GIS_SKARV_TOL_M`, None ⇒ filens `tolerans_m`, annars 1 m): fria
+ändar rutnätsindexeras, parvisa ömsesidiga möten inom tol blir `partner` (tre ändar på samma plats = förgrening,
+fogas inte), kedjor följs från en brunnsände via partners tills en brunn nås (valfritt antal delar, oberoende av
+ritriktning och listordning); den hopfogade posten ersätter delarna: fran/till = brunnarna, langd summerad, vg ur
+ändarna, dimension/material/ledningstyp/år bara om lika, `antal_delar`, `delar` [{langd_m, material, dimension,
+anlaggningsar, oid}], `skarvar` [xy]; konsolrad "N ledningar hopfogade …". gisflagga "GIS: ledningen består av BTG
+225 10,0 m + PVC 225 8,9 m + … (skarv utan brunn)" bara när delarna skiljer sig. Inspektionsgrad räknar den som en
+ledning (delarna hoppades förut över som fria ändar). Test: scratchpad/gisvag/gisdata_skarv.json (två delar + en
+trevägsförgrening som inte fogas) och gisdata_skarv3.json (tre delar, blandad ordning, mittdelen vänd → 28,86 m,
+187 överlapp 19,8 m).
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter
