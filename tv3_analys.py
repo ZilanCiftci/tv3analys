@@ -191,13 +191,17 @@ SAMMANSLAGNING = True
 GIS_FALL_TOL_M = 0.3        # m – fallet mellan brunnarna (film mot GIS) får avvika så mycket …
 GIS_FALL_TOL_ANDEL = 0.5    # … eller så stor andel av GIS-fallet (det största gäller) innan det flaggas
 GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från start- till slutbrunn flaggas riktningen
+GIS_SAKNAS_UNDER = -999     # vattengång/locknivå i GIS under så här räknas som saknad (SVOA: −9999)
+GIS_FALL_ORIMLIGT_M = 50    # m – större fall mellan brunnarna i GIS flaggas som orimligt i stället för riktning/fall
+GIS_PLATSHALLARE = {"AG", "STBEXTRA"}   # littera i TV3-filen som inte är riktiga brunnar – kontrolleras inte mot GIS
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
                             # sträcka när bara en av brunnarna är okänd (den andra brunnens grannar i GIS prövas)
 # Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
 GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
                 "PVC": "Plast", "PE": "Plast", "PEH": "Plast", "PP": "Plast", "PLAST": "Plast", "PLASTIC": "Plast",
-                "GAP": "GAP", "GRP": "GAP", "LERA": "Lera", "LER": "Lera", "TEGEL": "Tegel",
+                "PEM": "Plast", "PEH": "Plast", "PRC": "Plast",
+                "GAP": "GAP", "GRP": "GAP", "LERA": "Lera", "LER": "Lera", "LERGODS": "Lera", "TEGEL": "Tegel",
                 "GJJ": "Gjutjärn", "GJUTJÄRN": "Gjutjärn", "SEGJ": "Segjärn", "SEGJÄRN": "Segjärn",
                 "STÅL": "Stål", "ST": "Stål", "ASBEST": "Asbestcement", "ETERNIT": "Asbestcement",
                 "AC": "Asbestcement"}
@@ -566,7 +570,8 @@ class Stracka:
             d = g - z
             if abs(d) <= HOJD_SAMMA_M:
                 return {"status": f"{self.hojdsystem} ur filen", "offset": 0.0, "k": 0.0, "z_start": zs, "z_slut": ze}
-            return {"status": f"förskjuten till GIS vid {self.fran_brunn} (avbruten inspektion)",
+            return {"status": f"förskjuten till GIS vid {self.fran_brunn} "
+                              + ("(avbruten inspektion)" if self.avbruten else "(ofullständig film)"),
                     "offset": d, "k": 0.0, "z_start": zs + d, "z_slut": ze + d}
         if gs is None and ge is None:
             if self.langd_karta is None:
@@ -1030,7 +1035,7 @@ class Stracka:
             return []
         fl = []
         saknas = [b for b, k in ((self.startbrunn, "brunn_start"), (self.slutbrunn, "brunn_slut"))
-                  if not self.gis.get(k)]
+                  if not self.gis.get(k) and _normlittera(b) not in GIS_PLATSHALLARE]
         if saknas:
             fl.append("brunn saknas i GIS: " + ", ".join(saknas))
         g = self.gis.get("ledning")
@@ -1044,10 +1049,12 @@ class Stracka:
             zs, ze = self._filens_brunnshojder()
             if gs is not None and ge is not None:
                 fall_gis = gs - ge
-                if fall_gis < -GIS_RIKTNING_MIN_M:
+                if abs(fall_gis) > GIS_FALL_ORIMLIGT_M:
+                    fl.append(dk(f"vattengång orimlig i GIS: {gs:.2f} / {ge:.2f} m"))
+                elif fall_gis < -GIS_RIKTNING_MIN_M:
                     fl.append(dk(f"riktning: GIS-vattengången stiger {-fall_gis:.2f} m från {self.startbrunn} "
                                  f"till {self.slutbrunn}"))
-                if zs is not None and ze is not None and not self.ofullstandig:
+                elif zs is not None and ze is not None and not self.ofullstandig:
                     fall_film = zs - ze
                     if abs(fall_film - fall_gis) > max(GIS_FALL_TOL_M, GIS_FALL_TOL_ANDEL * abs(fall_gis)):
                         fl.append(dk(f"vattengång: fall {fall_film:.2f} m i filmen, {fall_gis:.2f} m i GIS"))
@@ -1318,9 +1325,9 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
               f"– bytta så att startbrunn är uppströms (nr {', '.join(str(s.nr) for s in omvanda[:8])}"
               + (" …" if len(omvanda) > 8 else "") + ")")
 
-    par = Counter(frozenset((s.startbrunn, s.slutbrunn)) for s in strackor.values())
+    par = Counter(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))) for s in strackor.values())
     for s in strackor.values():
-        s.flerinspekterad = par[frozenset((s.startbrunn, s.slutbrunn))] > 1
+        s.flerinspekterad = par[frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))] > 1
 
     return [strackor[k] for k in sorted(strackor)]
 
@@ -1466,14 +1473,36 @@ def las_gis(path: str) -> dict:
     """Läser gisdata.json från ArcMap-verktyget Exportera GIS-data. Returnerar {"brunnar": {littera:
     post}, "ledningar": [post], "hojdsystem", "fil"}; littera normaliseras som i _normlittera."""
     import json
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{path}: kan inte läsas som gisdata.json ({e})") from e
+
+    def tal(v):
+        try:
+            v = float(str(v).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+        return None if v <= GIS_SAKNAS_UNDER else v
+
+    def heltal(v):
+        m = re.search(r"\d{3,4}", str(v or ""))
+        return int(m.group(0)) if m else None
     brunnar = {}
     for b in data.get("brunnar", []):
         n = _normlittera(b.get("littera"))
+        b["lockniva"] = tal(b.get("lockniva"))
         if n and n not in brunnar:
             brunnar[n] = b
-    return {"brunnar": brunnar, "ledningar": data.get("ledningar", []),
+    ledningar = []
+    for led in data.get("ledningar", []):
+        led["vg_fran"], led["vg_till"] = tal(led.get("vg_fran")), tal(led.get("vg_till"))
+        led["langd_m"] = tal(led.get("langd_m"))
+        led["dimension"] = heltal(led.get("dimension")) if led.get("dimension") is not None else None
+        led["anlaggningsar"] = heltal(led.get("anlaggningsar"))
+        ledningar.append(led)
+    return {"brunnar": brunnar, "ledningar": ledningar,
             "hojdsystem": data.get("hojdsystem", "") or "RH2000", "fil": path}
 
 
@@ -1487,12 +1516,20 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
     pa_par: dict[frozenset, list[dict]] = {}
     vg_min: dict[str, float] = {}
     system = "RH2000"
+    sedda_led: set = set()
     for gf in filer:
         system = gf["hojdsystem"] or system
         for n, b in gf["brunnar"].items():
             brunnar.setdefault(n, b)
         for led in gf["ledningar"]:
             a, b = _normlittera(led.get("fran")), _normlittera(led.get("till"))
+            # samma ledning i flera exportfiler (t.ex. gränsledningar vid export per område) räknas en gång
+            nyckel = ((led.get("lager"), led.get("oid"), led.get("del")) if led.get("oid") is not None
+                      else (frozenset((a, b)), round(led.get("langd_m") or 0, 1)))
+            if nyckel in sedda_led:
+                led["_dubblett"] = True
+                continue
+            sedda_led.add(nyckel)
             if a and b:
                 pa_par.setdefault(frozenset((a, b)), []).append(led)
             for n, vg in ((a, led.get("vg_fran")), (b, led.get("vg_till"))):
@@ -1509,11 +1546,15 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
     for s in strackor:
         ns, ne = _normlittera(s.startbrunn), _normlittera(s.slutbrunn)
         kand = pa_par.get(frozenset((ns, ne)), [])
-        led = min(kand, key=lambda l: abs((l.get("langd_m") or 0) - s.langd)) if kand else None
+        # vid flera ledningar mellan samma brunnar: samma ledningstyp först (S/D parallellt i samma
+        # schakt har nästan samma längd), sedan längd närmast filmens
+        typ = (s.ledningstyp or "")[:1].upper()
+        led = min(kand, key=lambda l: ((l.get("ledningstyp") or "")[:1].upper() != typ if typ else False,
+                                       abs((l.get("langd_m") or 0) - s.langd))) if kand else None
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"]}
         for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
-            if n and n not in brunnar:
+            if n and n not in brunnar and n not in GIS_PLATSHALLARE:
                 okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd,
                                "motbrunn": annan if n_annan in brunnar else "", "n_mot": n_annan})
         if led:
@@ -1540,18 +1581,21 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                 diff = abs(L - o["langd"]) / max(o["langd"], 1.0)
                 likhet = difflib.SequenceMatcher(None, nn, n_granne).ratio()
                 if diff <= GIS_LANGD_TOL:
-                    kand.append((diff - 0.5 * likhet, alla[n_granne],
+                    kand.append((diff - 0.5 * likhet, alla.get(n_granne, n_granne),
                                  dk(f"ledning {L:.1f} m mot {o['langd']:.1f} m i filmen"
                                     + (f", namnlikhet {likhet:.2f}" if likhet >= GIS_LITTERA_LIKHET else ""))))
             o["metod"] = "längd från " + o["motbrunn"]
         if not kand:
             for n_lik in difflib.get_close_matches(nn, list(alla), n=3, cutoff=GIS_LITTERA_LIKHET):
                 likhet = difflib.SequenceMatcher(None, nn, n_lik).ratio()
-                kand.append((1 - likhet, alla[n_lik], dk(f"liknande namn ({likhet:.2f})")))
+                kand.append((1 - likhet, alla.get(n_lik, n_lik), dk(f"liknande namn ({likhet:.2f})")))
             o["metod"] = "liknande namn" if kand else "inget förslag"
         kand.sort()
         sedda = set()
         o["forslag"] = [(lit, txt) for _, lit, txt in kand if not (lit in sedda or sedda.add(lit))][:3]
+        # 'ratt' förifylls bara när längden pekar ut en tydlig kandidat (ensam, eller klart bättre än nästa)
+        o["sakert"] = bool(kand) and o["metod"].startswith("längd") and (
+            len(kand) == 1 or kand[1][0] - kand[0][0] >= 0.05)
     okanda.sort(key=lambda o: (o["littera"], os.path.basename(o["fil"]), o["nr"]))
     return {"ledningar": n_led, "vg": n_vg, "okanda": okanda, "brunnar_i_gis": len(brunnar),
             "flaggade": sum(1 for s in strackor if s.gisflagga)}
@@ -1571,35 +1615,101 @@ def _spegla_klocka(k: str) -> str:
     return f"{(12 - v) % 12 or 12:02d}" if v else "12"
 
 
+def _tidsnyckel(s: Stracka) -> tuple:
+    """Sorteringsnyckel för när en film gjordes: datum + klockslag tolkade som tid (ISO, svensk
+    punkt/snedstreck eller 'ÅÅÅÅMMDD'), annars strängarna som de är."""
+    from datetime import datetime
+    d = (s.datum or "").strip()
+    k = (s.klockslag or "").strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%d.%m.%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+        try:
+            dag = datetime.strptime(d, fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        return (0, d, k)
+    tid = 0
+    m = re.match(r"(\d{1,2})[:.](\d{2})", k)
+    if m:
+        tid = int(m.group(1)) * 60 + int(m.group(2))
+    return (1, dag.strftime("%Y-%m-%d"), tid)
+
+
 def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     """Slår ihop film a (från startbrunnen) och film b (från slutbrunnen) till en sträcka med
     positioner från startbrunnen. Kartlängden ger totallängd och överlapp; i överlappet behålls den
-    nyare filmens observationer. Utan kartlängd antas filmerna mötas utan överlapp."""
+    nyare filmens observationer och den äldre filmens löpande skador kapas vid snittet. Utan
+    kartlängd antas filmerna mötas utan överlapp, och ett hinder som båda kamerorna stannade vid
+    räknas en gång. Varje observation får 'film nr X' i kommentaren."""
     import copy
     import dataclasses
     L_karta = a.langd_karta or b.langd_karta
+    noter = []
+    if L_karta and L_karta < max(a.langd, b.langd) - 0.5:
+        noter.append(dk(f"kartlängd {L_karta:.1f} m orimlig (kortare än en delfilm) – används inte"))
+        L_karta = None
     L = L_karta if L_karta else a.langd + b.langd
-    overlapp = a.langd + b.langd - L
-    nyare_b = (b.datum, b.klockslag) >= (a.datum, a.klockslag)
+    overlapp = a.langd + b.langd - L if L_karta else 0.0
+    nyare_b = _tidsnyckel(b) >= _tidsnyckel(a)
+    nyare, aldre = (b, a) if nyare_b else (a, b)
+
+    def marka(o, film):
+        o.kommentar = f"film nr {film.nr}" + (f" – {o.kommentar}" if o.kommentar else "")
+
+    # Snitt i respektive films egen axel: den äldre filmens observationer bortom snittet tas bort
+    # och dess löpande skador kapas där (den nyare filmen gäller i överlappet)
+    snitt_a = a.langd - overlapp if (overlapp > 0 and nyare_b) else None
+    snitt_b = b.langd - overlapp if (overlapp > 0 and not nyare_b) else None
     obs = []
     for o in a.observationer:
         if o.kod == "KAM":
             continue
-        if overlapp > 0 and nyare_b and o.lage > a.langd - overlapp + 1e-6:
+        if snitt_a is not None and o.lage > snitt_a + 1e-6:
             continue
         o2 = copy.copy(o)
         o2.nr = nr
+        if snitt_a is not None and o.lopande.startswith("A") and o.lopande_langd and o.lage + o.lopande_langd > snitt_a:
+            o2.lopande_langd = round(max(0.0, snitt_a - o.lage), 2)
+        marka(o2, a)
         obs.append(o2)
+    # b: löpande skadors längd per löpnummer (för B-radernas nya läge och öppna skador)
+    lop_langd = {o.lopande[1:]: o.lopande_langd for o in b.observationer if o.lopande.startswith("A")}
+    a_obs = [o for o in obs]
     for o in b.observationer:
-        if o.kod == "KAM" or (o.infokod in ("RB", "NB", "TB") and o.lage < 0.5):
+        if o.kod == "KAM":
             continue
-        if overlapp > 0 and not nyare_b and o.lage > b.langd - overlapp + 1e-6:
+        if snitt_b is not None and o.lage > snitt_b + 1e-6:
             continue
         o2 = copy.copy(o)
         o2.nr = nr
-        o2.lage = round(max(0.0, L - o.lage - (o.lopande_langd or 0.0 if o.lopande.startswith("A") else 0.0)), 2)
+        if o.lopande.startswith("A"):
+            langd = o.lopande_langd if o.lopande_langd is not None else max(0.0, b.langd - o.lage)   # öppen skada: till avbrottet
+            if snitt_b is not None and o.lage + langd > snitt_b:
+                langd = max(0.0, snitt_b - o.lage)
+            o2.lopande_langd = round(langd, 2)
+            o2.lage = round(max(0.0, L - o.lage - langd), 2)
+        elif o.lopande.startswith("B"):
+            o2.lage = round(max(0.0, L - o.lage + (lop_langd.get(o.lopande[1:]) or 0.0)), 2)
+        else:
+            o2.lage = round(max(0.0, L - o.lage), 2)
         o2.klocka_fran, o2.klocka_till = _spegla_klocka(o.klocka_till or o.klocka_fran), (
             _spegla_klocka(o.klocka_fran) if o.klocka_till else "")
+        # Utan kartlängd: båda kamerorna stannade vid samma hinder – samma observation inom 1 m
+        # från mötet från den äldre filmen är en dubblett
+        if not L_karta and abs(o2.lage - a.langd) <= 1.0:
+            dubb = [q for q in a_obs if abs(q.lage - a.langd) <= 1.0 and q.kod == o.kod and q.grad == o.grad
+                    and q.infokod == o.infokod and q.attribut == o.attribut and q.lopande == o.lopande]
+            if dubb:
+                bort = dubb[0] if nyare_b else o2
+                if bort is not o2:
+                    obs.remove(bort)
+                    a_obs.remove(bort)
+                if "samma observation vid mötet räknas en gång" not in noter:
+                    noter.append("samma observation vid mötet räknas en gång")
+                if bort is o2:
+                    continue
+        marka(o2, b)
         obs.append(o2)
     obs.sort(key=lambda o: (o.lage, o.tid))
     # sträckans längd = största läge; se till att slutbrunnen ligger vid L
@@ -1611,7 +1721,7 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
         obs.append(slut)
     ny = dataclasses.replace(a, nr=nr, observationer=obs, profil=[], profil_start_z=None, profil_slut_z=None,
                              utgangsbrunn=a.startbrunn, riktning="Medströms",
-                             datum=max(a.datum, b.datum), flerinspekterad=True, rapport_fil=None,
+                             datum=nyare.datum, klockslag=nyare.klockslag, flerinspekterad=True, rapport_fil=None,
                              sammanslagen_av=[a.nr, b.nr], _cache={})
     ny.videofil = a.videofil + (f" + {b.videofil}" if b.videofil and b.videofil != a.videofil else "")
     ny.manuell_bedomning = a.manuell_bedomning or b.manuell_bedomning
@@ -1621,14 +1731,15 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
         ny.gis = b.gis
     if ny.langd_karta is None:
         ny.langd_karta, ny.gis_vg_start, ny.gis_vg_slut, ny.mark = b.langd_karta, b.gis_vg_start, b.gis_vg_slut, b.mark
-    noter = []
     if L_karta:
         if overlapp > 0.5:
             noter.append(dk(f"överlapp {overlapp:.1f} m, nyare filmens observationer gäller där"))
         elif overlapp < -0.5:
             noter.append(dk(f"lucka {-overlapp:.1f} m ofilmad mitt på"))
+    elif not any("orimlig" in n for n in noter):
+        noter.insert(0, "kartlängd okänd – filmerna antas mötas utan överlapp")
     else:
-        noter.append("kartlängd okänd – filmerna antas mötas utan överlapp")
+        noter.insert(1, "filmerna antas mötas utan överlapp")
     ny.filmstatus = f"sammanslagen av nr {a.nr} + {b.nr}" + (" (" + "; ".join(noter) + ")" if noter else "")
     return ny
 
@@ -1641,14 +1752,15 @@ def _ersatt(s: Stracka, gall: Stracka, orsak: str) -> None:
 
 
 def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
-    """Flera filmer av samma brunnspar: hel film ersätter ofullständiga och äldre hela filmer
-    (filmstatus "ersatt av nr X (…)"), och två ofullständiga filmer från var sin brunn slås ihop
-    till en ny sträcka som läggs sist i listan. Returnerar listan inklusive sammanslagna."""
+    """Flera filmer av samma brunnspar i samma TV3-fil: hel film ersätter ofullständiga och äldre
+    hela filmer (filmstatus "ersatt av nr X (…)"), och två ofullständiga filmer från var sin brunn
+    slås ihop till en ny sträcka som läggs sist i listan. Samma brunnspar i olika filer (olika
+    inspektionsomgångar) rörs inte. Returnerar listan inklusive sammanslagna."""
     if not (OMFILMNING or SAMMANSLAGNING):
         return strackor
     grupper: dict[tuple[str, frozenset], list[Stracka]] = {}
     for s in strackor:
-        if s.startbrunn and s.slutbrunn and s.startbrunn != s.slutbrunn:
+        if s.startbrunn and s.slutbrunn and _normlittera(s.startbrunn) != _normlittera(s.slutbrunn):
             grupper.setdefault((s.fil, frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))), []).append(s)
     nya = []
     max_nr = {}
@@ -1657,38 +1769,38 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
     for (fil, par), grupp in grupper.items():
         if len(grupp) < 2:
             continue
-        nyast_forst = sorted(grupp, key=lambda s: (s.datum, s.klockslag, s.nr), reverse=True)
+        nyast_forst = sorted(grupp, key=lambda s: (_tidsnyckel(s), s.nr), reverse=True)
         hela = [s for s in nyast_forst if s.langd >= 1 and not s.ofullstandig]
         delar = [s for s in nyast_forst if s.langd >= 1 and s.ofullstandig]
         tomma = [s for s in nyast_forst if s.langd < 1]
         if OMFILMNING and hela:
+            # gällande = nyaste hela filmen, om ingen äldre är klart längre (nyare < 85 % av äldre)
             gall = hela[0]
             for s in hela[1:]:
                 if s.langd > gall.langd / OMFILMNING_MIN_ANDEL:
-                    # den nyare är klart kortare – låt den längre gälla i stället
-                    _ersatt(gall, s, "längre film")
                     gall = s
-                else:
-                    _ersatt(s, gall, f"omfilmning {gall.datum}")
+            for s in hela:
+                if s is not gall:
+                    _ersatt(s, gall, "längre film" if _tidsnyckel(s) > _tidsnyckel(gall) else f"omfilmning {gall.datum}")
             for s in delar:
                 _ersatt(s, gall, "hel film")
             for s in tomma:
                 _ersatt(s, gall, "")
             continue
-        if OMFILMNING and delar:
-            for s in tomma:
-                _ersatt(s, delar[0], "")
+        if delar:
             # samma utgångsbrunn: den längsta filmen gäller (nyast vid lika längd)
             per_sida: dict[str, list[Stracka]] = {}
             for s in delar:
                 per_sida.setdefault(_normlittera(s.fran_brunn), []).append(s)
             kvar = []
             for sida, lista in per_sida.items():
-                basta = max(lista, key=lambda s: (round(s.langd, 1), s.datum, s.klockslag))
-                for s in lista:
-                    if s is not basta:
-                        _ersatt(s, basta, "längre film från samma brunn")
+                basta = max(lista, key=lambda s: (round(s.langd, 1), _tidsnyckel(s)))
+                if OMFILMNING:
+                    for s in lista:
+                        if s is not basta:
+                            _ersatt(s, basta, "längre film från samma brunn")
                 kvar.append(basta)
+            ny = None
             if SAMMANSLAGNING and len(kvar) == 2:
                 a = next((s for s in kvar if _normlittera(s.fran_brunn) == _normlittera(s.startbrunn)), None)
                 b = next((s for s in kvar if s is not a), None)
@@ -1698,6 +1810,9 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
                     for s in (a, b):
                         s.filmstatus = f"ingår i sammanslagen nr {ny.nr}"
                     nya.append(ny)
+            if OMFILMNING:
+                for s in tomma:
+                    _ersatt(s, ny if ny is not None else kvar[0], "")
     return strackor + nya
 
 
@@ -1709,7 +1824,7 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     # GIS-ledning -> sämsta gällande klass bland sträckorna på den (syskon filmade från båda håll)
     klass_pa: dict[int, str] = {}
     for s in strackor:
-        if s.gis and s.gis.get("ledning"):
+        if s.langd >= 1 and s.gis and s.gis.get("ledning"):
             k = s.gallande_klass
             i = id(s.gis["ledning"])
             if i not in klass_pa or k < klass_pa[i]:
@@ -1732,8 +1847,8 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     ej = []
     for gf in filer:
         for led in gf["ledningar"]:
-            if not led.get("fran") or not led.get("till"):
-                continue                                   # fri ände – ingen sträcka mellan brunnar
+            if not led.get("fran") or not led.get("till") or led.get("_dubblett"):
+                continue                                   # fri ände eller samma ledning i flera filer
             omr = led.get("omrade") or "(utan område)"
             typ = (led.get("ledningstyp") or "").strip() or "(okänd typ)"
             f = klass_pa.get(id(led))
@@ -1751,7 +1866,8 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
         rader.append({"omrade": omr, "ledningstyp": typ, **g,
                       "andel": g["filmad_m"] / g["langd_m"] if g["langd_m"] else 0.0,
                       "andel_AB": g["AB_m"] / g["filmad_m"] if g["filmad_m"] else None})
-    ej.sort(key=lambda e: (e["omrade"], e["anlaggningsar"] or 9999, e["material"], -(e["langd_m"] or 0)))
+    ej.sort(key=lambda e: (e["omrade"], e["anlaggningsar"] if isinstance(e["anlaggningsar"], int) else 9999,
+                           str(e["material"]), -(e["langd_m"] or 0)))
     utan = [s for s in strackor if s.langd >= 1 and not (s.gis and s.gis.get("ledning"))]
     return {"rader": rader, "ej_inspekterat": ej, "utan_gis": (len(utan), sum(s.langd for s in utan))}
 
@@ -1761,9 +1877,11 @@ def skriv_litteraforslag(forslag: list[dict], path: str) -> int:
     som kan rättas och användas med littera: i listfilen. Returnerar antal rader."""
     rader = ["fel;ratt;fil;nr;motbrunn;kommentar"]
     for o in forslag:
-        ratt = o["forslag"][0][0] if o["forslag"] else ""
-        komm = (f"förslag ({o['metod']}): " + "; ".join(f"{lit} – {txt}" for lit, txt in o["forslag"])
+        ratt = o["forslag"][0][0] if o["forslag"] and o.get("sakert") else ""
+        komm = (f"förslag ({o['metod']}): " + " | ".join(f"{lit} – {txt}" for lit, txt in o["forslag"])
+                + ("" if o.get("sakert") else " | osäkert – välj själv i kolumnen ratt")
                 if o["forslag"] else "inget förslag: ingen ledning med passande längd och inget liknande littera i GIS")
+        komm = komm.replace(";", "/").replace(",", ".")    # kommentaren får inte innehålla CSV-avgränsare
         rader.append(f"{o['littera']};{ratt};{os.path.basename(o['fil'])};{o['nr']};{o['motbrunn']};{komm}")
     with open(path, "w", encoding="utf-8-sig", newline="") as fh:
         fh.write("\r\n".join(rader) + "\r\n")
@@ -2217,7 +2335,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                           f"{sum(1 for s in alla if s.sammanslagen_av)} brunnspar sammanslagna av två delfilmer "
                           f"(räknas en gång; delfilmerna listas i Prioritering utan rang)")
          if any(s.filmstatus for s in alla) else "inga"],
-        ["Markprofil (från ArcMap)", (f"{sum(1 for s in strackor if s.mark)} sträckor med markhöjder, "
+        ["Höjdläge (markprofil/GIS från ArcMap)", (f"{sum(1 for s in strackor if s.mark)} sträckor med markhöjder, "
                                      f"{sum(1 for s in strackor if s.hojdanpassning and s.hojdanpassning['offset'] is not None and s.gis_vg_start is not None)} "
                                      f"med GIS-vattengång, {sum(1 for s in strackor if s.hojdflagga)} flaggade")
          if any(s.mark or s.gis_vg_start is not None for s in strackor) else "saknas"],
@@ -2311,7 +2429,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
            "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
-    sorterade = sorterade_strackor(strackor) + sorted((s for s in alla if s not in strackor), key=lambda s: (s.fil, s.nr))
+    raknas = {id(s) for s in strackor}
+    sorterade = sorterade_strackor(strackor) + sorted((s for s in alla if id(s) not in raknas), key=lambda s: (s.fil, s.nr))
     rader = []
     for rang, s in enumerate(sorterade, 1):
         if rang > len(strackor):
@@ -2342,10 +2461,12 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       round(s.djup_start, 2) if s.djup_start is not None else None,
                       round(s.djup_slut, 2) if s.djup_slut is not None else None,
                       s.anlaggningsar,
-                      s.brunnstyp(s.startbrunn), s.brunnstyp(s.slutbrunn), s.etapp,
-                      s.metod if s.metod != "ingen" else "",
-                      (round(s.kostnad["summa"]) if s.kostnad else ("ej beräknad" if s.metod == "schakt" else None)),
-                      s.atgardsflagga,
+                      s.brunnstyp(s.startbrunn), s.brunnstyp(s.slutbrunn),
+                      s.etapp if rang else None,
+                      (s.metod if s.metod != "ingen" else "") if rang else "",
+                      ((round(s.kostnad["summa"]) if s.kostnad else ("ej beräknad" if s.metod == "schakt" else None))
+                       if rang else None),
+                      s.atgardsflagga if rang else "",
                       s.manuell_bedomning, s.kommentar, s.lagning_m,
                       "Öppna rapport" if s.rapport_fil else "", s.videofil])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
@@ -3846,18 +3967,16 @@ def main(argv=None):
         typer = Counter(fl.split(":")[0] for s in strackor for fl in s.gisflagga.split("; ") if fl)
         for typ, n in typer.most_common():
             print(f"  {n:>4} {typ}")
+        lf = os.path.join(a.utdata, "littera_forslag.csv")
+        if not g["okanda"] and os.path.isfile(lf):
+            os.remove(lf)                                  # inaktuella förslag från en tidigare körning
         if g["okanda"]:
             os.makedirs(a.utdata, exist_ok=True)
-            lf = os.path.join(a.utdata, "littera_forslag.csv")
             skriv_litteraforslag(g["okanda"], lf)
             print(f"  okända brunnar med förslag ur GIS skrivna till {lf}")
             for o in g["okanda"][:6]:
                 print(f"    {o['littera']} (nr {o['nr']}) → "
                       + (", ".join(f"{lit} ({txt})" for lit, txt in o["forslag"]) or "inget förslag"))
-        _tmp = inspektionsgrad(strackor, gisfiler)
-        print("  inspektionsgrad: " + _inspektionsgrad_text(_tmp))
-        if _tmp["utan_gis"][0]:
-            print(f"  {_tmp['utan_gis'][0]} filmade sträckor ({_tmp['utan_gis'][1]:.0f} m) saknar ledning i GIS")
     uppposter = []
     for uf in globala["uppstroms"] + a.uppstroms:
         if not os.path.isfile(uf):
@@ -3898,6 +4017,10 @@ def main(argv=None):
             print(f"  nr {s.nr} {s.id}: {s.filmstatus}")
     rakn = aktiva(strackor)        # det som räknas i statistik, karta, åtgärdspaket och inspektionsgrad
     gisstat = inspektionsgrad(rakn, gisfiler) if gisfiler else None
+    if gisstat:
+        print("Inspektionsgrad: " + _inspektionsgrad_text(gisstat))
+        if gisstat["utan_gis"][0]:
+            print(f"  {gisstat['utan_gis'][0]} filmade sträckor ({gisstat['utan_gis'][1]:.0f} m) saknar ledning i GIS")
     etapper = None
     if a.etapper == "ja":
         kostnadsfil = a.kostnader or (globala["kostnader"][0] if globala["kostnader"] else None)

@@ -39,11 +39,15 @@ from markprofil import _station, _punkt_vid
 VERSION = 1
 
 
+SAKNAS_UNDER = -999.0   # varden under detta (SVOA: -9999) betyder "saknas"
+
+
 def _tal(v):
     try:
         if v is None or txt(v).strip() == '':
             return None
-        return float(txt(v).replace(',', '.'))
+        t = float(txt(v).replace(',', '.'))
+        return None if t <= SAKNAS_UNDER else t
     except (TypeError, ValueError):
         return None
 
@@ -89,7 +93,10 @@ def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, o
         arcpy.MakeFeatureLayer_management(src, 'lyr_gis_br', dq)
         if omrade is not None:
             arcpy.SelectLayerByLocation_management('lyr_gis_br', 'INTERSECT', omrade, '', 'NEW_SELECTION')
-        lasfalt = ['SHAPE@' if projicera else 'SHAPE@XY', idfalt] + [f for f in (lock, typ) if f]
+        extra_falt = [f for f in (lock, typ) if f]
+        if lock and typ == lock:
+            extra_falt = [lock]            # samma falt for bada - inte tva ganger i SearchCursor
+        lasfalt = ['SHAPE@' if projicera else 'SHAPE@XY', idfalt] + extra_falt
         n = 0
         with arcpy.da.SearchCursor('lyr_gis_br', lasfalt) as mark:
             for rad in mark:
@@ -103,7 +110,7 @@ def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, o
                     x, y = geom
                 if x is None:
                     continue
-                extra = dict(zip([f for f in (lock, typ) if f], rad[2:]))
+                extra = dict(zip(extra_falt, rad[2:]))
                 post = {'littera': bid, 'typ': _text(extra.get(typ)) if typ else '',
                         'lockniva': _tal(extra.get(lock)) if lock else None,
                         'x': round(x, 3), 'y': round(y, 3), 'lager': namn}
@@ -145,18 +152,24 @@ class Omraden(object):
     Python (ringar ur SHAPE@; hal = ringar efter None i en del), sa att det gar att testa utan
     arcpy-geometri. Forsta omradet som innehaller punkten vinner."""
 
-    def __init__(self, lager, namnfalt):
+    def __init__(self, lager, namnfalt, sr=None):
         self.poster = []     # (namn, bbox, [ringar]) dar ring = [(x, y), ...]
         namn_l = txt(getattr(lager, 'name', lager))
         falt = _faltnamn(lager)
         f_namn = _valj_falt(falt, namnfalt, 'omradesnamnfaltet', namn_l)
         src, dq = kalla(lager)
+        sr_namn = txt(getattr(sr, 'name', '') or '') if sr is not None else ''
+        projicera = bool(sr_namn) and _sr_namn(arcpy.Describe(src)) not in ('', sr_namn)
+        if projicera:
+            logg('  %s projiceras till ledningslagrets koordinatsystem' % namn_l)
         arcpy.MakeFeatureLayer_management(src, 'lyr_gis_duf', dq)
         with arcpy.da.SearchCursor('lyr_gis_duf', ['SHAPE@'] + ([f_namn] if f_namn else [])) as mark:
             for rad in mark:
                 geom = rad[0]
                 if geom is None:
                     continue
+                if projicera:
+                    geom = geom.projectAs(sr)
                 namn = _text(rad[1]) if f_namn else ''
                 ringar = []
                 for del_ in geom:
@@ -228,7 +241,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     omraden = None
     if duf_lager:
         logg('Laser driftomraden')
-        omraden = Omraden(hitta_lager(duf_lager), duf_falt)
+        omraden = Omraden(hitta_lager(duf_lager), duf_falt, sr)
     logg('Laser brunnar')
     brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade)
     logg('  %d brunnar totalt' % len(brunnar))
@@ -242,7 +255,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     attr = {}           # (lager, oid) -> dict
     n_led = n_bitar = 0
     for lyr in led_lager:
-        namn = txt(getattr(lyr, 'name', lyr))
+        namn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', lyr))   # langt namn: tva lager kan heta lika
         falt = _faltnamn(lyr)
         f_vg1 = _valj_falt(falt, vg_fran, 'vattengangsfaltet (fran)', namn)
         f_vg2 = _valj_falt(falt, vg_till, 'vattengangsfaltet (till)', namn)
@@ -293,6 +306,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     ledningar = []
     sedda = set()
     per_objekt = {}
+    n_stub = 0
     for nod, lista in graf.kanter.items():
         for annan, pts, lager, oid in lista:
             if id(pts) not in graf.fram_ids or id(pts) in graf.noll or id(pts) in sedda:
@@ -300,6 +314,12 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
             sedda.add(id(pts))
             a = graf.kanon(nod)
             b = graf.kanon(annan)
+            bit_langd = _langd(pts)
+            # Stub: ledningen sticker ut hogst toleransen forbi en brunn (brunnen projiceras
+            # innanfor anden) - ingen stracka mellan brunnar, hoppa over
+            if bit_langd <= float(tolerans) and (a == b or a[0] != 'B' or b[0] != 'B'):
+                n_stub += 1
+                continue
             delar = original.get((lager, oid), [])
             # station langs den del av originalet som biten tillhor
             st1 = st2 = None
@@ -310,6 +330,8 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 s2, d2 = _station(punkter, pts[-1])
                 if basta is None or d1 + d2 < basta:
                     basta, st1, st2, L = d1 + d2, s1, s2, _langd(punkter)
+            if st1 is not None and st2 is not None and st2 + 1e-6 < st1:
+                st2 = L            # ringledning: sista biten slutar i startpunkten (station L, inte 0)
             at = attr.get((lager, oid), {})
             post = {
                 'fran': _nodnamn(a), 'till': _nodnamn(b),
@@ -323,7 +345,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 'material': at.get('material', ''),
                 'ledningstyp': at.get('ledningstyp', ''),
                 'anlaggningsar': at.get('anlaggningsar'),
-                'lager': lager, 'oid': oid,
+                'lager': lager, 'oid': oid, '_st': st1 if st1 is not None else 0.0,
             }
             if omraden is not None:
                 mitt = _punkt_vid(pts, _langd(pts) / 2.0)
@@ -334,10 +356,15 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
             per_objekt.setdefault((lager, oid), []).append(post)
             ledningar.append(post)
     for lista in per_objekt.values():
+        lista.sort(key=lambda p: p['_st'])          # delarna i ritad ordning langs ledningen
         for i, post in enumerate(lista, 1):
             post['del'] = i
             post['antal_delar'] = len(lista)
+    for post in ledningar:
+        del post['_st']
     ledningar.sort(key=lambda p: (p['lager'], p['oid'], p['del']))
+    if n_stub:
+        logg('  %d stubbar (ledningsande hogst %.1f m forbi en brunn) hoppades over' % (n_stub, float(tolerans)))
 
     # Statistik
     med_brunn = set()
