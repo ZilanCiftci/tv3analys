@@ -1,0 +1,5 @@
+fil;nr;startbrunn;slutbrunn;serviser_uppstroms;langd_uppstroms_m;antal_ledningar;antal_brunnar;serviser_kalla;stoppade
+t.TV3;1;B;C;0;400,0;4;5;servislager;1
+t.TV3;2;C;D;0;641,4;6;7;servislager;1
+t.TV3;3;D;U;1;741,4;7;8;servislager;1
+t.TV3;4;E;B;0;300,0;3;4;servislager;1

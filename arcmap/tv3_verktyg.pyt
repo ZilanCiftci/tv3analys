@@ -36,6 +36,14 @@ STANDARD_BRUNN = ['A Nedstign och \u00f6vriga brunnar', 'A Rensbrunn/tillsynsbru
 STANDARD_CSV = 'brunnsfel.csv'          # foreslas bredvid JSON-filen, som shapefilen
 STANDARD_MARKPROFIL = 'markprofil.json'  # foreslas bredvid kartunderlag.json
 STANDARD_UPPSTROMS = 'uppstroms.csv'     # batchresultat fran Uppstroms, foreslas bredvid lagret
+STANDARD_GISDATA = 'gisdata.json'        # export av brunnar och ledningar (Exportera GIS-data)
+# Gissningar pa faltnamn i Exportera GIS-data (forsta traff i lagret anvands)
+STANDARD_LOCKNIVA = ['LOCKNIVA', 'LOCK_NIVA', 'LOCKHOJD', 'LOCKHOJD_M', 'TOPPNIVA', 'Z_LOCK', 'LOCK']
+STANDARD_BRUNNSTYP = ['BRUNNSTYP', 'BRUNNTYP', 'TYP', 'FUNKTION']
+STANDARD_DIMENSION = ['DIMENSION', 'DIM', 'INNERDIAMETER', 'DIAMETER', 'DN']
+STANDARD_MATERIAL = ['MATERIAL', 'MTRL', 'MAT']
+STANDARD_LEDNTYP = ['LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SYSTEM']
+STANDARD_AR = ['ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
 STANDARD_VG_FRAN = ['VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
 STANDARD_VG_TILL = ['VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
@@ -188,7 +196,8 @@ class Toolbox(object):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
         self.tools = [SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
-                      ExporteraKartor, ExporteraKartbild, SkapaProjekteringslager, Projekteringsprofil]
+                      ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
+                      SkapaProjekteringslager, Projekteringsprofil]
 
 
 class SkapaLedningslager(object):
@@ -694,6 +703,127 @@ class Uppstroms(object):
                          lagg_till_i_kartan=False, **gemensamt)
         if ut.get('lager'):
             parameters[4].value = ut['lager']
+        return
+
+
+class ExporteraGisdata(object):
+    def __init__(self):
+        self.label = 'Exportera GIS-data (brunnar och ledningar)'
+        self.description = (
+            'Exporterar brunnarna (littera, typ, lockniv\u00e5) och ledningsstr\u00e4ckorna mellan '
+            'brunnar (l\u00e4ngd, vatteng\u00e5ng i b\u00e5da \u00e4ndarna, dimension, material, '
+            'ledningstyp, anl\u00e4ggnings\u00e5r) till gisdata.json, oberoende av TV3-filerna. '
+            'tv3_analys.py kontrollerar filmerna mot GIS (vatteng\u00e5ng, littera, riktning, material, '
+            'dimension) och r\u00e4knar djup vid brunnarna. Ledningar som passerar flera brunnar delas '
+            'per brunnspar.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        K_FALT = 'F\u00e4lt'
+        K_INST = 'Inst\u00e4llningar'
+
+        ledning = _lagerparam('Ledningslager', 'ledningslager', True, kartlager)
+        brunn = _lagerparam('Brunnslager (alla lager d\u00e4r brunnar kan ligga)', 'brunnslager',
+                            True, kartlager)
+        brunn_id = arcpy.Parameter(
+            displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
+            datatype='GPString', parameterType='Required', direction='Input')
+        brunn_id.value = 'EntityID'
+        json_ut = arcpy.Parameter(
+            displayName='Utdata (gisdata.json; CSV-filer skrivs bredvid)', name='json_ut',
+            datatype='DEFile', parameterType='Required', direction='Output')
+        _filter(json_ut, ['json'])
+
+        def falt(disp, namn):
+            return arcpy.Parameter(displayName=disp, name=namn, datatype='GPString',
+                                   parameterType='Optional', direction='Input', category=K_FALT)
+        lock = falt('Brunnar: f\u00e4lt med lockniv\u00e5', 'lock_falt')
+        btyp = falt('Brunnar: f\u00e4lt med brunnstyp', 'typ_falt')
+        vg_fran = falt('Ledningar: vatteng\u00e5ng vid startpunkten (uppstr\u00f6ms)', 'vg_fran')
+        vg_till = falt('Ledningar: vatteng\u00e5ng vid slutpunkten (nedstr\u00f6ms)', 'vg_till')
+        dim = falt('Ledningar: dimension (mm)', 'dim_falt')
+        mat = falt('Ledningar: material', 'mat_falt')
+        ltyp = falt('Ledningar: ledningstyp (S/D/K)', 'ledntyp_falt')
+        ar = falt('Ledningar: anl\u00e4ggnings\u00e5r', 'ar_falt')
+
+        tolerans = arcpy.Parameter(
+            displayName='Tolerans brunn\u2013ledning (m)', name='tolerans', datatype='GPDouble',
+            parameterType='Required', direction='Input', category=K_INST)
+        tolerans.value = 1.0
+        omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
+                             False, kartlager, 'Optional')
+        omrade.category = K_INST
+        hojdsystem = arcpy.Parameter(
+            displayName='H\u00f6jdsystem i kartan (skrivs i filen)', name='hojdsystem',
+            datatype='GPString', parameterType='Required', direction='Input', category=K_INST)
+        hojdsystem.value = 'RH2000'
+
+        _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
+        _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
+        return [ledning, brunn, brunn_id, json_ut, lock, btyp, vg_fran, vg_till, dim, mat, ltyp, ar,
+                tolerans, omrade, hojdsystem]
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and parameters[0].valueAsText:
+            falt = _faltnamn(parameters[0])
+            if falt:
+                for i, kand in ((6, STANDARD_VG_FRAN), (7, STANDARD_VG_TILL), (8, STANDARD_DIMENSION),
+                                (9, STANDARD_MATERIAL), (10, STANDARD_LEDNTYP), (11, STANDARD_AR)):
+                    _filter(parameters[i], [''] + falt)
+                    if not parameters[i].altered:
+                        parameters[i].value = _forsta_traff(kand, falt)
+        if parameters[1].altered and parameters[1].valueAsText:
+            falt = _faltnamn(parameters[1])
+            if falt:
+                _filter(parameters[2], falt)
+                for i, kand in ((4, STANDARD_LOCKNIVA), (5, STANDARD_BRUNNSTYP)):
+                    _filter(parameters[i], [''] + falt)
+                    if not parameters[i].altered:
+                        parameters[i].value = _forsta_traff(kand, falt)
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[3].altered:
+            l = _lagerobjekt(_lagerlista(parameters[0])[0]) if _lagerlista(parameters[0]) else None
+            try:
+                mapp = os.path.dirname(l.dataSource) if l else ''
+                if mapp.lower().endswith('.gdb'):
+                    mapp = os.path.dirname(mapp)
+                if mapp:
+                    parameters[3].value = os.path.join(mapp, STANDARD_GISDATA)
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslager')
+        _kolla_geometri(parameters[1], ('Point',), 'Brunnslager')
+        _kolla_geometri(parameters[13], ('Polygon',), 'Omr\u00e5deslagret')
+        if parameters[12].value is not None and not parameters[12].value > 0:
+            parameters[12].setErrorMessage('Storre an 0')
+        if parameters[0].valueAsText and not (parameters[6].valueAsText and parameters[7].valueAsText):
+            parameters[6].setWarningMessage(
+                'Utan vattengangsfalt kan analysen inte kontrollera vattengang, riktning eller djup.')
+        return
+
+    def execute(self, parameters, messages):
+        m = _ladda_modul('gisexport')
+        _ladda_modul('skapa_ledningslager')
+        _ladda_modul('natverk')
+        _ladda_modul('markprofil')
+
+        def v(i):
+            t = (parameters[i].valueAsText or '').strip().strip("'")
+            return t or None
+        r = m.exportera(
+            _lagerlista(parameters[0]), _lagerlista(parameters[1]), parameters[2].valueAsText,
+            parameters[3].valueAsText,
+            lock_falt=v(4), typ_falt=v(5), vg_fran=v(6), vg_till=v(7), dim_falt=v(8), mat_falt=v(9),
+            ledntyp_falt=v(10), ar_falt=v(11), tolerans=float(parameters[12].value),
+            omradeslager=v(13), hojdsystem=parameters[14].valueAsText or 'RH2000')
+        arcpy.AddMessage('Klart: %(brunnar)d brunnar, %(ledningar)d ledningsstrackor '
+                         '(%(fria_andar)d med fri ande, %(utan_vg)d utan vattengang)' % r)
         return
 
 

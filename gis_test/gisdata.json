@@ -1,0 +1,269 @@
+{
+ "version": 1,
+ "kalla": "gisexport.py",
+ "genererad": "2026-10-04 12:16",
+ "hojdsystem": "RH2000",
+ "tolerans_m": 1.0,
+ "koordinatsystem": "",
+ "lager": {
+  "ledningar": [
+   "Ledning"
+  ],
+  "brunnar": [
+   "Brunnar"
+  ],
+  "brunn_id": "EntityID",
+  "lockniva": "LOCKNIVA",
+  "brunnstyp": "BRUNNSTYP",
+  "vg_fran": "VG_UPP",
+  "vg_till": "VG_NED",
+  "dimension": "DIM",
+  "material": "MTRL",
+  "ledningstyp": "TYP",
+  "anlaggningsar": "ANL_AR"
+ },
+ "brunnar": [
+  {
+   "littera": "A",
+   "typ": "NB",
+   "lockniva": 12.5,
+   "x": 0,
+   "y": 100,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "B",
+   "typ": "NB",
+   "lockniva": 12.0,
+   "x": 100,
+   "y": 100,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "C",
+   "typ": "TB",
+   "lockniva": 11.5,
+   "x": 200,
+   "y": 100,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "D",
+   "typ": "RB",
+   "lockniva": null,
+   "x": 300,
+   "y": 100,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "U",
+   "typ": "NB",
+   "lockniva": 10.0,
+   "x": 400,
+   "y": 100,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "E",
+   "typ": "NB",
+   "lockniva": 14.0,
+   "x": 100,
+   "y": 200,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "F",
+   "typ": "NB",
+   "lockniva": 11.0,
+   "x": 250,
+   "y": 150,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "X",
+   "typ": "NB",
+   "lockniva": 9.0,
+   "x": 500,
+   "y": 500,
+   "lager": "Brunnar"
+  },
+  {
+   "littera": "M",
+   "typ": "RB",
+   "lockniva": null,
+   "x": 150,
+   "y": 100.5,
+   "lager": "Brunnar"
+  }
+ ],
+ "ledningar": [
+  {
+   "fran": "A",
+   "till": "B",
+   "fran_xy": [
+    0.0,
+    100.0
+   ],
+   "till_xy": [
+    100.0,
+    100.0
+   ],
+   "langd_m": 100.0,
+   "vg_fran": 10.0,
+   "vg_till": 9.5,
+   "dimension": 225,
+   "dimension_text": "225",
+   "material": "BTG",
+   "ledningstyp": "S",
+   "anlaggningsar": 1965,
+   "lager": "Ledning",
+   "oid": 1,
+   "del": 1,
+   "antal_delar": 3
+  },
+  {
+   "fran": "B",
+   "till": "M",
+   "fran_xy": [
+    100.0,
+    100.0
+   ],
+   "till_xy": [
+    150.0,
+    100.0
+   ],
+   "langd_m": 50.0,
+   "vg_fran": 9.5,
+   "vg_till": 9.25,
+   "dimension": 225,
+   "dimension_text": "225",
+   "material": "BTG",
+   "ledningstyp": "S",
+   "anlaggningsar": 1965,
+   "lager": "Ledning",
+   "oid": 1,
+   "del": 2,
+   "antal_delar": 3
+  },
+  {
+   "fran": "M",
+   "till": "C",
+   "fran_xy": [
+    150.0,
+    100.0
+   ],
+   "till_xy": [
+    200.0,
+    100.0
+   ],
+   "langd_m": 50.0,
+   "vg_fran": 9.25,
+   "vg_till": 9.0,
+   "dimension": 225,
+   "dimension_text": "225",
+   "material": "BTG",
+   "ledningstyp": "S",
+   "anlaggningsar": 1965,
+   "lager": "Ledning",
+   "oid": 1,
+   "del": 3,
+   "antal_delar": 3
+  },
+  {
+   "fran": "C",
+   "till": "D",
+   "fran_xy": [
+    200.0,
+    100.0
+   ],
+   "till_xy": [
+    300.0,
+    100.0
+   ],
+   "langd_m": 100.0,
+   "vg_fran": 9.0,
+   "vg_till": 8.5,
+   "dimension": 300,
+   "dimension_text": "300",
+   "material": "PVC",
+   "ledningstyp": "S",
+   "anlaggningsar": null,
+   "lager": "Ledning",
+   "oid": 2,
+   "del": 1,
+   "antal_delar": 1
+  },
+  {
+   "fran": "D",
+   "till": "U",
+   "fran_xy": [
+    300.0,
+    100.0
+   ],
+   "till_xy": [
+    400.0,
+    100.0
+   ],
+   "langd_m": 100.0,
+   "vg_fran": null,
+   "vg_till": null,
+   "dimension": null,
+   "dimension_text": "",
+   "material": "",
+   "ledningstyp": "",
+   "anlaggningsar": null,
+   "lager": "Ledning",
+   "oid": 3,
+   "del": 1,
+   "antal_delar": 1
+  },
+  {
+   "fran": "E",
+   "till": "B",
+   "fran_xy": [
+    100.0,
+    200.0
+   ],
+   "till_xy": [
+    100.0,
+    100.0
+   ],
+   "langd_m": 100.0,
+   "vg_fran": 12.0,
+   "vg_till": 10.0,
+   "dimension": 160,
+   "dimension_text": "160",
+   "material": "PP",
+   "ledningstyp": "S",
+   "anlaggningsar": 1999,
+   "lager": "Ledning",
+   "oid": 4,
+   "del": 1,
+   "antal_delar": 1
+  },
+  {
+   "fran": "F",
+   "till": "",
+   "fran_xy": [
+    250.0,
+    150.0
+   ],
+   "till_xy": [
+    250,
+    250
+   ],
+   "langd_m": 100.0,
+   "vg_fran": 9.5,
+   "vg_till": 9.2,
+   "dimension": 225,
+   "dimension_text": "225",
+   "material": "BTG",
+   "ledningstyp": "D",
+   "anlaggningsar": 1970,
+   "lager": "Ledning",
+   "oid": 5,
+   "del": 1,
+   "antal_delar": 1
+  }
+ ]
+}
