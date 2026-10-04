@@ -179,7 +179,9 @@ class Layout(object):
     """Ett kartdokument att exportera ur: det oppna (CURRENT) eller en mall (.mxd). Haller
     dataramen, dess matt per skalenhet, lagret med strackorna och ev. markeringslagret."""
 
-    def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None):
+    def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None, kopiera_fran=None):
+        """kopiera_fran: (lager, markeringslager) ur den oppna kartan - saknas de i mallen laggs de
+        in i mallens dataram for exporten (mallen sparas inte)."""
         self.mxd = mxd
         self.namn = namn
         try:
@@ -197,11 +199,16 @@ class Layout(object):
                      'satt rotationen till 0' % (namn, float(self.df.rotation)))
         except Exception:
             pass
+        kop_lyr, kop_mark = (kopiera_fran or (None, None))
         self.lyr = lyr if lyr is not None else _lager_i_doc(mxd, lagernamn)
+        if self.lyr is None and kop_lyr is not None:
+            self.lyr = self._lagg_in(kop_lyr, lagernamn)
         if self.lyr is None:
             raise RuntimeError('Mallen %s saknar lagret "%s" - lagg in det (samma namn som i kartan)'
                                % (namn, txt(lagernamn)))
         self.mark_lyr = _lager_i_doc(mxd, markeringsnamn) if markeringsnamn else None
+        if markeringsnamn and self.mark_lyr is None and kop_mark is not None:
+            self.mark_lyr = self._lagg_in(kop_mark, markeringsnamn)
         if markeringsnamn and self.mark_lyr is None:
             logg('  mallen %s saknar markeringslagret "%s" - urval anvands i stallet'
                  % (namn, txt(markeringsnamn)))
@@ -216,6 +223,20 @@ class Layout(object):
             self._gammalt_urval = list(self.lyr.getSelectionSet() or [])
         except Exception:
             pass
+
+    def _lagg_in(self, lager, namn):
+        """Lagger in en kopia av ett lager ur den oppna kartan overst i mallens dataram (med dess
+        symbologi) och returnerar mallens lagerobjekt. Mallen sparas inte, sa den paverkas inte."""
+        try:
+            arcpy.mapping.AddLayer(self.df, lager, 'TOP')
+            ny = _lager_i_doc(self.mxd, txt(getattr(lager, 'name', namn))) or _lager_i_doc(self.mxd, namn)
+            if ny is not None:
+                logg('  lagret "%s" saknades i %s - kopierades in fran den oppna kartan for exporten'
+                     % (txt(getattr(lager, 'name', namn)), self.namn))
+            return ny
+        except Exception as e:
+            logg('  kunde inte lagga in lagret "%s" i %s: %s' % (txt(namn), self.namn, txt(e)))
+            return None
 
     def kontrollera_kalla(self, src):
         """Varnar om mallens lager pekar pa en annan featureklass an den oppna kartans."""
@@ -300,8 +321,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     och vars definitionsfraga satts till den aktuella strackan (tydligare an urvalsfargen).
     mall_liggande/mall_staende: .mxd-filer med liggande resp. staende layout; anges bada valjs
     per stracka den som ger minsta skala (vid lika skala den dar strackan fyller sidan bast).
-    Mallarna maste innehalla lagret med strackorna (samma lagernamn som i den oppna kartan),
-    och markeringslagret om det anvands. Utan mallar anvands den oppna kartans layout.
+    Saknar mallarna lagret med strackorna (eller markeringslagret) kopieras det in fran den oppna
+    kartan under korningen (mallen sparas inte). Utan mallar anvands den oppna kartans layout.
     kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
     mxd = _mxd()
     if mxd is None:
@@ -336,7 +357,14 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                 if not os.path.isfile(txt(mall)):
                     raise RuntimeError('Mallen finns inte: %s' % txt(mall))
                 doc = arcpy.mapping.MapDocument(txt(mall))
-                lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn)
+                mark_lyr_oppen = None
+                if mark_namn:
+                    try:
+                        mark_lyr_oppen = hitta_lager(markeringslager)
+                    except Exception:
+                        mark_lyr_oppen = None
+                lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn,
+                            kopiera_fran=(lyr, mark_lyr_oppen))
                 lo.kontrollera_kalla(src)
                 layouter.append(lo)
                 logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
