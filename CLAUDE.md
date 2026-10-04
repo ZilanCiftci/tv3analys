@@ -90,6 +90,16 @@ Utdata i `tv3_resultat/` (eller `-o`):
   konstruktionsindex; två TV3-filer med samma namn får `mapp/namn` som `fil`; mediaindexet
   sorterar `os.walk` för determinism.
 - **Ingen** `sammanfattning.md` längre (togs bort på användarens begäran).
+- **Rapporthastighet** (okt 2026, användaren: "tar väldigt lång tid"): profilering visade att 90 % av
+  tiden var reportlabs `_py_asciiBase85Encode` av fotona (C-tillägget rl_accel saknas → ren Python) och
+  att fotona bäddades in i full upplösning (778 MB PDF för DUF 701 med 488 full-HD-foton). Rättat:
+  `_snabb_reportlab()` sätter `rl_config.useA85 = 0` (binär bilddata, mindre filer); `forminska_foto`
+  skalar till `FOTO_MAX_PX` 960 px (JPEG `draft` ger halv avkodning direkt, `FOTO_JPEG_KVALITET` 82,
+  cache per process i `_FOTO_CACHE`, original om redan litet/JPEG eller fel); `skriv_rapporter` kör
+  parallellt med `ProcessPoolExecutor` (`RAPPORT_PROCESSER`/`--processer`, standard kärnor − 1,
+  `_rapport_jobb` per sträcka med egen tempmapp, seriell reserv vid fel). DUF 701: 3 m 35 s → 35 s
+  (4 kärnor), 25 rapporter seriellt 266 s → 19 s; rapportmappen 778 → ~130 MB. Matplotlib (översikt +
+  profil, 200 dpi) är nu den största posten, ca 0,5 s per rapport.
 
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
 **Skapa ledningslager** (dialog: JSON-fil, lager, brunnsfält, utdata, valfritt område/.lyr/CSV,
