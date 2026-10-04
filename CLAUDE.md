@@ -105,7 +105,15 @@ Utdata i `tv3_resultat/` (eller `-o`):
   palett-PNG 256 färger (`RAPPORT_BILD_PALETT`, 58→20 kB, ~0,1 s/rapport); `FOTO_JPEG_KVALITET` 76 +
   `optimize=True`. 25 figurpar 13,4 → 5,6 s; DUF 701 full körning 35 → 33 s (palett kostar det dpi
   sparar), rapportmappen 125 → 102 MB med brusfoton (verkliga foton ~30 kB/st → ~25 MB). Kvar: text-
-  rendering i matplotlib (~0,15 s/figur) och reportlab-bygget (~0,17 s/rapport).
+  rendering i matplotlib (~0,15 s/figur) och reportlab-bygget (~0,17 s/rapport). Granskning okt 2026
+  (rättat): cachefilnamnet i `forminska_foto` är sha1 av originalsökvägen (löpnumret kolliderade när en
+  inaktuell post gjordes om → fel foto på fel observation); `draft` får proportionellt mål (960×960 gav
+  skala 1 för full-HD); alfa läggs mot vit bakgrund; EXIF-orientering tillämpas (`exif_transpose`, taggen
+  tas bort, gråskala/CMYK → RGB); Ctrl-C i poolen avbryter köade jobb (`cancel_futures`); seriell reserv
+  skriver bara sträckor utan `rapport_fil`; `freeze_support()` under main-skyddet; progress med `flush`.
+  Palett-PNG:n bäddas in som RGB av reportlab – vinsten (~35 %/figur i PDF) är bättre komprimering.
+  KONFIG-ändringar gjorda från ett omslagsskript når inte spawn-arbetarna på Windows (modulen
+  importeras om) – CLI-körning påverkas inte.
 
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
 **Skapa ledningslager** (dialog: JSON-fil, lager, brunnsfält, utdata, valfritt område/.lyr/CSV,
@@ -469,9 +477,15 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   videofil, TV3-fil, littera rättat (bara om rättat).
   **Borttaget på begäran:** projekt, ägare, operatör, driftåtgärd, **prioritetsklass/rekommendation**
   (sep 2026 – finns bara i Excel och kartunderlaget; klassbokstaven sitter kvar i PDF-filnamnet).
-- Schematisk översikt: horisontellt rör, brunnar i ändarna, skador som romber färgade efter grad
-  (grön/gul/orange/röd), löpande skador som band ovanför, anslutningar som trianglar ovanför
-  (vänster) / under (höger) röret med etikett "15.6 m kl 9", meterskala, riktningspil.
+- Schematisk översikt: horisontellt rör, brunnar i ändarna (större diameter än röret, okt 2026),
+  skador som romber färgade efter grad (grön/gul/orange/röd), löpande skador som band ovanför
+  (radpackning `_packa_band`: första lediga raden, etikettbredden räknas med; figurhöjden växer med
+  fler än tre rader och `rita_schema` returnerar (bredd, höjd) i tum som PDF:en använder – tidigare
+  rad = löpnummer mod 3 så band fyra hamnade på band ett, okt 2026),
+  anslutningar som trianglar ovanför (vänster) / under (höger) röret med etikett "15.6 m kl 9",
+  meterskala som egen linje under anslutningarna med siffrorna direkt under ticksen och riktningspil
+  under skalan (okt 2026, användarens begäran); förklaringen högst upp. Användaren ska återkomma
+  med hur anslutningarna ska visas.
 - Observationstabell med radfärg efter grad (ingen förklaringstext – borttagen på begäran).
   Bildnamnen i kolumnen Foto är **interna PDF-länkar** (`<a href="#foto_…">`) till fotografiet
   längre bak; ankaret (`<a name>` i en 1 pt-paragraf) ligger ovanför bilden så den hamnar i vy.

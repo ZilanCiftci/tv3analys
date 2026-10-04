@@ -66,6 +66,7 @@ Driftåtgärd (spolning/rotskärning) flaggas separat när driftgrad ≥ 3.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import os
 import re
@@ -226,8 +227,9 @@ RAPPORT_PROCESSER: int | None = None
 # Upplösning på översikts- och profilbilden i PDF-rapporten (dpi vid 180 mm bredd). 150 räcker för
 # utskrift i A4 och halverar nästan bildernas storlek och rittid mot 200.
 RAPPORT_BILD_DPI = 150
-# Diagrambilderna i rapporten sparas som palett-PNG (256 färger): ca 65 % mindre än RGB utan
-# synlig skillnad på linjediagram. Kostar ~0,1 s per rapport. False = vanlig RGB-PNG.
+# Diagrambilderna i rapporten sparas som palett-PNG (256 färger). Reportlab bäddar in dem som RGB,
+# men de kvantiserade pixlarna komprimeras bättre: ca 35 % mindre per figur i PDF:en utan synlig
+# skillnad på linjediagram. Kostar ~0,1 s per rapport. False = vanlig RGB-PNG.
 RAPPORT_BILD_PALETT = True
 
 # Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
@@ -2316,38 +2318,67 @@ def _spara_rapportbild(fig, path: str) -> None:
         pass                                   # RGB-bilden ligger kvar
 
 
-def rita_schema(s: Stracka, path: str) -> None:
-    """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador."""
+SCHEMA_BREDD_TUM = 7.4
+SCHEMA_HOJD_TUM = 2.5          # vid upp till tre rader löpande skador; växer med fler rader
+SCHEMA_RADHOJD = 0.30          # dataenheter per rad löpande skador (band + etikett)
+
+
+def _packa_band(band: list[tuple[float, float]]) -> list[int]:
+    """Rad per band (0 = närmast röret) så att inga band eller etiketter överlappar i samma rad.
+    band = [(från, till inkl. etikett)] i bandens ordning; första lediga raden tas."""
+    rader: list[float] = []            # längst högra upptagna x per rad
+    ut = []
+    for a, b in band:
+        for i, slut in enumerate(rader):
+            if a > slut:
+                rader[i] = b
+                ut.append(i)
+                break
+        else:
+            rader.append(b)
+            ut.append(len(rader) - 1)
+    return ut
+
+
+def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
+    """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador.
+    Returnerar figurens (bredd, höjd) i tum – höjden växer när de löpande skadorna behöver fler rader."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyBboxPatch
 
     L = max(s.langd, 1.0)
-    fig, ax = plt.subplots(figsize=(7.4, 2.5))
+    # löpande skador: rad per band så de inte hamnar på varandra (etikettbredden räknas med)
+    lopande = [o for o in s.observationer if o.raknas and o.lopande.startswith("A") and o.lopande_langd]
+    lopande.sort(key=lambda o: o.lage)
+    etikett_bredd = L * 1.12 / (SCHEMA_BREDD_TUM * 72) * 3.9   # dataenheter per tecken vid 6 pt
+    intervall = []
+    for o in lopande:
+        text = f"{o.kod}{o.grad} {o.lopande_langd:.1f} m"
+        intervall.append((o.lage, max(o.lage + o.lopande_langd, o.lage + len(text) * etikett_bredd) + L * 0.015))
+    rad = _packa_band(intervall)
+    antal_rader = max(3, max(rad) + 1 if rad else 0)
+    y_topp = 0.95 + SCHEMA_RADHOJD * antal_rader + 0.6      # plats för band + förklaring
+    hojd_tum = SCHEMA_HOJD_TUM * (y_topp + 2.1) / 4.3
+    fig, ax = plt.subplots(figsize=(SCHEMA_BREDD_TUM, hojd_tum))
     ax.set_xlim(-L * 0.06, L * 1.06)
-    ax.set_ylim(-2.15, 2.0)
+    ax.set_ylim(-2.1, y_topp)
     ax.axis("off")
     # röret
     ax.add_patch(FancyBboxPatch((0, -0.25), L, 0.5, boxstyle="round,pad=0,rounding_size=0.02",
                                 fc="#e8e8e8", ec="#7f7f7f", lw=1.2))
     # brunnar
     for x, namn, ha in ((0, s.fran_brunn, "right"), (L, s.till_brunn, "left")):
-        ax.plot(x, 0, "o", ms=14, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
-        ax.text(x + (-0.02 if ha == "right" else 0.02) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
-    ax.annotate("", xy=(L * 0.12, -1.2), xytext=(L * 0.02, -1.2),
-                arrowprops=dict(arrowstyle="->", color="#2a78d6", lw=1.2))
-    ax.text(L * 0.13, -1.2, f"inspektionsriktning ({s.riktning.lower()}), position mätt från {s.fran_brunn}",
-            va="center", fontsize=7, color="#2a78d6")
+        # brunnen ritas större än rörets diameter (0,5 enheter ≈ 20 pt i figuren)
+        ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
+        ax.text(x + (-0.03 if ha == "right" else 0.03) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
     # löpande skador som band
-    band = 0
-    for o in s.observationer:
-        if o.raknas and o.lopande.startswith("A") and o.lopande_langd:
-            y = 0.95 + 0.22 * (band % 3)
-            ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
-                    solid_capstyle="butt", alpha=0.9)
-            ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
-            band += 1
+    for o, r in zip(lopande, rad):
+        y = 0.95 + SCHEMA_RADHOJD * r
+        ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
+                solid_capstyle="butt", alpha=0.9)
+        ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
     # punktskador
     for o in s.observationer:
         if o.raknas and not (o.lopande.startswith("A") and o.lopande_langd):
@@ -2372,23 +2403,31 @@ def rita_schema(s: Stracka, path: str) -> None:
             else:
                 ax.plot(o.lage, 0, "s", ms=6, mfc="#2a78d6", mec="white", zorder=6)
                 ax.text(o.lage, -0.42, etikett, ha="center", va="top", fontsize=5.5, color="#2a78d6")
-    # meterskala
+    # meterskala – egen linje under anslutningarna, siffrorna direkt under ticksen
+    y_skala = -1.15
+    ax.plot([0, L], [y_skala, y_skala], color="#7f7f7f", lw=0.8)
     for x in range(0, int(L) + 1, max(1, int(L // 8) or 1)):
-        ax.plot([x, x], [-0.25, -0.33], color="#7f7f7f", lw=0.6)
-        ax.text(x, -1.45, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
-    ax.text(L / 2, -1.8, "position (m)", ha="center", va="top", fontsize=6.5, color="#7f7f7f")
+        ax.plot([x, x], [y_skala, y_skala - 0.1], color="#7f7f7f", lw=0.6)
+        ax.text(x, y_skala - 0.13, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
+    ax.annotate("", xy=(L * 0.10, -1.85), xytext=(L * 0.0, -1.85),
+                arrowprops=dict(arrowstyle="->", color="#2a78d6", lw=1.2))
+    ax.text(L * 0.11, -1.85, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
+            va="center", fontsize=7, color="#2a78d6")
     # legend
+    y_leg = y_topp - 0.23
     for i, g in enumerate((1, 2, 3, 4)):
-        ax.plot(L * (0.55 + 0.11 * i), 1.75, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
-        ax.text(L * (0.565 + 0.11 * i), 1.75, f"grad {g}", va="center", fontsize=6.5)
-    ax.plot(L * 0.02, 1.75, "v", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.035, 1.75, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
-    ax.plot(L * 0.3, 1.75, "^", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.315, 1.75, "höger (kl 1–5)", va="center", fontsize=6.5)
-    ax.text(L * 0.02, 1.5, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6, color="#52514e")
+        ax.plot(L * (0.55 + 0.11 * i), y_leg, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
+        ax.text(L * (0.565 + 0.11 * i), y_leg, f"grad {g}", va="center", fontsize=6.5)
+    ax.plot(L * 0.02, y_leg, "v", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.035, y_leg, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
+    ax.plot(L * 0.3, y_leg, "^", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.315, y_leg, "höger (kl 1–5)", va="center", fontsize=6.5)
+    ax.text(L * 0.02, y_leg - 0.23, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6,
+            color="#52514e")
     fig.tight_layout(pad=0.2)
     _spara_rapportbild(fig, path)
     plt.close(fig)
+    return SCHEMA_BREDD_TUM, hojd_tum
 
 
 PROFIL_FIG = (7.4, 3.2)                 # tum
@@ -2608,9 +2647,9 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
 
     # --- schema ---
     schema = os.path.join(tmp, f"schema_{s.nr}.png")
-    rita_schema(s, schema)
+    sb, sh = rita_schema(s, schema)
     el.append(Paragraph("Översikt", st_h2))
-    el.append(Image(schema, width=bredd, height=bredd * 2.5 / 7.4))
+    el.append(Image(schema, width=bredd, height=bredd * sh / sb))
 
     # --- observationstabell ---
     el.append(Paragraph("Observationer", st_h2))
@@ -2741,28 +2780,43 @@ _FOTO_CACHE: dict[str, str] = {}
 
 
 def forminska_foto(pth: str, tmp: str) -> str:
-    """Förminskad kopia av ett foto (JPEG, längsta sidan FOTO_MAX_PX) i tmp, för inbäddning i PDF.
-    Originalet returneras när FOTO_MAX_PX är None, bilden redan är liten nog, eller något går fel.
-    Kopior cachas per process (samma bild kan höra till flera observationer)."""
-    if not FOTO_MAX_PX:
-        return pth
+    """Kopia av ett foto för inbäddning i PDF: JPEG, längsta sidan högst FOTO_MAX_PX, och vriden
+    enligt EXIF-orienteringen (reportlab läser inte EXIF, så ett foto taget på högkant hamnade
+    annars liggande). Originalet returneras när det redan är en liten RGB-JPEG utan rotation, eller
+    när något går fel. Kopior cachas per process (samma bild kan höra till flera observationer)."""
     nyckel = os.path.normcase(os.path.abspath(pth))
     if nyckel in _FOTO_CACHE and os.path.isfile(_FOTO_CACHE[nyckel]):
         return _FOTO_CACHE[nyckel]
     try:
-        from PIL import Image as PILImage
+        from PIL import Image as PILImage, ImageOps
         with PILImage.open(pth) as im:
             w, h = im.size
-            if max(w, h) <= FOTO_MAX_PX and (im.format or "").upper() == "JPEG":
+            try:
+                orientering = im.getexif().get(0x0112, 1)
+            except Exception:
+                orientering = 1
+            liten = not FOTO_MAX_PX or max(w, h) <= FOTO_MAX_PX
+            if liten and orientering in (None, 1) and im.mode == "RGB" and (im.format or "").upper() == "JPEG":
                 _FOTO_CACHE[nyckel] = pth
                 return pth
-            im.draft("RGB", (FOTO_MAX_PX, FOTO_MAX_PX))        # snabb nedskalad JPEG-avkodning (1/2, 1/4 …)
+            if FOTO_MAX_PX and orientering in (None, 1):
+                # snabb nedskalad JPEG-avkodning (1/2, 1/4 …); målet måste ha bildens proportioner,
+                # annars väljer PIL skala 1 (full-HD mot 960×960 gav ingen nedskalning)
+                im.draft("RGB", (FOTO_MAX_PX * w // max(w, h), FOTO_MAX_PX * h // max(w, h)))
+            im = ImageOps.exif_transpose(im) or im            # vrid enligt EXIF och ta bort taggen
+            if im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info:
+                rgba = im.convert("RGBA")                     # genomskinligt → vitt, inte svart
+                bg = PILImage.new("RGB", rgba.size, "white")
+                bg.paste(rgba, mask=rgba.split()[3])
+                im = bg
             if im.mode != "RGB":
-                im = im.convert("RGB")
-            if max(im.size) > FOTO_MAX_PX:
+                im = im.convert("RGB")                        # gråskala, CMYK, palett → RGB
+            if FOTO_MAX_PX and max(im.size) > FOTO_MAX_PX:
                 im.thumbnail((FOTO_MAX_PX, FOTO_MAX_PX))
-            ut = os.path.join(tmp, f"foto_{len(_FOTO_CACHE)}_{os.getpid()}.jpg")
-            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True)
+            # entydigt namn per originalfil – ett löpnummer kolliderade när en inaktuell cachepost
+            # (raderad tempmapp från en tidigare sträcka) gjordes om och nästa foto fick samma namn
+            ut = os.path.join(tmp, "foto_" + hashlib.sha1(nyckel.encode("utf-8")).hexdigest()[:16] + ".jpg")
+            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True, exif=b"")
         _FOTO_CACHE[nyckel] = ut
         return ut
     except Exception:
@@ -2831,28 +2885,34 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
 
     def framsteg():
         if klara % 25 == 0 or klara == len(att_skriva):
-            print(f"  rapporter: {klara}/{len(att_skriva)}", end="\r")
+            print(f"  rapporter: {klara}/{len(att_skriva)}", end="\r", flush=True)
 
     if processer > 1:
         try:
             from concurrent.futures import ProcessPoolExecutor, as_completed
             with ProcessPoolExecutor(max_workers=processer) as pool:
-                jobb = {pool.submit(_rapport_jobb, s, sokvag): (s, sokvag) for s, sokvag in att_skriva}
-                for f in as_completed(jobb):
-                    s, sokvag = jobb[f]
-                    nr, fil, fel = f.result()
-                    if fel:
-                        print(f"  FEL rapport sträcka {nr} ({fil}): {fel}")
-                    else:
-                        s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
-                        n += 1
-                    klara += 1
-                    framsteg()
+                try:
+                    jobb = {pool.submit(_rapport_jobb, s, sokvag): (s, sokvag) for s, sokvag in att_skriva}
+                    for f in as_completed(jobb):
+                        s, sokvag = jobb[f]
+                        nr, fil, fel = f.result()
+                        if fel:
+                            print(f"\n  FEL rapport sträcka {nr} ({fil}): {fel}")
+                        else:
+                            s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
+                            n += 1
+                        klara += 1
+                        framsteg()
+                except KeyboardInterrupt:
+                    # annars väntar with-blocket in alla redan inskickade jobb innan avbrottet syns
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
             print()
             return n, behallna
         except Exception as e:  # noqa: BLE001 – t.ex. miljö utan processpool: kör seriellt
-            print(f"  parallell körning misslyckades ({e}) – skriver rapporterna en i taget")
-            n = klara = 0
+            print(f"\n  parallell körning misslyckades ({e}) – skriver resterande rapporter en i taget")
+            att_skriva = [(s, sokvag) for s, sokvag in att_skriva if not s.rapport_fil]
+            klara = 0
 
     with tempfile.TemporaryDirectory() as tmp:
         for s, sokvag in att_skriva:
@@ -2861,7 +2921,7 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
                 s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
                 n += 1
             except Exception as e:  # noqa: BLE001
-                print(f"  FEL rapport sträcka {s.nr} ({s.fil}): {e}")
+                print(f"\n  FEL rapport sträcka {s.nr} ({s.fil}): {e}")
             klara += 1
             framsteg()
     print()
@@ -3234,4 +3294,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()    # fryst exe (PyInstaller) på Windows: annars spawnas skriptet rekursivt
     main()
