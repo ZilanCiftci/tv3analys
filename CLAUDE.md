@@ -478,7 +478,10 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   **Borttaget på begäran:** projekt, ägare, operatör, driftåtgärd, **prioritetsklass/rekommendation**
   (sep 2026 – finns bara i Excel och kartunderlaget; klassbokstaven sitter kvar i PDF-filnamnet).
 - Schematisk översikt: horisontellt rör, brunnar i ändarna (större diameter än röret, okt 2026),
-  skador som romber färgade efter grad (grön/gul/orange/röd), löpande skador som band ovanför,
+  skador som romber färgade efter grad (grön/gul/orange/röd), löpande skador som band ovanför
+  (radpackning `_packa_band`: första lediga raden, etikettbredden räknas med; figurhöjden växer med
+  fler än tre rader och `rita_schema` returnerar (bredd, höjd) i tum som PDF:en använder – tidigare
+  rad = löpnummer mod 3 så band fyra hamnade på band ett, okt 2026),
   anslutningar som trianglar ovanför (vänster) / under (höger) röret med etikett "15.6 m kl 9",
   meterskala som egen linje under anslutningarna med siffrorna direkt under ticksen och riktningspil
   under skalan (okt 2026, användarens begäran); förklaringen högst upp. Användaren ska återkomma

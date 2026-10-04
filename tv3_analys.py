@@ -2318,17 +2318,52 @@ def _spara_rapportbild(fig, path: str) -> None:
         pass                                   # RGB-bilden ligger kvar
 
 
-def rita_schema(s: Stracka, path: str) -> None:
-    """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador."""
+SCHEMA_BREDD_TUM = 7.4
+SCHEMA_HOJD_TUM = 2.5          # vid upp till tre rader löpande skador; växer med fler rader
+SCHEMA_RADHOJD = 0.30          # dataenheter per rad löpande skador (band + etikett)
+
+
+def _packa_band(band: list[tuple[float, float]]) -> list[int]:
+    """Rad per band (0 = närmast röret) så att inga band eller etiketter överlappar i samma rad.
+    band = [(från, till inkl. etikett)] i bandens ordning; första lediga raden tas."""
+    rader: list[float] = []            # längst högra upptagna x per rad
+    ut = []
+    for a, b in band:
+        for i, slut in enumerate(rader):
+            if a > slut:
+                rader[i] = b
+                ut.append(i)
+                break
+        else:
+            rader.append(b)
+            ut.append(len(rader) - 1)
+    return ut
+
+
+def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
+    """Schematisk bild av sträckan: rör med anslutningar, skador (färg efter grad) och löpande skador.
+    Returnerar figurens (bredd, höjd) i tum – höjden växer när de löpande skadorna behöver fler rader."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import FancyBboxPatch
 
     L = max(s.langd, 1.0)
-    fig, ax = plt.subplots(figsize=(7.4, 2.5))
+    # löpande skador: rad per band så de inte hamnar på varandra (etikettbredden räknas med)
+    lopande = [o for o in s.observationer if o.raknas and o.lopande.startswith("A") and o.lopande_langd]
+    lopande.sort(key=lambda o: o.lage)
+    etikett_bredd = L * 1.12 / (SCHEMA_BREDD_TUM * 72) * 3.9   # dataenheter per tecken vid 6 pt
+    intervall = []
+    for o in lopande:
+        text = f"{o.kod}{o.grad} {o.lopande_langd:.1f} m"
+        intervall.append((o.lage, max(o.lage + o.lopande_langd, o.lage + len(text) * etikett_bredd) + L * 0.015))
+    rad = _packa_band(intervall)
+    antal_rader = max(3, max(rad) + 1 if rad else 0)
+    y_topp = 0.95 + SCHEMA_RADHOJD * antal_rader + 0.6      # plats för band + förklaring
+    hojd_tum = SCHEMA_HOJD_TUM * (y_topp + 2.1) / 4.3
+    fig, ax = plt.subplots(figsize=(SCHEMA_BREDD_TUM, hojd_tum))
     ax.set_xlim(-L * 0.06, L * 1.06)
-    ax.set_ylim(-2.1, 2.2)
+    ax.set_ylim(-2.1, y_topp)
     ax.axis("off")
     # röret
     ax.add_patch(FancyBboxPatch((0, -0.25), L, 0.5, boxstyle="round,pad=0,rounding_size=0.02",
@@ -2339,14 +2374,11 @@ def rita_schema(s: Stracka, path: str) -> None:
         ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
         ax.text(x + (-0.03 if ha == "right" else 0.03) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
     # löpande skador som band
-    band = 0
-    for o in s.observationer:
-        if o.raknas and o.lopande.startswith("A") and o.lopande_langd:
-            y = 0.95 + 0.22 * (band % 3)
-            ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
-                    solid_capstyle="butt", alpha=0.9)
-            ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
-            band += 1
+    for o, r in zip(lopande, rad):
+        y = 0.95 + SCHEMA_RADHOJD * r
+        ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
+                solid_capstyle="butt", alpha=0.9)
+        ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
     # punktskador
     for o in s.observationer:
         if o.raknas and not (o.lopande.startswith("A") and o.lopande_langd):
@@ -2382,17 +2414,20 @@ def rita_schema(s: Stracka, path: str) -> None:
     ax.text(L * 0.11, -1.85, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
             va="center", fontsize=7, color="#2a78d6")
     # legend
+    y_leg = y_topp - 0.23
     for i, g in enumerate((1, 2, 3, 4)):
-        ax.plot(L * (0.55 + 0.11 * i), 1.97, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
-        ax.text(L * (0.565 + 0.11 * i), 1.97, f"grad {g}", va="center", fontsize=6.5)
-    ax.plot(L * 0.02, 1.97, "v", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.035, 1.97, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
-    ax.plot(L * 0.3, 1.97, "^", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.315, 1.97, "höger (kl 1–5)", va="center", fontsize=6.5)
-    ax.text(L * 0.02, 1.74, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6, color="#52514e")
+        ax.plot(L * (0.55 + 0.11 * i), y_leg, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
+        ax.text(L * (0.565 + 0.11 * i), y_leg, f"grad {g}", va="center", fontsize=6.5)
+    ax.plot(L * 0.02, y_leg, "v", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.035, y_leg, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
+    ax.plot(L * 0.3, y_leg, "^", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.315, y_leg, "höger (kl 1–5)", va="center", fontsize=6.5)
+    ax.text(L * 0.02, y_leg - 0.23, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6,
+            color="#52514e")
     fig.tight_layout(pad=0.2)
     _spara_rapportbild(fig, path)
     plt.close(fig)
+    return SCHEMA_BREDD_TUM, hojd_tum
 
 
 PROFIL_FIG = (7.4, 3.2)                 # tum
@@ -2612,9 +2647,9 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
 
     # --- schema ---
     schema = os.path.join(tmp, f"schema_{s.nr}.png")
-    rita_schema(s, schema)
+    sb, sh = rita_schema(s, schema)
     el.append(Paragraph("Översikt", st_h2))
-    el.append(Image(schema, width=bredd, height=bredd * 2.5 / 7.4))
+    el.append(Image(schema, width=bredd, height=bredd * sh / sb))
 
     # --- observationstabell ---
     el.append(Paragraph("Observationer", st_h2))
