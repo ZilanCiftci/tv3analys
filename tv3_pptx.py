@@ -473,6 +473,8 @@ def _bygg_sidor(m, strackor, etapper, diagram, utdata, topp, topp_strackor, sido
                     fakta.append("Avbruten inspektion")
                 if s.relinad:
                     fakta.append("Relinad")
+                if s.tidigare:
+                    fakta.append("Tidigare inspektion: " + ta.tidigare_text(s))
                 if s.driftatgard:
                     fakta.append(f"Driftåtgärd: {s.driftatgard}")
                 if s.etapp:

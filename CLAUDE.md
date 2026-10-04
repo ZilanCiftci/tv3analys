@@ -415,8 +415,26 @@ i stället för strängsortering, gällande hel film väljs först och statusarn
 tomma filmer pekar på den sammanslagna, SAMMANSLAGNING fungerar utan OMFILMNING, grupperingen använder
 `_normlittera` även i `flerinspekterad`, `tv3_pptx.main` kör `aktiva(hantera_omfilmningar(...))`,
 Prioritering blankar Etapp/Metod/Kostnad/Åtgärdsflagga för rader utan rang, `id()`-mängd i stället för
-`in`. Kvar/design: samma brunnspar i olika TV3-filer (olika år) hanteras inte (grupperas per fil);
+`in`. Kvar/design: samma brunnspar i olika TV3-filer hanteras numera av `_over_filer` (se Ny inspektion över filgränser);
 testfiler (gis_test/, mp/, upp*.csv) som hamnat i repot togs bort och .gitignore:ades.
+**Ny inspektion över filgränser** (okt 2026, användarens begäran "om en ny inspektion finns på en sträcka så vill
+jag att den äldre stryks … lämnas kvar som referens för hur mycket sträckan förvärrats, inte räknas dubbelt"):
+KONFIG `OMFILMNING_OVER_FILER` True, `TIDIGARE_INDEX_ANDEL` 0,2. `_over_filer(strackor)` körs sist i
+`hantera_omfilmningar` på `aktiva()` (langd ≥ 1) grupperade på normaliserat brunnspar oavsett fil; grupper med
+≥ 2 filer: nyaste filmen (`_tidsnyckel`, fil, nr) gäller, alla filmer i andra filer får
+`filmstatus = "ersatt av ny inspektion nr X i FIL DATUM"` (+ "(samma datum – dubblett?)" vid lika dag, + "OBS: den
+nya filmen är ofullständig, 10,2 m mot 28,9 m" när den nya är ofullständig men den ersatta inte; `_ersatt` tar
+nu `text`); gällande (alla kvarvarande i nyaste filen) får `Stracka.tidigare` = {fil, nr, datum, klass, index,
+langd, antal_skador, utveckling, antal} från den närmast föregående riktiga inspektionen (inte dubbletter);
+`_utveckling`: klassbyte avgör, inom samma klass index ändrat ≥ max(5, 0,2·gammalt) = förvärrad/förbättrad.
+Utan tolkbart datum rörs gruppen inte (OBS i konsolen). `tidigare_text(s)` = "2021-05-11 (DUF 701.TV3 nr 1):
+B 41 → A 97 p/100 m – förvärrad (N äldre filmer)". Excel: synlig kolumn **Tidigare inspektion** efter
+Filmstatus (bredd 44), Sammanfattning-rad "Ny inspektion i senare fil" (`_tidigare_text_summa`); JSON
+`tidigare_inspektion` {fil, nr, datum, bedomning, konstruktionsindex, langd_m, antal_skador, utveckling}; PDF
+infotabellrad; PPTX fakta-rad; konsolutskrift. Test: scratchpad/ny/ (syntetisk "DUF 701 omg2.TV3" 2024 med
+sju sträckor ur DUF 701: förvärrad RBR4, relinad utan skador → D, oförändrad, avbruten vid 10 m, motströms
+filmad, samma dag = dubblett, 2019 = äldre än DUF 701) – alla fall rätt; facit DUF 701 ensam och filer.txt
+oförändrade (filen har inga par över filgränser).
 **Sammanslagen sträcka i översikten** (okt 2026, användarens begäran "syns i ritningen att den är sammansatt
 av två avbrutna filmningar"): `Stracka.sammanslagning` = {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L,
 overlapp} sätts av `_sammanslagen`; `rita_schema` ritar film b:s del [L − b_langd, L] i blågrå ton

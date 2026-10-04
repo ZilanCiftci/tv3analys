@@ -185,9 +185,15 @@ OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartläng
 # från var sin brunn slås ihop till en extra sträcka ("sammanslagen av nr 72 + 73") på en gemensam
 # axel från startbrunnen – kartlängden (markprofil/GIS) ger totallängd och överlapp, annars antas
 # filmerna mötas utan överlapp; delfilmerna markeras "ingår i sammanslagen nr Y".
+# OMFILMNING_OVER_FILER: samma brunnspar i olika TV3-filer (olika inspektionsomgångar) – den nyaste filmen
+# gäller, äldre filmer markeras "ersatt av ny inspektion nr X i FIL (datum)" och räknas inte i statistiken;
+# den gällande sträckan får "Tidigare inspektion" (datum, klass och konstruktionsindex då → nu, förvärrad/
+# förbättrad) i Prioritering, protokollet och kartunderlaget. Samma dag i olika filer = dubblett, en räknas.
 OMFILMNING = True
 OMFILMNING_MIN_ANDEL = 0.85
 SAMMANSLAGNING = True
+OMFILMNING_OVER_FILER = True
+TIDIGARE_INDEX_ANDEL = 0.2    # konstruktionsindex ändrat mer än så (och minst 5 p/100 m) inom samma klass = förvärrad/förbättrad
 GIS_FALL_TOL_M = 0.3        # m – fallet mellan brunnarna (film mot GIS) får avvika så mycket …
 GIS_FALL_TOL_ANDEL = 0.5    # … eller så stor andel av GIS-fallet (det största gäller) innan det flaggas
 GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från start- till slutbrunn flaggas riktningen
@@ -479,6 +485,8 @@ class Stracka:
     filmstatus: str = ""            # "", "ersatt av nr X (…)", "ingår i sammanslagen nr Y", "sammanslagen av nr 72 + 73 …"
     sammanslagen_av: list = field(default_factory=list)   # [nr, nr] för en sammanslagen sträcka
     sammanslagning: dict | None = None   # {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L, overlapp} för ritningen
+    tidigare: dict | None = None    # närmast föregående inspektion av brunnsparet i en annan TV3-fil (OMFILMNING_OVER_FILER):
+                                    # {fil, nr, datum, klass, index, langd, antal_skador, utveckling, antal} – antal = alla äldre filmer
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
     # Från markprofil.json (ArcMap-verktyget Markprofil): markhöjder längs kartlinjen
     # [(m från startbrunn, höjd)], GIS-vattengång i brunnarna och kartlinjens längd
@@ -1747,19 +1755,92 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     return ny
 
 
-def _ersatt(s: Stracka, gall: Stracka, orsak: str) -> None:
+def _ersatt(s: Stracka, gall: Stracka, orsak: str, text: str = "") -> None:
     """Markerar s som ersatt av gall; varnar i statusen när den ersatta filmen hade sämre klass."""
-    s.filmstatus = f"ersatt av nr {gall.nr}" + (f" ({orsak})" if orsak else "")
+    s.filmstatus = (text or f"ersatt av nr {gall.nr}") + (f" ({orsak})" if orsak else "")
     if s.langd >= 1 and s.klass < gall.klass:
         s.filmstatus += f" – OBS: den ersatta filmen var klass {s.klass}, den gällande är {gall.klass}"
+
+
+def _utveckling(gammal: Stracka, ny: Stracka) -> str:
+    """Hur sträckan förändrats mellan två inspektioner: klassbyte avgör, inom samma klass räknas
+    konstruktionsindex ändrat mer än TIDIGARE_INDEX_ANDEL (och minst 5 p/100 m)."""
+    if ny.klass < gammal.klass:
+        return "förvärrad"
+    if ny.klass > gammal.klass:
+        return "förbättrad"
+    g, n = gammal.index("K"), ny.index("K")
+    if n - g >= max(5.0, g * TIDIGARE_INDEX_ANDEL):
+        return "förvärrad"
+    if g - n >= max(5.0, g * TIDIGARE_INDEX_ANDEL):
+        return "förbättrad"
+    return "oförändrad"
+
+
+def tidigare_text(s: Stracka) -> str:
+    """Texten i kolumnen Tidigare inspektion: '2021-05-27 (DUF 701.TV3 nr 12): C 21 → B 45 p/100 m – förvärrad'."""
+    t = s.tidigare
+    if not t:
+        return ""
+    txt = (f"{t['datum'] or 'okänt datum'} ({os.path.basename(t['fil'])} nr {t['nr']}): "
+           f"{t['klass']} {t['index']:.0f} → {s.klass} {s.index('K'):.0f} p/100 m – {t['utveckling']}")
+    if t["antal"] > 1:
+        txt += f" ({t['antal']} äldre filmer)"
+    return txt
+
+
+def _over_filer(strackor: list[Stracka]) -> None:
+    """Samma brunnspar i olika TV3-filer: den nyaste filmen (senare datum) gäller, äldre filmer i andra
+    filer markeras 'ersatt av ny inspektion …' och den gällande får `tidigare` med den närmast
+    föregående inspektionens klass och index. Filmer utan tolkbart datum rörs inte (varning)."""
+    grupper: dict[frozenset, list[Stracka]] = {}
+    for s in aktiva(strackor):
+        if s.langd >= 1 and s.startbrunn and s.slutbrunn and _normlittera(s.startbrunn) != _normlittera(s.slutbrunn):
+            grupper.setdefault(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))), []).append(s)
+    utan_datum = []
+    for par, grupp in grupper.items():
+        if len({s.fil for s in grupp}) < 2:
+            continue
+        if any(_tidsnyckel(s)[0] == 0 for s in grupp):
+            utan_datum.append(grupp)
+            continue
+        nyast = max(grupp, key=lambda s: (_tidsnyckel(s), s.fil, s.nr))
+        dag = _tidsnyckel(nyast)[1]
+        # gällande = filmerna i den nyaste filen (kvar efter filens egen hantering, normalt en); alla
+        # filmer i andra filer ersätts – även samma dag (då troligen samma film i två exporter)
+        gall = [s for s in grupp if s.fil == nyast.fil]
+        aldre = sorted((s for s in grupp if s.fil != nyast.fil), key=lambda s: (_tidsnyckel(s), s.nr), reverse=True)
+        tidigare = [s for s in aldre if _tidsnyckel(s)[1] < dag]      # riktiga tidigare inspektioner, inte dubbletter
+        for s in aldre:
+            orsak = []
+            if _tidsnyckel(s)[1] == dag:
+                orsak.append("samma datum – dubblett?")
+            if nyast.ofullstandig and not s.ofullstandig:
+                orsak.append(f"OBS: den nya filmen är ofullständig, {nyast.langd:.1f} m mot {s.langd:.1f} m")
+            _ersatt(s, nyast, "; ".join(orsak),
+                    f"ersatt av ny inspektion nr {nyast.nr} i {os.path.basename(nyast.fil)} {nyast.datum}")
+        if not tidigare:
+            continue
+        senast = tidigare[0]
+        for g in gall:
+            g.tidigare = {"fil": senast.fil, "nr": senast.nr, "datum": senast.datum, "klass": senast.klass,
+                          "index": senast.index("K"), "langd": senast.langd, "antal_skador": len(senast.skador()),
+                          "utveckling": _utveckling(senast, g), "antal": len(tidigare)}
+    for grupp in utan_datum:
+        s = grupp[0]
+        print(f"  OBS     {s.id} finns i {len({x.fil for x in grupp})} filer men datum saknas/kan inte tolkas "
+              f"– alla filmerna räknas")
 
 
 def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
     """Flera filmer av samma brunnspar i samma TV3-fil: hel film ersätter ofullständiga och äldre
     hela filmer (filmstatus "ersatt av nr X (…)"), och två ofullständiga filmer från var sin brunn
-    slås ihop till en ny sträcka som läggs sist i listan. Samma brunnspar i olika filer (olika
-    inspektionsomgångar) rörs inte. Returnerar listan inklusive sammanslagna."""
+    slås ihop till en ny sträcka som läggs sist i listan. Därefter (OMFILMNING_OVER_FILER) samma
+    brunnspar i olika filer: den nyaste inspektionen gäller, äldre markeras ersatta och den gällande
+    får `tidigare`. Returnerar listan inklusive sammanslagna."""
     if not (OMFILMNING or SAMMANSLAGNING):
+        if OMFILMNING_OVER_FILER:
+            _over_filer(strackor)
         return strackor
     grupper: dict[tuple[str, frozenset], list[Stracka]] = {}
     for s in strackor:
@@ -1816,7 +1897,10 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
             if OMFILMNING:
                 for s in tomma:
                     _ersatt(s, ny if ny is not None else kvar[0], "")
-    return strackor + nya
+    alla = strackor + nya
+    if OMFILMNING_OVER_FILER:
+        _over_filer(alla)
+    return alla
 
 
 def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
@@ -2338,6 +2422,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                           f"{sum(1 for s in alla if s.sammanslagen_av)} brunnspar sammanslagna av två delfilmer "
                           f"(räknas en gång; delfilmerna listas i Prioritering utan rang)")
          if any(s.filmstatus for s in alla) else "inga"],
+        ["Ny inspektion i senare fil", _tidigare_text_summa(strackor)],
         ["Höjdläge (markprofil/GIS från ArcMap)", (f"{sum(1 for s in strackor if s.mark)} sträckor med markhöjder, "
                                      f"{sum(1 for s in strackor if s.hojdanpassning and s.hojdanpassning['offset'] is not None and s.gis_vg_start is not None)} "
                                      f"med GIS-vattengång, {sum(1 for s in strackor if s.hojdflagga)} flaggade")
@@ -2426,7 +2511,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Konstruktionsindex (p/100 m)", "Driftindex (p/100 m)", "Totalindex (p/100 m)",
            "Konstr. maxgrad", "Drift maxgrad", "Antal skador", "Anslutningar",
            "Serviser uppströms", "Längd uppströms (m)", "Skador (kod+grad)",
-           "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Filmstatus", "Relinad", "Littera rättat",
+           "Driftåtgärd", "Avbruten inspektion", "Inspekterad flera ggr", "Filmstatus", "Tidigare inspektion", "Relinad", "Littera rättat",
            "Svackdjup (cm)", "Svackdjup/diameter", "Svacklängd (m)", "Bakfall längd (m)", "Lutning (‰)", "Profil osäker",
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
            "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår",
@@ -2448,7 +2533,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       len(s.skador()), s.antal_anslutningar, s.serviser_uppstroms,
                       round(s.langd_uppstroms) if s.langd_uppstroms is not None else None,
                       s.sammanfattning_skador(), s.driftatgard,
-                      "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", s.filmstatus, "Ja" if s.relinad else "",
+                      "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", s.filmstatus, tidigare_text(s),
+                      "Ja" if s.relinad else "",
                       s.littera_rattat,
                       round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
                       s.svacka_andel,
@@ -2476,7 +2562,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     start = tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
                                     "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26, "GIS-flagga": 40,
-                                    "Åtgärdsflagga": 40, "Kostnad": 12, "Lagning": 10, "Filmstatus": 28},
+                                    "Åtgärdsflagga": 40, "Kostnad": 12, "Lagning": 10, "Filmstatus": 28, "Tidigare inspektion": 44},
                    klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
                    dolda=DOLDA_KOLUMNER.get("Prioritering"))
     ci = kol.index("Svackdjup/diameter") + 1
@@ -2657,6 +2743,16 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
     wb.save(path)
 
 
+def _tidigare_text_summa(strackor: list[Stracka]) -> str:
+    """Sammanfattningsrad: hur många gällande sträckor som har en äldre inspektion i en annan fil."""
+    med = [s for s in strackor if s.tidigare]
+    if not med:
+        return "inga"
+    n = Counter(s.tidigare["utveckling"] for s in med)
+    return (f"{len(med)} sträckor ersätter en äldre inspektion i annan fil: {n['förvärrad']} förvärrade, "
+            f"{n['förbättrad']} förbättrade, {n['oförändrad']} oförändrade (kolumn Tidigare inspektion)")
+
+
 def _inspektionsgrad_text(gisstat: dict) -> str:
     tot = next((r for r in gisstat["rader"] if r["omrade"] == "alla" and r["ledningstyp"] == "alla"), None)
     if not tot or not tot["langd_m"]:
@@ -2725,6 +2821,11 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "flerinspekterad": s.flerinspekterad,
             "filmstatus": s.filmstatus or None,
             "sammanslagen_av": s.sammanslagen_av or None,
+            "tidigare_inspektion": ({"fil": os.path.basename(s.tidigare["fil"]), "nr": s.tidigare["nr"],
+                                     "datum": s.tidigare["datum"], "bedomning": s.tidigare["klass"],
+                                     "konstruktionsindex": round(s.tidigare["index"], 1),
+                                     "langd_m": round(s.tidigare["langd"], 1), "antal_skador": s.tidigare["antal_skador"],
+                                     "utveckling": s.tidigare["utveckling"]} if s.tidigare else None),
             "littera_rattat": s.littera_rattat,
             "svackdjup_cm": round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
             "svacklangd_m": round(pa["svacklangd"], 1) if pa and pa["svacklangd"] is not None else None,
@@ -3429,16 +3530,22 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         info.append(("Littera rättat", s.littera_rattat, "", ""))
     if s.filmstatus:
         info.append(("Filmstatus", s.filmstatus[0].upper() + s.filmstatus[1:], "", ""))
+    if s.tidigare:
+        info.append(("Tidigare inspektion", tidigare_text(s), "", ""))
     rader = [[P(a, st_fet), P(dk(b)), P(c, st_fet), P(dk(d))] for a, b, c, d in info]
     kw = 38 * mm
     t = Table(rader, colWidths=[kw, bredd / 2 - kw, kw, bredd / 2 - kw])
-    t.setStyle(TableStyle([
+    stil = [
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d9d9d9")),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f2f4f8")),
         ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f2f4f8")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-    ]))
+    ]
+    for i, (a, b, c, d) in enumerate(info):
+        if not c and not d:           # textrader (Filmstatus, Tidigare inspektion) får hela radbredden
+            stil += [("SPAN", (1, i), (3, i)), ("BACKGROUND", (2, i), (2, i), colors.white)]
+    t.setStyle(TableStyle(stil))
     el.append(t)
 
     # --- schema ---
@@ -4054,6 +4161,11 @@ def main(argv=None):
               f"{len(sammanslagna)} brunnspar sammanslagna av två delfilmer")
         for s in sammanslagna[:5]:
             print(f"  nr {s.nr} {s.id}: {s.filmstatus}")
+    tidigare = [s for s in strackor if s.tidigare]
+    if tidigare:
+        print(f"Ny inspektion över filgränser: {_tidigare_text_summa(strackor)}")
+        for s in sorted(tidigare, key=lambda s: s.tidigare["utveckling"] != "förvärrad")[:5]:
+            print(f"  {os.path.basename(s.fil)} nr {s.nr} {s.id}: {tidigare_text(s)}")
     rakn = aktiva(strackor)        # det som räknas i statistik, karta, åtgärdspaket och inspektionsgrad
     gisstat = inspektionsgrad(rakn, gisfiler) if gisfiler else None
     if gisstat:
