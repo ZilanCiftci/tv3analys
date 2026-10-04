@@ -193,7 +193,7 @@ LibreOffice i sandlådan kan inte rendera, så layouten är kontrollerad struktu
 visuellt – användaren justerar mallen.
 **Åtgärdspaket och kostnad** (okt 2026, steg 3, i `tv3_analys.py`): KONFIG `KOSTNADSFIL` (kostnader.csv i
 repot, schablon: strumpa 2 500–9 500 kr/m per dimensionsintervall, hatt 9 000, lagning 25 000 kr/m,
-framschaktning 60 000, ny_brunn 45 000, etablering 40 000), `ATGARD_KLASSER` (A, B), `SCHAKT_AUTOMATISKT`
+framschaktning 60 000, ny_brunn 45 000, etablering 40 000), `ATGARD_KLASSER` (A; var A, B t.o.m. okt 2026), `SCHAKT_AUTOMATISKT`
 False (F3), `ETAPP_OVERBRYGGA_M` 60 (F5), `ETAPP_ORDNING` index|konsekvens, `BRUNNSTYP_ANDE_M` 1,5,
 `LAGNINGSKODER`, `FRAMSCHAKTA_BRUNNAR`. Stracka: `manuell_bedomning`/`kommentar`/`lagning_m` (ur tidigare
 prioritering.xlsx via `manuell:`/`--manuell`, `las_manuella` läser fliken Prioritering på rubriknamn och
@@ -466,6 +466,16 @@ arcpy-geometrin och använder `contains(PointGeometry)` (ren Python-ringtest bar
 med tusentals hörn gjorde punkt-i-polygon per brunn/ledning långsamt), `exportera` loggar tid per fas och var
 5000:e ledning. Användarens lager: Avlopp\A Rensbrunn/tillsynsbrunn, A Nedstign och övriga brunnar,
 A Platsgjuten brunnspunkt, A Ledning, A Servis; Områden\DUF-områden.
+**Bara A får åtgärd, B överbryggar** (okt 2026, användaren: "huvudsakligen enbart A-ledningar; en eller två
+B-ledningar mellan två A kan tas med – inte strumpa B bara för att vi är där"): KONFIG `ATGARD_KLASSER = ("A",)`,
+`OVERBRYGGA_KLASSER = ("B",)`, `OVERBRYGGA_MAX_STRACKOR = 2`. I `planera_atgarder` ersätter en kedjesökning F5-regeln:
+`overbryggbar(r)` = metod "ingen", ej relinad, ej manuellt ingen, och (klass i OVERBRYGGA_KLASSER oavsett längd,
+eller C/D kortare än ETAPP_OVERBRYGGA_M); per metod (strumpa, schakt) djupet-först från varje åtgärdsbrunn över
+kandidatsträckor (högst max i rad, ingen återbesökt brunn/sträcka, stopp vid åtgärdsbrunn) – når vägen en annan
+åtgärdsbrunn tas alla sträckor på vägen med (`_metod`, etapp_flagga "medtagen för sammanhang (klass B mellan två
+åtgärdssträckor)" resp. "medtagen för sammanhang"). DUF 701: 15 etapper, 40 A + 9 B strumpa, 18 framschaktade
+brunnar, 9,5 Mkr (var 17/97/30/19,1 Mkr med A+B). Klassfacit oförändrat. tv3_pptx STRACKA-sidor följer
+ATGARD_KLASSER (bara A). Handledning och metodbeskrivning uppdaterade.
 **Etapplager** (okt 2026, användarens önskemål "exportera ett lager för etapper så jag ser de sammanhängande
 etapperna och vilket etappnummer de har – eget verktyg"): `etapper_for_karta(etapper)` i tv3_analys skriver toppfältet
 `etapper` i kartunderlag.json (nr, metod, hogsta_klass, max_konstruktionsindex, antal_strackor, langd_m, schakt_m,

@@ -251,10 +251,15 @@ KARTUNDERLAG_FIL = "kartunderlag.json"
 # --manuell): kolumnerna Manuell bedömning (A–E, eller texten schakt/strumpa/ingen som styr metoden),
 # Kommentar och Lagning (m).
 KOSTNADSFIL = "kostnader.csv"          # söks relativt listfilen, annars bredvid skriptet
-ATGARD_KLASSER = ("A", "B")            # gällande klasser som får åtgärd (strumpa)
+ATGARD_KLASSER = ("A",)                # gällande klasser som får åtgärd (strumpa) direkt
+OVERBRYGGA_KLASSER = ("B",)            # klasser som bara tas med när de ligger MELLAN två åtgärdssträckor
+                                       # (okt 2026, användaren: "huvudsakligen A; en eller två B-ledningar
+                                       # mellan två A kan tas med – inte strumpa B bara för att vi är där")
+OVERBRYGGA_MAX_STRACKOR = 2            # högst så många sträckor i rad får överbrygga mellan två åtgärdssträckor
 SCHAKT_AUTOMATISKT = False             # F3: metoden byts bara manuellt. True = grad 4 på GRAD4_KODER_A
                                        # (rörbrott/deformation) ger schakt automatiskt
 ETAPP_OVERBRYGGA_M = 60.0              # F5: C/D-sträcka kortare än så mellan två åtgärdssträckor tas med
+                                       # (klasser utanför OVERBRYGGA_KLASSER överbryggar bara om de är så korta)
 ETAPP_ORDNING = "index"                # "index" = högsta konstruktionsindex först,
                                        # "konsekvens" = flest serviser uppströms först (kräver uppstroms:)
 BRUNNSTYP_ANDE_M = 1.5                 # m – TVDAT-kod NB/TB/RB så nära änden gäller för brunnen där
@@ -2440,20 +2445,48 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
         for b in par_av(r):
             brunn_metod[(b, r.metod)].append(r)
 
-    # F5: kort C/D-sträcka mellan två åtgärdssträckor med samma metod tas med
-    for p, r in rep_.items():
-        if p in atgard or r.metod != "ingen" or r.relinad or r.gallande_klass not in ("C", "D") \
-                or r.langd >= ETAPP_OVERBRYGGA_M or r.manuell_metod == "ingen":
-            continue          # manuellt 'ingen' överbryggas inte
-        a, b = sorted(p)
-        for metod in ("strumpa", "schakt"):
-            if brunn_metod.get((a, metod)) and brunn_metod.get((b, metod)):
-                r._metod = metod
-                r.etapp_flagga = "medtagen för sammanhang"
-                atgard[p] = r
-                for bb in (a, b):
-                    brunn_metod[(bb, metod)].append(r)
-                break
+    # Överbryggning: en kedja av högst OVERBRYGGA_MAX_STRACKOR sträckor utan egen åtgärd som förbinder
+    # två åtgärdssträckor med samma metod tas med – B-sträckor (OVERBRYGGA_KLASSER) oavsett längd,
+    # C/D bara om kortare än ETAPP_OVERBRYGGA_M (F5). Manuellt 'ingen' och relinade överbryggas inte.
+    def overbryggbar(r):
+        if r.metod != "ingen" or r.relinad or r.manuell_metod == "ingen" or r.langd < 1:
+            return False
+        if r.gallande_klass in OVERBRYGGA_KLASSER:
+            return True
+        return r.gallande_klass in ("C", "D") and r.langd < ETAPP_OVERBRYGGA_M
+
+    for metod in ("strumpa", "schakt"):
+        kand = {p: r for p, r in rep_.items() if p not in atgard and len(p) == 2 and overbryggbar(r)}
+        kand_vid: dict[str, list[frozenset]] = defaultdict(list)
+        for p in kand:
+            for b in p:
+                kand_vid[b].append(p)
+        atg_brunnar = {b for (b, m) in brunn_metod if m == metod and brunn_metod[(b, m)]}
+        medtagna: set[frozenset] = set()
+        for start in sorted(atg_brunnar):
+            # djupet-först över kandidater: vägen får inte återbesöka en sträcka eller brunn
+            stack = [(start, [], {start})]
+            while stack:
+                brunn, vag, besokta = stack.pop()
+                if len(vag) >= OVERBRYGGA_MAX_STRACKOR:
+                    continue
+                for p in kand_vid.get(brunn, []):
+                    if p in vag:
+                        continue
+                    nasta = next(b for b in p if b != brunn)
+                    ny_vag = vag + [p]
+                    if nasta in atg_brunnar and nasta != start:
+                        medtagna.update(ny_vag)
+                    elif nasta not in besokta and nasta not in atg_brunnar:
+                        stack.append((nasta, ny_vag, besokta | {nasta}))
+        for p in medtagna:
+            r = kand[p]
+            r._metod = metod
+            r.etapp_flagga = ("medtagen för sammanhang (klass %s mellan två åtgärdssträckor)" % r.gallande_klass
+                              if r.gallande_klass in OVERBRYGGA_KLASSER else "medtagen för sammanhang")
+            atgard[p] = r
+            for bb in p:
+                brunn_metod[(bb, metod)].append(r)
 
     # Sammanhängande sträckor med samma metod = etapp (bredd-först över gemensamma brunnar)
     etapper: list[dict] = []
