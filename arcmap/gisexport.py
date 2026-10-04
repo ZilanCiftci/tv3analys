@@ -234,7 +234,7 @@ class Omraden(object):
 def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000', skriv_csv=True,
-              duf_lager=None, duf_falt=None):
+              duf_lager=None, duf_falt=None, ren_falt=None):
     """Exporterar brunnar och ledningsstrackor mellan brunnar till json_ut (+ CSV bredvid).
     duf_lager/duf_falt: polygonlager med driftomraden och namnfalt - varje ledning (mittpunkt) och
     brunn far 'omrade', som analysen anvander for inspektionsgrad per omrade.
@@ -286,7 +286,8 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         f_mat = _valj_falt(falt, mat_falt, 'materialfaltet', namn)
         f_typ = _valj_falt(falt, ledntyp_falt, 'ledningstypfaltet', namn)
         f_ar = _valj_falt(falt, ar_falt, 'arfaltet', namn)
-        extra = [f for f in (f_vg1, f_vg2, f_dim, f_mat, f_typ, f_ar) if f]
+        f_ren = _valj_falt(falt, ren_falt, 'renoveringsarsfaltet', namn)
+        extra = [f for f in (f_vg1, f_vg2, f_dim, f_mat, f_typ, f_ar, f_ren) if f]
         sedd = set()
         lasfalt = ['OID@', 'SHAPE@'] + [f for f in extra if not (f in sedd or sedd.add(f))]
         src, dq = kalla(lyr)
@@ -308,6 +309,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                     'material': _text(v.get(f_mat)) if f_mat else '',
                     'ledningstyp': _text(v.get(f_typ)) if f_typ else '',
                     'anlaggningsar': _heltal(v.get(f_ar)) if f_ar else None,
+                    'renoveringsar': _heltal(v.get(f_ren)) if f_ren else None,
                 }
                 delar = []
                 for del_ in geom:
@@ -370,6 +372,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 'material': at.get('material', ''),
                 'ledningstyp': at.get('ledningstyp', ''),
                 'anlaggningsar': at.get('anlaggningsar'),
+                'renoveringsar': at.get('renoveringsar'),
                 'lager': lager, 'oid': oid, '_st': st1 if st1 is not None else 0.0,
             }
             if omraden is not None:
@@ -425,7 +428,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                   'brunnar': [txt(getattr(l, 'name', l)) for l in brunn_lager],
                   'brunn_id': brunn_id, 'lockniva': lock_falt, 'brunnstyp': typ_falt,
                   'vg_fran': vg_fran, 'vg_till': vg_till, 'dimension': dim_falt, 'material': mat_falt,
-                  'ledningstyp': ledntyp_falt, 'anlaggningsar': ar_falt,
+                  'ledningstyp': ledntyp_falt, 'anlaggningsar': ar_falt, 'renoveringsar': ren_falt,
                   'driftomraden': txt(duf_lager) if duf_lager else None, 'omradesnamn': duf_falt},
         'brunnar': brunnar,
         'ledningar': ledningar,
@@ -441,7 +444,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'lockniva', 'omrade', 'x', 'y', 'lager'], brunnar)
         _skriv_csv(stam + '_ledningar.csv',
                    ['fran', 'till', 'omrade', 'langd_m', 'vg_fran', 'vg_till', 'dimension', 'material',
-                    'ledningstyp', 'anlaggningsar', 'lager', 'oid', 'del', 'antal_delar'], ledningar)
+                    'ledningstyp', 'anlaggningsar', 'renoveringsar', 'lager', 'oid', 'del', 'antal_delar'], ledningar)
         logg('Skrev %s_brunnar.csv och %s_ledningar.csv' % (stam, stam))
     return {'brunnar': len(brunnar), 'ledningar': len(ledningar), 'fria_andar': fria,
             'utan_vg': utan_vg, 'brunnar_utan_ledning': len(utan_ledning), 'utan_lockniva': utan_lock}

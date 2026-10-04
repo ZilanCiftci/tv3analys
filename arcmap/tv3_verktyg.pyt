@@ -38,16 +38,19 @@ STANDARD_MARKPROFIL = 'markprofil.json'  # foreslas bredvid kartunderlag.json
 STANDARD_UPPSTROMS = 'uppstroms.csv'     # batchresultat fran Uppstroms, foreslas bredvid lagret
 STANDARD_GISDATA = 'gisdata.json'        # export av brunnar och ledningar (Exportera GIS-data)
 # Gissningar pa faltnamn i Exportera GIS-data (forsta traff i lagret anvands)
-STANDARD_LOCKNIVA = ['LOCKNIVA', 'LOCK_NIVA', 'LOCKHOJD', 'LOCKHOJD_M', 'TOPPNIVA', 'Z_LOCK', 'LOCK']
-STANDARD_BRUNNSTYP = ['BRUNNSTYP', 'BRUNNTYP', 'TYP', 'FUNKTION']
-STANDARD_DIMENSION = ['DIMENSION', 'DIM', 'INNERDIAMETER', 'DIAMETER', 'DN']
-STANDARD_MATERIAL = ['MATERIAL', 'MTRL', 'MAT']
-STANDARD_LEDNTYP = ['LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SYSTEM']
-STANDARD_AR = ['ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
+# Faltnamn: SVOA:s geopipe-databas (CoverLevel, LevelFrom ...) forst, sedan vanliga svenska namn
+STANDARD_LOCKNIVA = ['CoverLevel', 'LOCKNIVA', 'LOCK_NIVA', 'LOCKHOJD', 'LOCKHOJD_M', 'TOPPNIVA', 'Z_LOCK', 'LOCK']
+STANDARD_BRUNNSTYP = ['WellFunction', 'BRUNNSTYP', 'BRUNNTYP', 'TYP', 'FUNKTION']
+STANDARD_DIMENSION = ['PipeDimension', 'DIMENSION', 'DIM', 'INNERDIAMETER', 'DIAMETER', 'DN']
+STANDARD_MATERIAL = ['PipeMaterial', 'MATERIAL', 'MTRL', 'MAT']
+STANDARD_LEDNTYP = ['PipeType', 'LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SYSTEM']
+STANDARD_AR = ['ConstructionYear', 'ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
+STANDARD_RENOVERINGSAR = ['RestorationYear', 'RENOVERINGSAR', 'REN_AR', 'RELINAD_AR', 'INFODRAD_AR']
+STANDARD_SERVIS = ['A Servis']
 STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']
 STANDARD_DUF_NAMN = ['DUF', 'DUF_NR', 'DUFNR', 'OMRADE', 'OMR\u00c5DE', 'NAMN', 'NAME', 'BETECKNING', 'ID']
-STANDARD_VG_FRAN = ['VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
-STANDARD_VG_TILL = ['VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
+STANDARD_VG_FRAN = ['LevelFrom', 'VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
+STANDARD_VG_TILL = ['LevelTo', 'VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
 
 def _ladda_modul(namn='skapa_ledningslager'):
@@ -637,6 +640,7 @@ class Uppstroms(object):
 
         servis = _lagerparam('Servislager (valfritt)', 'servislager', False, kartlager, 'Optional')
         servis.category = K_SERV
+        _satt_varden(servis, _langa_namn(STANDARD_SERVIS, kartlager)[:1])
         servis_falt = arcpy.Parameter(
             displayName='...eller f\u00e4lt i ledningslagret som anger servis', name='servis_falt',
             datatype='GPString', parameterType='Optional', direction='Input', category=K_SERV)
@@ -805,6 +809,7 @@ class ExporteraGisdata(object):
         mat = falt('Ledningar: material', 'mat_falt')
         ltyp = falt('Ledningar: ledningstyp (S/D/K)', 'ledntyp_falt')
         ar = falt('Ledningar: anl\u00e4ggnings\u00e5r', 'ar_falt')
+        ren = falt('Ledningar: renoverings\u00e5r (infodring/relining)', 'ren_falt')
 
         tolerans = arcpy.Parameter(
             displayName='Tolerans brunn\u2013ledning (m)', name='tolerans', datatype='GPDouble',
@@ -830,7 +835,7 @@ class ExporteraGisdata(object):
         _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
         _satt_varden(duf, _langa_namn(STANDARD_DUF, kartlager))
         return _minne_fyll(self, [ledning, brunn, brunn_id, json_ut, lock, btyp, vg_fran, vg_till, dim, mat, ltyp, ar,
-                tolerans, omrade, hojdsystem, duf, duf_falt])
+                tolerans, omrade, hojdsystem, duf, duf_falt, ren])
 
     def isLicensed(self):
         return True
@@ -840,7 +845,8 @@ class ExporteraGisdata(object):
             falt = _faltnamn(parameters[0])
             if falt:
                 for i, kand in ((6, STANDARD_VG_FRAN), (7, STANDARD_VG_TILL), (8, STANDARD_DIMENSION),
-                                (9, STANDARD_MATERIAL), (10, STANDARD_LEDNTYP), (11, STANDARD_AR)):
+                                (9, STANDARD_MATERIAL), (10, STANDARD_LEDNTYP), (11, STANDARD_AR),
+                                (17, STANDARD_RENOVERINGSAR)):
                     _filter(parameters[i], [''] + falt)
                     if not parameters[i].altered:
                         parameters[i].value = _forsta_traff(kand, falt)
@@ -900,7 +906,7 @@ class ExporteraGisdata(object):
             lock_falt=v(4), typ_falt=v(5), vg_fran=v(6), vg_till=v(7), dim_falt=v(8), mat_falt=v(9),
             ledntyp_falt=v(10), ar_falt=v(11), tolerans=float(parameters[12].value),
             omradeslager=v(13), hojdsystem=parameters[14].valueAsText or 'RH2000',
-            duf_lager=v(15), duf_falt=v(16))
+            duf_lager=v(15), duf_falt=v(16), ren_falt=v(17))
         arcpy.AddMessage('Klart: %(brunnar)d brunnar, %(ledningar)d ledningsstrackor '
                          '(%(fria_andar)d med fri ande, %(utan_vg)d utan vattengang)' % r)
         return

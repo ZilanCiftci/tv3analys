@@ -59,8 +59,17 @@ def lista_lager(lyr):
                                                             _u(getattr(getattr(d, 'spatialReference', None), 'name', '?'))))
     except Exception as e:
         ut.append('  (Describe misslyckades: %s)' % _u(e))
+    # Datakallan, inte lagerobjektet: ArcMap tolkar '/' i lagernamn (A Rensbrunn/tillsynsbrunn)
+    # som en sokvag nar lagret skickas som text ("does not exist")
+    src = kalla if kalla and not kalla.startswith('(') else lyr
     try:
-        falt = [f for f in arcpy.ListFields(lyr) if f.type not in ('Geometry',)]
+        dq = lyr.definitionQuery or None
+    except Exception:
+        dq = None
+    if dq:
+        ut.append('  definitionsfraga: %s' % _u(dq))
+    try:
+        falt = [f for f in arcpy.ListFields(src) if f.type not in ('Geometry',)]
     except Exception as e:
         ut.append('  (ListFields misslyckades: %s)' % _u(e))
         return ut
@@ -68,7 +77,7 @@ def lista_lager(lyr):
     exempel = dict((n, []) for n in namn)
     n_rader = 0
     try:
-        with arcpy.da.SearchCursor(lyr, namn) as cur:
+        with arcpy.da.SearchCursor(src, namn, dq) as cur:
             for rad in cur:
                 n_rader += 1
                 for n, v in zip(namn, rad):
