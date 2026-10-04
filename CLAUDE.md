@@ -435,6 +435,19 @@ infotabellrad; PPTX fakta-rad; konsolutskrift. Test: scratchpad/ny/ (syntetisk "
 sju sträckor ur DUF 701: förvärrad RBR4, relinad utan skador → D, oförändrad, avbruten vid 10 m, motströms
 filmad, samma dag = dubblett, 2019 = äldre än DUF 701) – alla fall rätt; facit DUF 701 ensam och filer.txt
 oförändrade (filen har inga par över filgränser).
+**Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
+profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
+under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter
+profilsorteringen: |zs − ze| > 50 → brunnshöjderna None, "brunnshöjder 29,30 / 2444,33 m"; profilens
+max − min > 50 → `profil = []`, "inklinometerprofil 2547,0 till 2864,0 m"; `Stracka.hojdfel` = "höjdfel i filen:
+…" (OBS per fil i konsolen). `hojdflagga` returnerar hojdfel först (Excel Höjdflagga, JSON `hojdflagga` +
+`hojdfel`), Sammanfattning-rad "Höjdfel i TV3-filen", PDF: rad Höjdfel (när ingen höjdanpassning), Lutning
+"okänd (höjdfel i filen)", profiltexten "… – profilen ritas inte". `lutning_promille` faller nu tillbaka på
+`_filens_brunnshojder()` (inklinometerns ändpunkter) när PROFILADM saknas/är orimlig – `lutning_ur_inklinometer`
+ger "(ur inklinometern)" i PDF:en (10 sträckor i DUF 701 saknar PROFILADM men har inklinometer; klasserna
+oförändrade); OBS-texten i profilbilden säger "brunnshöjder saknas eller är orimliga i filen – profilen kan
+inte kontrolleras" när PROFILADM saknas. Test: scratchpad/hojdfel/ (DUF 701 med nr 1 sluthöjd 2444,33, nr 2
+profil ×100, nr 3 −9999). Den riktiga filen (DUF 700 Ålsten Del 5.TV3) har inte setts – användaren ombedd skicka.
 **Sammanslagen sträcka i översikten** (okt 2026, användarens begäran "syns i ritningen att den är sammansatt
 av två avbrutna filmningar"): `Stracka.sammanslagning` = {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L,
 overlapp} sätts av `_sammanslagen`; `rita_schema` ritar film b:s del [L − b_langd, L] i blågrå ton
