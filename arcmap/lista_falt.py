@@ -131,6 +131,7 @@ def lista(utfil=UTFIL, bara=BARA_LAGER):
     return utfil
 
 
-if __name__ == '__main__' or (arcpy is not None and globals().get('UTFIL')):
-    if arcpy is not None:
-        lista()
+# Kors bara nar filen kors direkt (execfile i Python-fonstret), inte nar verktygsladan importerar
+# modulen - annars listades alla lager en gang vid importen, fore den filtrerade korningen.
+if __name__ == '__main__' and arcpy is not None:
+    lista()
