@@ -446,6 +446,14 @@ fågelvägen 44,7 m" (fågelvägen ger inga fler flaggor). `inspektionsgrad` rä
 som utan GIS-ledning (`utan_gis`). Effekt: sammanslagningen får kartlängd och överlapp. Test: scratchpad/gisvag/
 (gisdata med KTB72028–KTB61192 delad via KTB99999 och SRB63043–SRB62385 borttagen med koordinater → 187 överlapp
 3,9 m); gisdata_omr och filer.txt oförändrade.
+**Lista fält** (okt 2026, användaren: "GIS-exporten plockar inte upp några fält … finns något skript som dumpar
+fälten?"): `arcmap/lista_falt.py` (Py2.7, ASCII; `lista(utfil, bara)` skriver per lager i CURRENT: longName,
+datakalla, geometri/SR, antal objekt, och per fält namn/alias/typ/längd + upp till `EXEMPEL` 6 distinkta värden ur
+de första `RADER` 2000 raderna via da.SearchCursor; `BARA_LAGER` filtrerar på namn; körbar med execfile + `UTFIL`)
+och verktyget **Lista fält** först i .pyt (param: textfil, rader, bara-lager multiValue). Röktestad med låtsas-
+arcpy. Avsikt: användaren skickar textfilen så att STANDARD_*-gissningarna i .pyt kan kompletteras med SVOA:s
+riktiga fältnamn (ledningslager: vg upp/ned, dimension, material, ledningstyp, anläggningsår; brunnslager:
+littera/EntityID, brunnstyp, locknivå; DUF-lager: områdesnamn).
 **Skarv utan brunn i GIS** (okt 2026, användaren: "ledningen är bruten i mitten, materialförändring, delad som två
 ledningar utan ände – ändarna har nästan exakt samma koordinat"; "kan vara uppdelad i mer än två delar"): exporten
 skriver sådana delar som `fran`/`till` = "" (fri ände, `_nodnamn`) med `fran_xy`/`till_xy`. `las_gis` kör
