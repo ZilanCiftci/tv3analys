@@ -2326,19 +2326,16 @@ def rita_schema(s: Stracka, path: str) -> None:
     L = max(s.langd, 1.0)
     fig, ax = plt.subplots(figsize=(7.4, 2.5))
     ax.set_xlim(-L * 0.06, L * 1.06)
-    ax.set_ylim(-2.15, 2.0)
+    ax.set_ylim(-2.1, 2.2)
     ax.axis("off")
     # röret
     ax.add_patch(FancyBboxPatch((0, -0.25), L, 0.5, boxstyle="round,pad=0,rounding_size=0.02",
                                 fc="#e8e8e8", ec="#7f7f7f", lw=1.2))
     # brunnar
     for x, namn, ha in ((0, s.fran_brunn, "right"), (L, s.till_brunn, "left")):
-        ax.plot(x, 0, "o", ms=14, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
-        ax.text(x + (-0.02 if ha == "right" else 0.02) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
-    ax.annotate("", xy=(L * 0.12, -1.2), xytext=(L * 0.02, -1.2),
-                arrowprops=dict(arrowstyle="->", color="#2a78d6", lw=1.2))
-    ax.text(L * 0.13, -1.2, f"inspektionsriktning ({s.riktning.lower()}), position mätt från {s.fran_brunn}",
-            va="center", fontsize=7, color="#2a78d6")
+        # brunnen ritas större än rörets diameter (0,5 enheter ≈ 20 pt i figuren)
+        ax.plot(x, 0, "o", ms=26, mfc="#bfbfbf", mec="#4d4d4d", mew=1.2, zorder=5)
+        ax.text(x + (-0.03 if ha == "right" else 0.03) * L, 0.55, namn, ha=ha, va="bottom", fontsize=8, fontweight="bold")
     # löpande skador som band
     band = 0
     for o in s.observationer:
@@ -2372,20 +2369,25 @@ def rita_schema(s: Stracka, path: str) -> None:
             else:
                 ax.plot(o.lage, 0, "s", ms=6, mfc="#2a78d6", mec="white", zorder=6)
                 ax.text(o.lage, -0.42, etikett, ha="center", va="top", fontsize=5.5, color="#2a78d6")
-    # meterskala
+    # meterskala – egen linje under anslutningarna, siffrorna direkt under ticksen
+    y_skala = -1.15
+    ax.plot([0, L], [y_skala, y_skala], color="#7f7f7f", lw=0.8)
     for x in range(0, int(L) + 1, max(1, int(L // 8) or 1)):
-        ax.plot([x, x], [-0.25, -0.33], color="#7f7f7f", lw=0.6)
-        ax.text(x, -1.45, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
-    ax.text(L / 2, -1.8, "position (m)", ha="center", va="top", fontsize=6.5, color="#7f7f7f")
+        ax.plot([x, x], [y_skala, y_skala - 0.1], color="#7f7f7f", lw=0.6)
+        ax.text(x, y_skala - 0.13, f"{x}", ha="center", va="top", fontsize=6, color="#7f7f7f")
+    ax.annotate("", xy=(L * 0.10, -1.85), xytext=(L * 0.0, -1.85),
+                arrowprops=dict(arrowstyle="->", color="#2a78d6", lw=1.2))
+    ax.text(L * 0.11, -1.85, f"inspektionsriktning ({s.riktning.lower()}), position (m) mätt från {s.fran_brunn}",
+            va="center", fontsize=7, color="#2a78d6")
     # legend
     for i, g in enumerate((1, 2, 3, 4)):
-        ax.plot(L * (0.55 + 0.11 * i), 1.75, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
-        ax.text(L * (0.565 + 0.11 * i), 1.75, f"grad {g}", va="center", fontsize=6.5)
-    ax.plot(L * 0.02, 1.75, "v", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.035, 1.75, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
-    ax.plot(L * 0.3, 1.75, "^", ms=6, mfc="#2a78d6", mec="white")
-    ax.text(L * 0.315, 1.75, "höger (kl 1–5)", va="center", fontsize=6.5)
-    ax.text(L * 0.02, 1.5, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6, color="#52514e")
+        ax.plot(L * (0.55 + 0.11 * i), 1.97, "D", ms=6, mfc=GRAD_FARG_HEX[g], mec="white")
+        ax.text(L * (0.565 + 0.11 * i), 1.97, f"grad {g}", va="center", fontsize=6.5)
+    ax.plot(L * 0.02, 1.97, "v", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.035, 1.97, "anslutning vänster (kl 7–11)", va="center", fontsize=6.5)
+    ax.plot(L * 0.3, 1.97, "^", ms=6, mfc="#2a78d6", mec="white")
+    ax.text(L * 0.315, 1.97, "höger (kl 1–5)", va="center", fontsize=6.5)
+    ax.text(L * 0.02, 1.74, "vänster/höger sett i inspektionsriktningen", va="center", fontsize=6, color="#52514e")
     fig.tight_layout(pad=0.2)
     _spara_rapportbild(fig, path)
     plt.close(fig)
