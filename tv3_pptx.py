@@ -604,6 +604,8 @@ def main(argv=None):
             fram = []
     else:
         fram = []
+    # samma hantering av omfilmningar som i tv3_analys: ersatta filmer och delfilmer räknas inte
+    strackor = ta.aktiva(ta.hantera_omfilmningar(strackor))
     kostfil = a.kostnader or os.path.join(os.path.dirname(os.path.abspath(__file__)), ta.KOSTNADSFIL)
     kostnader = ta.las_kostnader(kostfil) if os.path.isfile(kostfil) else []
     etapper = ta.planera_atgarder(strackor, kostnader, fram)

@@ -39,11 +39,15 @@ from markprofil import _station, _punkt_vid
 VERSION = 1
 
 
+SAKNAS_UNDER = -999.0   # varden under detta (SVOA: -9999) betyder "saknas"
+
+
 def _tal(v):
     try:
         if v is None or txt(v).strip() == '':
             return None
-        return float(txt(v).replace(',', '.'))
+        t = float(txt(v).replace(',', '.'))
+        return None if t <= SAKNAS_UNDER else t
     except (TypeError, ValueError):
         return None
 

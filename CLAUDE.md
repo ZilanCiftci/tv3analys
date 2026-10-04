@@ -389,6 +389,34 @@ ersatt av 74, 179 ersatt av 184 (hel film), 72+73 → nr 186 (C, 42,2 m), 170+17
 ensam var B 78 p/100 m, sammanslagen 44,9) ⇒ **facit med omfilmning 40/55/20/61/5** för filen ensam och
 **40/54/20/61/5 med filer.txt** (litterarättningen gör 118/123 till samma par; 40/55/22/62/6 med
 `OMFILMNING = SAMMANSLAGNING = False`). Överlapptest: 170/171 med langd_karta 40 → överlapp 8,6 m.
+**Granskning okt 2026 av GIS-export, GIS-koppling och omfilmning (tre agenter + egna fynd, rättat):**
+gisexport – stubbar (bit ≤ tolerans som slutar i samma brunn eller fri ände, dvs. ledningsänden sticker ut
+förbi brunnen) hoppas över och loggas; driftområdena projiceras till ledningslagrets SR; `del` numreras
+längs ledningen (station `_st`); ringledning: `st2 < st1` → `st2 = L`; nyckel på `longName`; `_tal` ger
+None under `SAKNAS_UNDER` −999; dubbelt fält i brunnslagret läses en gång; .pyt laddar beroendena före
+gisexport/markprofil. tv3_analys GIS – `las_gis` tål trasig fil (ValueError), sätter vg/locknivå ≤
+`GIS_SAKNAS_UNDER` −999 till None, tolkar dimension/årtal med regex; dubbletter mellan GIS-filer
+(`_dubblett` på (lager, oid, del) eller (par, längd)) räknas en gång; vid flera ledningar mellan samma
+brunnar väljs samma ledningstyp (första bokstaven) före längd; `GIS_PLATSHALLARE` {AG, STBEXTRA} undantas
+från "brunn saknas" och förslagen; `alla.get()` mot KeyError; `|fall| > GIS_FALL_ORIMLIGT_M` 50 →
+"vattengång orimlig i GIS" och riktning/fall flaggas inte båda; E-sträckor räknas inte som filmade;
+årtal som text kraschar inte sorteringen; `littera_forslag.csv` fyller `ratt` bara när längden ger en
+tydlig kandidat (`sakert`: ensam eller ≥ 0,05 bättre poäng), kommentaren utan ;/, och filen tas bort när
+inga okända finns; konsolens inspektionsgrad räknas efter omfilmningen (samma `gisstat` som Excel);
+Sammanfattningsraden heter "Höjdläge (markprofil/GIS från ArcMap)"; hojdanpassning säger "(ofullständig
+film)" när filmen bara är kort utan KAM; GIS_MATERIAL har LERGODS/PEM/PRC. Omfilmning – B-rader speglas
+till L − lage + löpande längd (låg på startpositionen), öppen A-rad utan längd får `b.langd − lage`, den
+äldre filmens löpande skador kapas vid snittet, utan kartlängd räknas samma observation (kod, grad,
+infokod, attribut, löpande) inom 1 m från mötet en gång (nyaste behålls; status "samma observation vid
+mötet räknas en gång" – 186 hade INH4 dubbelt), orimlig kartlängd (< längsta delfilm − 0,5) används inte
+(status), datum + klockslag från den nyare filmen, "film nr X" i varje observations kommentar, b:s
+brunnskod vid 0 behålls (speglas till L), `_tidsnyckel` tolkar datum/klockslag (ISO, d.m.Y, d/m/Y, ÅÅÅÅMMDD)
+i stället för strängsortering, gällande hel film väljs först och statusarna sätts efteråt (inga kedjor),
+tomma filmer pekar på den sammanslagna, SAMMANSLAGNING fungerar utan OMFILMNING, grupperingen använder
+`_normlittera` även i `flerinspekterad`, `tv3_pptx.main` kör `aktiva(hantera_omfilmningar(...))`,
+Prioritering blankar Etapp/Metod/Kostnad/Åtgärdsflagga för rader utan rang, `id()`-mängd i stället för
+`in`. Kvar/design: samma brunnspar i olika TV3-filer (olika år) hanteras inte (grupperas per fil);
+testfiler (gis_test/, mp/, upp*.csv) som hamnat i repot togs bort och .gitignore:ades.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
 `skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med
