@@ -98,8 +98,14 @@ Utdata i `tv3_resultat/` (eller `-o`):
   cache per process i `_FOTO_CACHE`, original om redan litet/JPEG eller fel); `skriv_rapporter` kör
   parallellt med `ProcessPoolExecutor` (`RAPPORT_PROCESSER`/`--processer`, standard kärnor − 1,
   `_rapport_jobb` per sträcka med egen tempmapp, seriell reserv vid fel). DUF 701: 3 m 35 s → 35 s
-  (4 kärnor), 25 rapporter seriellt 266 s → 19 s; rapportmappen 778 → ~130 MB. Matplotlib (översikt +
-  profil, 200 dpi) är nu den största posten, ca 0,5 s per rapport.
+  (4 kärnor), 25 rapporter seriellt 266 s → 19 s; rapportmappen 778 → ~130 MB. Andra omgången (användaren ville
+  ha mindre filer och mer fart): utjämningen i `rita_profil` var O(n²) (3,9 av 13,4 s för 25 figurer) →
+  glidande fönster O(n) (±0,3 m inklusive med 1e-9-epsilon, gamla formeln uteslöt gränspunkter
+  slumpmässigt p.g.a. flyttal); `RAPPORT_BILD_DPI` 150 (var 200) och `_spara_rapportbild` →
+  palett-PNG 256 färger (`RAPPORT_BILD_PALETT`, 58→20 kB, ~0,1 s/rapport); `FOTO_JPEG_KVALITET` 76 +
+  `optimize=True`. 25 figurpar 13,4 → 5,6 s; DUF 701 full körning 35 → 33 s (palett kostar det dpi
+  sparar), rapportmappen 125 → 102 MB med brusfoton (verkliga foton ~30 kB/st → ~25 MB). Kvar: text-
+  rendering i matplotlib (~0,15 s/figur) och reportlab-bygget (~0,17 s/rapport).
 
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
 **Skapa ledningslager** (dialog: JSON-fil, lager, brunnsfält, utdata, valfritt område/.lyr/CSV,
