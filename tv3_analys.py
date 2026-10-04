@@ -66,6 +66,7 @@ Driftåtgärd (spolning/rotskärning) flaggas separat när driftgrad ≥ 3.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 import os
 import re
@@ -226,8 +227,9 @@ RAPPORT_PROCESSER: int | None = None
 # Upplösning på översikts- och profilbilden i PDF-rapporten (dpi vid 180 mm bredd). 150 räcker för
 # utskrift i A4 och halverar nästan bildernas storlek och rittid mot 200.
 RAPPORT_BILD_DPI = 150
-# Diagrambilderna i rapporten sparas som palett-PNG (256 färger): ca 65 % mindre än RGB utan
-# synlig skillnad på linjediagram. Kostar ~0,1 s per rapport. False = vanlig RGB-PNG.
+# Diagrambilderna i rapporten sparas som palett-PNG (256 färger). Reportlab bäddar in dem som RGB,
+# men de kvantiserade pixlarna komprimeras bättre: ca 35 % mindre per figur i PDF:en utan synlig
+# skillnad på linjediagram. Kostar ~0,1 s per rapport. False = vanlig RGB-PNG.
 RAPPORT_BILD_PALETT = True
 
 # Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
@@ -2763,13 +2765,22 @@ def forminska_foto(pth: str, tmp: str) -> str:
                 _FOTO_CACHE[nyckel] = pth
                 return pth
             if FOTO_MAX_PX and orientering in (None, 1):
-                im.draft("RGB", (FOTO_MAX_PX, FOTO_MAX_PX))    # snabb nedskalad JPEG-avkodning (1/2, 1/4 …)
+                # snabb nedskalad JPEG-avkodning (1/2, 1/4 …); målet måste ha bildens proportioner,
+                # annars väljer PIL skala 1 (full-HD mot 960×960 gav ingen nedskalning)
+                im.draft("RGB", (FOTO_MAX_PX * w // max(w, h), FOTO_MAX_PX * h // max(w, h)))
             im = ImageOps.exif_transpose(im) or im            # vrid enligt EXIF och ta bort taggen
+            if im.mode in ("RGBA", "LA", "PA") or "transparency" in im.info:
+                rgba = im.convert("RGBA")                     # genomskinligt → vitt, inte svart
+                bg = PILImage.new("RGB", rgba.size, "white")
+                bg.paste(rgba, mask=rgba.split()[3])
+                im = bg
             if im.mode != "RGB":
-                im = im.convert("RGB")                        # gråskala, CMYK, palett, alfa → RGB
+                im = im.convert("RGB")                        # gråskala, CMYK, palett → RGB
             if FOTO_MAX_PX and max(im.size) > FOTO_MAX_PX:
                 im.thumbnail((FOTO_MAX_PX, FOTO_MAX_PX))
-            ut = os.path.join(tmp, f"foto_{len(_FOTO_CACHE)}_{os.getpid()}.jpg")
+            # entydigt namn per originalfil – ett löpnummer kolliderade när en inaktuell cachepost
+            # (raderad tempmapp från en tidigare sträcka) gjordes om och nästa foto fick samma namn
+            ut = os.path.join(tmp, "foto_" + hashlib.sha1(nyckel.encode("utf-8")).hexdigest()[:16] + ".jpg")
             im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True, exif=b"")
         _FOTO_CACHE[nyckel] = ut
         return ut
@@ -2839,28 +2850,34 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
 
     def framsteg():
         if klara % 25 == 0 or klara == len(att_skriva):
-            print(f"  rapporter: {klara}/{len(att_skriva)}", end="\r")
+            print(f"  rapporter: {klara}/{len(att_skriva)}", end="\r", flush=True)
 
     if processer > 1:
         try:
             from concurrent.futures import ProcessPoolExecutor, as_completed
             with ProcessPoolExecutor(max_workers=processer) as pool:
-                jobb = {pool.submit(_rapport_jobb, s, sokvag): (s, sokvag) for s, sokvag in att_skriva}
-                for f in as_completed(jobb):
-                    s, sokvag = jobb[f]
-                    nr, fil, fel = f.result()
-                    if fel:
-                        print(f"  FEL rapport sträcka {nr} ({fil}): {fel}")
-                    else:
-                        s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
-                        n += 1
-                    klara += 1
-                    framsteg()
+                try:
+                    jobb = {pool.submit(_rapport_jobb, s, sokvag): (s, sokvag) for s, sokvag in att_skriva}
+                    for f in as_completed(jobb):
+                        s, sokvag = jobb[f]
+                        nr, fil, fel = f.result()
+                        if fel:
+                            print(f"\n  FEL rapport sträcka {nr} ({fil}): {fel}")
+                        else:
+                            s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
+                            n += 1
+                        klara += 1
+                        framsteg()
+                except KeyboardInterrupt:
+                    # annars väntar with-blocket in alla redan inskickade jobb innan avbrottet syns
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
             print()
             return n, behallna
         except Exception as e:  # noqa: BLE001 – t.ex. miljö utan processpool: kör seriellt
-            print(f"  parallell körning misslyckades ({e}) – skriver rapporterna en i taget")
-            n = klara = 0
+            print(f"\n  parallell körning misslyckades ({e}) – skriver resterande rapporter en i taget")
+            att_skriva = [(s, sokvag) for s, sokvag in att_skriva if not s.rapport_fil]
+            klara = 0
 
     with tempfile.TemporaryDirectory() as tmp:
         for s, sokvag in att_skriva:
@@ -2869,7 +2886,7 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
                 s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
                 n += 1
             except Exception as e:  # noqa: BLE001
-                print(f"  FEL rapport sträcka {s.nr} ({s.fil}): {e}")
+                print(f"\n  FEL rapport sträcka {s.nr} ({s.fil}): {e}")
             klara += 1
             framsteg()
     print()
@@ -3242,4 +3259,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()    # fryst exe (PyInstaller) på Windows: annars spawnas skriptet rekursivt
     main()
