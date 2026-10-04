@@ -47,6 +47,7 @@ STANDARD_LEDNTYP = ['PipeType', 'LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SY
 STANDARD_AR = ['ConstructionYear', 'ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
 STANDARD_RENOVERINGSAR = ['RestorationYear', 'RENOVERINGSAR', 'REN_AR', 'RELINAD_AR', 'INFODRAD_AR']
 STANDARD_SERVIS = ['A Servis']
+LAGERNAMN_BEDOMDA = 'Bedomda ledningar'      # lagernamnet som Skapa ledningslager ger
 STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']
 STANDARD_DUF_NAMN = ['DUF', 'DUF_NR', 'DUFNR', 'OMRADE', 'OMR\u00c5DE', 'NAMN', 'NAME', 'BETECKNING', 'ID']
 STANDARD_VG_FRAN = ['LevelFrom', 'VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
@@ -253,7 +254,7 @@ class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
         self.alias = 'tv3'
-        self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Markprofil, Uppstroms,
+        self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Etapplager, Markprofil, Uppstroms,
                       ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
                       SkapaProjekteringslager, Projekteringsprofil]
 
@@ -453,6 +454,75 @@ class UppdateraBedomning(object):
             arcpy.RefreshActiveView()
         except Exception:
             pass
+        return
+
+
+class Etapplager(object):
+    def __init__(self):
+        self.label = 'Etapplager (\u00e5tg\u00e4rdspaket)'
+        self.description = (
+            'Sl\u00e5r ihop str\u00e4ckorna i det bed\u00f6mda ledningslagret per etapp till ett '
+            'linjelager med en linje per etapp: etappnummer, metod, l\u00e4ngd, kostnad, brunnar att '
+            'schakta fram och en f\u00e4rdig etikett. Uppgifterna tas ur kartunderlag.json n\u00e4r '
+            'filen anges. Valfritt skrivs ett punktlager med brunnarna som ska schaktas fram.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        bedomda = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager"', 'bedomda', False, kartlager)
+        _satt_varden(bedomda, _langa_namn([LAGERNAMN_BEDOMDA], kartlager)[:1])
+        json_in = arcpy.Parameter(
+            displayName='kartunderlag.json fr\u00e5n tv3_analys (valfritt, ger kostnad m.m.)',
+            name='json_in', datatype='DEFile', parameterType='Optional', direction='Input')
+        _filter(json_in, ['json'])
+        ut_fc = arcpy.Parameter(
+            displayName='Etapplager (linjer)', name='ut_fc', datatype='DEFeatureClass',
+            parameterType='Required', direction='Output')
+        brunnar_ut = arcpy.Parameter(
+            displayName='Brunnar att schakta fram (punktlager, valfritt)', name='brunnar_ut',
+            datatype='DEFeatureClass', parameterType='Optional', direction='Output')
+        lyr_fil = arcpy.Parameter(
+            displayName='Symbologi f\u00f6r etapperna (.lyr, valfritt)', name='lyr_fil', datatype='DEFile',
+            parameterType='Optional', direction='Input', category='Symbologi')
+        _filter(lyr_fil, ['lyr'])
+        lyr_brunnar = arcpy.Parameter(
+            displayName='Symbologi f\u00f6r brunnarna (.lyr, valfritt)', name='lyr_brunnar', datatype='DEFile',
+            parameterType='Optional', direction='Input', category='Symbologi')
+        _filter(lyr_brunnar, ['lyr'])
+        return _minne_fyll(self, [bedomda, json_in, ut_fc, brunnar_ut, lyr_fil, lyr_brunnar])
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[2].altered and not parameters[2].valueAsText:
+            l = _lagerobjekt(_lagerlista(parameters[0])[0]) if _lagerlista(parameters[0]) else None
+            try:
+                ds = l.dataSource if l else ''
+                if ds:
+                    mapp = os.path.dirname(ds)
+                    stam = os.path.splitext(os.path.basename(ds))[0]
+                    parameters[2].value = os.path.join(mapp, stam + '_etapper' + ('.shp' if ds.lower().endswith('.shp') else ''))
+            except Exception:
+                pass
+        return
+
+    def updateMessages(self, parameters):
+        _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslagret')
+        return
+
+    def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('etapplager')
+
+        def v(i):
+            t = (parameters[i].valueAsText or '').strip().strip("'")
+            return t or None
+        r = m.skapa_etapplager(_lagerlista(parameters[0])[0], parameters[2].valueAsText, json_fil=v(1),
+                               brunnar_ut=v(3), lyr_fil=v(4), lyr_brunnar=v(5))
+        arcpy.AddMessage('Klart: %d etapper%s' % (r['etapper'][1],
+                         (', %d brunnar att schakta fram' % r['brunnar'][1]) if r.get('brunnar') else ''))
         return
 
 
