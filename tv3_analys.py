@@ -2323,6 +2323,11 @@ SCHEMA_HOJD_TUM = 2.5          # vid upp till tre rader löpande skador; växer 
 SCHEMA_RADHOJD = 0.30          # dataenheter per rad löpande skador (band + etikett)
 
 
+def dk(text) -> str:
+    """Decimalkomma i rapporttext: '79.05 m' → '79,05 m' (bara punkt mellan två siffror)."""
+    return re.sub(r"(?<=\d)\.(?=\d)", ",", str(text))
+
+
 def _packa_band(band: list[tuple[float, float]]) -> list[int]:
     """Rad per band (0 = närmast röret) så att inga band eller etiketter överlappar i samma rad.
     band = [(från, till inkl. etikett)] i bandens ordning; första lediga raden tas."""
@@ -2361,7 +2366,7 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
     lopande.sort(key=lambda o: o.lage)
     intervall = []
     for o in lopande:
-        text = f"{o.kod}{o.grad} {o.lopande_langd:.1f} m"
+        text = dk(f"{o.kod}{o.grad} {o.lopande_langd:.1f} m")
         intervall.append((o.lage, max(o.lage + o.lopande_langd, o.lage + len(text) * tecken6) + L * 0.015))
     band_rad = _packa_band(intervall)
 
@@ -2369,7 +2374,7 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
     # kl 7–11 = vänster (ritas ovanför röret), kl 1–5 = höger (under röret), kl 12/6 = hjässa/botten (på röret)
     ansl = {"vänster": [], "höger": [], "": []}
     for o in sorted((o for o in s.observationer if o.infokod in ("AS", "AG")), key=lambda o: o.lage):
-        etikett = f"{o.lage:.1f} m" + (f" kl {o.klocka_fran.lstrip('0')}" if o.klocka_fran else "")
+        etikett = dk(f"{o.lage:.1f} m") + (f" kl {o.klocka_fran.lstrip('0')}" if o.klocka_fran else "")
         sida = anslutning_sida(o.klocka_fran)
         ansl["vänster" if sida == "vänster" else "höger" if sida == "höger" else ""].append((o, etikett))
     # avbrott (KAM) packas med hjässa/botten-etiketterna så texten inte hamnar på en anslutning i samma punkt
@@ -2416,7 +2421,7 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
         y = y_band0 + SCHEMA_RADHOJD * r
         ax.plot([o.lage, o.lage + o.lopande_langd], [y, y], lw=4, color=GRAD_FARG_HEX.get(o.grad, "#888"),
                 solid_capstyle="butt", alpha=0.9)
-        ax.text(o.lage, y + 0.08, f"{o.kod}{o.grad} {o.lopande_langd:.1f} m", fontsize=6, va="bottom")
+        ax.text(o.lage, y + 0.08, dk(f"{o.kod}{o.grad} {o.lopande_langd:.1f} m"), fontsize=6, va="bottom")
     # punktskador
     for o, r in zip(punkt, punkt_rad):
         y = (0, 0.15, -0.15)[r % 3]
@@ -2561,24 +2566,27 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
         if tk:
             xt = L_prof - tk["pos_min"] if speglad else tk["pos_min"]
             zm = min(mark, key=lambda p: abs(p[0] - xt))[1]
-            ax.annotate(f"täckning {tk['min']:.2f} m", (xt, zm), xytext=(0, 6), textcoords="offset points",
+            ax.annotate(dk(f"täckning {tk['min']:.2f} m"), (xt, zm), xytext=(0, 6), textcoords="offset points",
                         ha="center", va="bottom", fontsize=7.5, color="#8c6d46")
     ax.plot([x0, x1], [zj[0], zj[-1]], "o", ms=5, color="#4d4d4d")
-    ax.annotate(f"{vanster}  {z0:.2f}", (x0, z0), xytext=(4, 6), textcoords="offset points", fontsize=7.5, fontweight="bold")
-    ax.annotate(f"{hoger}  {z1:.2f}", (x1, z1), xytext=(-4, -12), textcoords="offset points", ha="right",
+    ax.annotate(dk(f"{vanster}  {z0:.2f}"), (x0, z0), xytext=(4, 6), textcoords="offset points", fontsize=7.5, fontweight="bold")
+    ax.annotate(dk(f"{hoger}  {z1:.2f}"), (x1, z1), xytext=(-4, -12), textcoords="offset points", ha="right",
                 fontsize=7.5, fontweight="bold")
     lut = s.lutning_promille
     titel = "Inklinometerprofil"
     if lut is not None:
-        titel += f"   ·   lutning {abs(lut):.1f} ‰"
+        titel += dk(f"   ·   lutning {abs(lut):.1f} ‰")
     titel += f"   ·   höjdskala 1:{hojdskala}   ·   längdskala 1:{langdskala}"
     h = s.hojdanpassning
     if h and h["offset"] is not None:
-        ax.text(0.01, 0.03, "höjdläge: " + h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else ""),
+        ax.text(0.01, 0.03, dk("höjdläge: " + h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else "")),
                 transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color="#52514e")
     ax.set_title(titel, fontsize=8.5, loc="left", fontweight="bold")
     ax.set_xlabel(f"position (m), 0 = {vanster}", fontsize=7.5)
     ax.set_ylabel("höjd (m)", fontsize=7.5)
+    from matplotlib.ticker import FuncFormatter
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: dk(f"{v:g}")))      # decimalkomma på axlarna
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: dk(f"{v:g}")))
     ax.tick_params(labelsize=7)
     ax.grid(color="#e1e0d9", lw=0.6)
     for sp in ("top", "right"):
@@ -2667,7 +2675,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                      if tk else "–"))
     if s.littera_rattat:
         info.append(("Littera rättat", s.littera_rattat, "", ""))
-    rader = [[P(a, st_fet), P(b), P(c, st_fet), P(d)] for a, b, c, d in info]
+    rader = [[P(a, st_fet), P(dk(b)), P(c, st_fet), P(dk(d))] for a, b, c, d in info]
     kw = 38 * mm
     t = Table(rader, colWidths=[kw, bredd / 2 - kw, kw, bredd / 2 - kw])
     t.setStyle(TableStyle([
@@ -2725,10 +2733,10 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         # klickbart bildnamn → hoppar till fotografiet längre bak i rapporten
         foto = ", ".join(f'<a href="#{fotoankare[n]}" color="#1f3864"><u>{esc(n)}</u></a>' if n in fotoankare else esc(n)
                          for n, _ in o.bilder)
-        rader.append([P(f"{o.lage:.2f}", st_cell), P(o.tid, st_cell), P(o.kod or o.infokod, st_cell),
+        rader.append([P(dk(f"{o.lage:.2f}"), st_cell), P(o.tid, st_cell), P(o.kod or o.infokod, st_cell),
                       P(o.beskrivning(), st_cell), P(klocka, st_cell),
                       P(f"{o.vattenniva}%" if o.vattenniva and o.vattenniva != "0" else "", st_cell),
-                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(f"{o.poang:.1f}".rstrip("0").rstrip(".") if o.poang else "", st_cell)])
+                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(dk(f"{o.poang:.1f}".rstrip("0").rstrip(".")) if o.poang else "", st_cell)])
         if o.grad and o.ar_skada:
             stil.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor(GRAD_FARG_LJUS.get(o.grad, "#ffffff"))))
     if len(rader) == 1:
@@ -2763,7 +2771,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                 img = Image(pth_liten, width=bw_, height=bh)
             except Exception:
                 img = P(f"[kunde inte läsa {n}]", st_liten)
-            txt = Paragraph(f"<b>{esc(n)}</b> · {o.lage:.2f} m · {esc(o.tid)}<br/>{esc(o.beskrivning())}", st_liten)
+            txt = Paragraph(f"<b>{esc(n)}</b> · {dk(f'{o.lage:.2f}')} m · {esc(o.tid)}<br/>{esc(o.beskrivning())}", st_liten)
             # ankare ovanför bilden så att länken från tabellen landar med bilden i vy;
             # bara första förekomsten av ett filnamn (samma bild kan höra till flera observationer)
             ank = fotoankare.pop(n, None)

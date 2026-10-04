@@ -494,7 +494,11 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
   **Profil**, Observationer, foton (profilen före tabellen så båda graferna oftast får plats på sida 1;
   tabellen delas bra över sidor, bilder inte). Observationstabellen: Pos 15 mm, Tid 17, Kod 12, Kl 13,
   Nivå 11, Foto 32, Grad 12, Poäng 14 ("110.04", "KAM", "Poäng", "Nivå" bröts i två rader);
-  poäng med högst en decimal. Användaren ska återkomma med hur anslutningarna ska visas.
+  poäng med högst en decimal. **Decimalkomma i hela PDF:en** (okt 2026, användarens val): `dk()` byter
+  punkt mellan två siffror mot komma och används på infotabellens värden, översiktens etiketter,
+  profilens texter och axlar (FuncFormatter), observationstabellen och bildtexterna; kontrollerat med
+  regex över alla 185 rapporter. Excel/JSON/konsol oförändrade. Användaren ska återkomma med hur
+  anslutningarna ska visas.
 - Observationstabell med radfärg efter grad (ingen förklaringstext – borttagen på begäran).
   Bildnamnen i kolumnen Foto är **interna PDF-länkar** (`<a href="#foto_…">`) till fotografiet
   längre bak; ankaret (`<a name>` i en 1 pt-paragraf) ligger ovanför bilden så den hamnar i vy.
