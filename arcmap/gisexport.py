@@ -187,9 +187,14 @@ class Omraden(object):
                     continue
                 xs = [x for r in ringar for x, _ in r]
                 ys = [y for r in ringar for _, y in r]
-                self.poster.append((namn, (min(xs), min(ys), max(xs), max(ys)), ringar))
+                # arcpy-geometrin behalls: contains() i C ar mycket snabbare an ren Python nar
+                # omradena har tusentals hornpunkter (ren Python bara som reserv/for test)
+                self.poster.append((namn, (min(xs), min(ys), max(xs), max(ys)), ringar,
+                                    geom if hasattr(geom, 'contains') else None))
         arcpy.Delete_management('lyr_gis_duf')
-        logg('  %s: %d omraden' % (namn_l, len(self.poster)))
+        self.sr = sr
+        logg('  %s: %d omraden, %d hornpunkter' % (namn_l, len(self.poster),
+                                                  sum(len(r) for _, _, ringar, _ in self.poster for r in ringar)))
 
     @staticmethod
     def _i_ring(x, y, ring):
@@ -207,9 +212,20 @@ class Omraden(object):
     def omrade(self, x, y):
         """Namnet pa omradet som innehaller (x, y), annars ''. Udda antal ringar runt punkten =
         inne (ytterring + hal)."""
-        for namn, (xmin, ymin, xmax, ymax), ringar in self.poster:
+        pg = None
+        for namn, (xmin, ymin, xmax, ymax), ringar, geom in self.poster:
             if not (xmin <= x <= xmax and ymin <= y <= ymax):
                 continue
+            if geom is not None:
+                try:
+                    if pg is None:
+                        pg = arcpy.PointGeometry(arcpy.Point(x, y), self.sr) if self.sr is not None \
+                            else arcpy.PointGeometry(arcpy.Point(x, y))
+                    if geom.contains(pg):
+                        return namn
+                    continue
+                except Exception:
+                    pass
             if sum(1 for r in ringar if self._i_ring(x, y, r)) % 2 == 1:
                 return namn
         return ''
@@ -237,18 +253,25 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         arcpy.MakeFeatureLayer_management(src, 'lyr_gis_omr', dq)
         omrade = 'lyr_gis_omr'
 
+    import time
+    t0 = time.time()
+
+    def tid():
+        return '%.0f s' % (time.time() - t0)
     sr = arcpy.Describe(kalla(led_lager[0])[0]).spatialReference
     omraden = None
     if duf_lager:
         logg('Laser driftomraden')
         omraden = Omraden(hitta_lager(duf_lager), duf_falt, sr)
-    logg('Laser brunnar')
+    logg('Laser brunnar (%s)' % tid())
     brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade)
-    logg('  %d brunnar totalt' % len(brunnar))
+    logg('  %d brunnar totalt (%s)' % (len(brunnar), tid()))
     if omraden is not None:
         for b in brunnar:
             b['omrade'] = omraden.omrade(b['x'], b['y'])
+        logg('  brunnarnas omraden satta (%s)' % tid())
     graf = Graf(dict((b['littera'], (b['x'], b['y'])) for b in brunnar), float(tolerans))
+    logg('Laser ledningar (%s)' % tid())
 
     # Ledningarna: originalpunkter och attribut per objekt(del), bitarna i grafen
     original = {}       # (lager, oid) -> [[punkter per del]]
@@ -296,10 +319,12 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 if delar:
                     original[(namn, oid)] = delar
                     n_led += 1
+                    if n_led % 5000 == 0:
+                        logg('  %d ledningar lasta (%s)' % (n_led, tid()))
         arcpy.Delete_management('lyr_gis_led')
     if omrade is not None:
         arcpy.Delete_management('lyr_gis_omr')
-    logg('  %d ledningar, %d bitar mellan brunnar/andar' % (n_led, n_bitar))
+    logg('  %d ledningar, %d bitar mellan brunnar/andar (%s)' % (n_led, n_bitar, tid()))
 
     # Bitarna -> ledningsstrackor. Varje bit finns tva ganger i grafen (bada riktningar);
     # ta den som lagrats i ritad riktning (fram_ids) och hoppa over nollbitar.
@@ -365,6 +390,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     ledningar.sort(key=lambda p: (p['lager'], p['oid'], p['del']))
     if n_stub:
         logg('  %d stubbar (ledningsande hogst %.1f m forbi en brunn) hoppades over' % (n_stub, float(tolerans)))
+    logg('  strackor byggda (%s)' % tid())
 
     # Statistik
     med_brunn = set()

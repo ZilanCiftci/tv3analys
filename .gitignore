@@ -19,3 +19,4 @@ gis_test/
 mp/
 upp*.csv
 rev_*/
+arcmap/senaste_val.json

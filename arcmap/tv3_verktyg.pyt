@@ -124,6 +124,59 @@ def _lagerlista(param):
     return [v.strip().strip("'") for v in text.split(';') if v.strip()]
 
 
+MINNESFIL = os.path.join(HAR, 'senaste_val.json')   # senast anvanda parametrar per verktyg
+
+
+def _minne_las():
+    try:
+        import json
+        with open(MINNESFIL, 'rb') as f:
+            return json.loads(f.read().decode('utf-8'))
+    except Exception:
+        return {}
+
+
+def _minne_fyll(verktyg, params):
+    """Forifyller parametrarna med vardena fran verktygets senaste korning (senaste_val.json),
+    for parametrar som ar tomma. Returnerar listan oforandrad i ovrigt."""
+    sparat = _minne_las().get(verktyg.__class__.__name__, {})
+    for p in params:
+        v = sparat.get(p.name)
+        if v in (None, '') or p.direction != 'Input':
+            continue
+        try:
+            if p.value not in (None, '') and not p.multiValue:
+                continue
+            if p.multiValue:
+                if p.valueAsText:
+                    continue
+                _satt_varden(p, [x for x in v.split(';') if x])
+            else:
+                p.value = v
+        except Exception:
+            pass
+    return params
+
+
+def _minne_spara(verktyg, parameters):
+    """Sparar inparametrarnas varden (som text) till senaste_val.json."""
+    try:
+        import json
+        alla = _minne_las()
+        d = {}
+        for p in parameters:
+            if p.direction == 'Input' and p.valueAsText:
+                d[p.name] = p.valueAsText.replace("'", '') if p.multiValue else p.valueAsText
+        alla[verktyg.__class__.__name__] = d
+        with open(MINNESFIL, 'wb') as f:
+            f.write(json.dumps(alla, ensure_ascii=False, indent=1).encode('utf-8'))
+    except Exception as e:
+        try:
+            arcpy.AddWarning('Kunde inte spara senaste val: %s' % e)
+        except Exception:
+            pass
+
+
 def _lagerobjekt(namn):
     """Lagerobjekt i kartan for ett kort eller langt namn, annars None."""
     sokt = namn.strip().strip("'").lower()
@@ -298,9 +351,9 @@ class SkapaLedningslager(object):
             datatype='DEFeatureClass', parameterType='Optional', direction='Output',
             category='Svackor och bakfall (ur inklinometerprofilerna)')
 
-        return [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
-                tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut,
-                svackor_ut, bakfall_ut]
+        return _minne_fyll(self, [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
+                                  tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut,
+                                  svackor_ut, bakfall_ut])
 
     def isLicensed(self):
         return True
@@ -309,9 +362,9 @@ class SkapaLedningslager(object):
         # Foresla utdata och CSV-rapport bredvid JSON-filen
         if parameters[0].altered and parameters[0].valueAsText:
             mapp = os.path.dirname(parameters[0].valueAsText)
-            if not parameters[4].altered:
+            if not parameters[4].altered and not parameters[4].valueAsText:
                 parameters[4].value = os.path.join(mapp, 'bedomda_ledningar.shp')
-            if not parameters[7].altered:
+            if not parameters[7].altered and not parameters[7].valueAsText:
                 parameters[7].value = os.path.join(mapp, STANDARD_CSV)
         return
 
@@ -328,6 +381,7 @@ class SkapaLedningslager(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         m = _ladda_modul()
         omrade = _lagerlista(parameters[5])
         ut = m.skapa(
@@ -370,7 +424,7 @@ class UppdateraBedomning(object):
     def getParameterInfo(self):
         lager = _lagerparam('Ledningslager fr\u00e5n "Skapa ledningslager"', 'lager',
                             False, _kartlager())
-        return [lager]
+        return _minne_fyll(self, [lager])
 
     def isLicensed(self):
         return True
@@ -389,6 +443,7 @@ class UppdateraBedomning(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         m = _ladda_modul()
         m.uppdatera(parameters[0].valueAsText.strip("'"))
         try:
@@ -453,8 +508,8 @@ class Markprofil(object):
         hojdsystem.value = 'RH2000'
 
         _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
-        return [bedomda, ledning, vg_fran, vg_till, mark, z_falt, json_ut,
-                intervall, sokradie, tolerans, hojdsystem]
+        return _minne_fyll(self, [bedomda, ledning, vg_fran, vg_till, mark, z_falt, json_ut,
+                intervall, sokradie, tolerans, hojdsystem])
 
     def isLicensed(self):
         return True
@@ -466,15 +521,15 @@ class Markprofil(object):
             if falt:
                 _filter(parameters[2], falt)
                 _filter(parameters[3], falt)
-                if not parameters[2].altered:
+                if not parameters[2].altered and not parameters[2].valueAsText:
                     parameters[2].value = _forsta_traff(STANDARD_VG_FRAN, falt)
-                if not parameters[3].altered:
+                if not parameters[3].altered and not parameters[3].valueAsText:
                     parameters[3].value = _forsta_traff(STANDARD_VG_TILL, falt)
         if parameters[4].altered and parameters[4].valueAsText:
             falt = _faltnamn(parameters[4])
             if falt:
                 _filter(parameters[5], [''] + falt)
-        if parameters[0].altered and parameters[0].valueAsText and not parameters[6].altered:
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[6].altered and not parameters[6].valueAsText:
             l = _lagerobjekt(parameters[0].valueAsText)
             try:
                 mapp = os.path.dirname(l.dataSource if l else parameters[0].valueAsText)
@@ -505,6 +560,7 @@ class Markprofil(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')
         m = _ladda_modul('markprofil')
         m.markprofil(
@@ -617,11 +673,11 @@ class Uppstroms(object):
 
         _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
         _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
-        return [ledning, brunn, brunn_id, startbrunn, ut_fc, csv_ut,
+        return _minne_fyll(self, [ledning, brunn, brunn_id, startbrunn, ut_fc, csv_ut,
                 riktn, med, mot, vg_fran, vg_till,
                 servis, servis_falt, servis_varden,
                 stopp_falt, stopp_varden, stopp_brunnar,
-                omrade, sokradie, tolerans, bedomda]
+                omrade, sokradie, tolerans, bedomda])
 
     def isLicensed(self):
         return True
@@ -632,11 +688,11 @@ class Uppstroms(object):
             if falt:
                 for i in (6, 9, 10, 12, 14):
                     _filter(parameters[i], [''] + falt)
-                if not parameters[9].altered:
+                if not parameters[9].altered and not parameters[9].valueAsText:
                     parameters[9].value = _forsta_traff(STANDARD_VG_FRAN, falt)
-                if not parameters[10].altered:
+                if not parameters[10].altered and not parameters[10].valueAsText:
                     parameters[10].value = _forsta_traff(STANDARD_VG_TILL, falt)
-        if parameters[20].altered and parameters[20].valueAsText and not parameters[5].altered:
+        if parameters[20].altered and parameters[20].valueAsText and not parameters[5].altered and not parameters[5].valueAsText:
             l = _lagerobjekt(parameters[20].valueAsText)
             try:
                 mapp = os.path.dirname(l.dataSource if l else parameters[20].valueAsText)
@@ -669,6 +725,7 @@ class Uppstroms(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')
         m = _ladda_modul('natverk')
         servis = _lagerlista(parameters[11])
@@ -772,8 +829,8 @@ class ExporteraGisdata(object):
         _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
         _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
         _satt_varden(duf, _langa_namn(STANDARD_DUF, kartlager))
-        return [ledning, brunn, brunn_id, json_ut, lock, btyp, vg_fran, vg_till, dim, mat, ltyp, ar,
-                tolerans, omrade, hojdsystem, duf, duf_falt]
+        return _minne_fyll(self, [ledning, brunn, brunn_id, json_ut, lock, btyp, vg_fran, vg_till, dim, mat, ltyp, ar,
+                tolerans, omrade, hojdsystem, duf, duf_falt])
 
     def isLicensed(self):
         return True
@@ -799,9 +856,9 @@ class ExporteraGisdata(object):
             falt = _faltnamn(parameters[15])
             if falt:
                 _filter(parameters[16], [''] + falt)
-                if not parameters[16].altered:
+                if not parameters[16].altered and not parameters[16].valueAsText:
                     parameters[16].value = _forsta_traff(STANDARD_DUF_NAMN, falt)
-        if parameters[0].altered and parameters[0].valueAsText and not parameters[3].altered:
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[3].altered and not parameters[3].valueAsText:
             l = _lagerobjekt(_lagerlista(parameters[0])[0]) if _lagerlista(parameters[0]) else None
             try:
                 mapp = os.path.dirname(l.dataSource) if l else ''
@@ -828,6 +885,7 @@ class ExporteraGisdata(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')     # beroendena forst, annars binder gisexport gamla versioner
         _ladda_modul('natverk')
         _ladda_modul('markprofil')
@@ -909,8 +967,8 @@ class ExporteraKartor(object):
         mall_sta = arcpy.Parameter(
             displayName='Mall med st\u00e5ende layout (.mxd, valfritt)', name='mall_staende',
             datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
-        return [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
-                skriv_falt, kartmapp, mall_ligg, mall_sta]
+        return _minne_fyll(self, [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
+                skriv_falt, kartmapp, mall_ligg, mall_sta])
 
     def isLicensed(self):
         return True
@@ -944,6 +1002,7 @@ class ExporteraKartor(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')
         m = _ladda_modul('kartexport')
         val = parameters[2].valueAsText or ''
@@ -988,12 +1047,13 @@ class ListaFalt(object):
         rader.value = 2000
         bara = _lagerparam('Lager att lista (tomt = alla lager i kartan)', 'bara', True, _kartlager(),
                            'Optional')
-        return [ut, rader, bara]
+        return _minne_fyll(self, [ut, rader, bara])
 
     def isLicensed(self):
         return True
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         import lista_falt
         reload(lista_falt)
         lista_falt.RADER = int(parameters[1].value or 2000)
@@ -1029,7 +1089,7 @@ class ExporteraKartbild(object):
         ut = arcpy.Parameter(
             displayName='Kartbild', name='ut', datatype='DEFile', parameterType='Derived',
             direction='Output')
-        return [mapp, namn, upplosning, bredd, ut]
+        return _minne_fyll(self, [mapp, namn, upplosning, bredd, ut])
 
     def isLicensed(self):
         return True
@@ -1040,6 +1100,7 @@ class ExporteraKartbild(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         mxd = arcpy.mapping.MapDocument('CURRENT')
         df = arcpy.mapping.ListDataFrames(mxd)[0]
         ut = os.path.join(parameters[0].valueAsText, parameters[1].valueAsText)
@@ -1079,7 +1140,7 @@ class SkapaProjekteringslager(object):
         sr_lager = _lagerparam('Lager att ta koordinatsystemet fr\u00e5n (tomt = kartans)', 'sr_lager',
                                False, kartlager, 'Optional')
         _satt_varden(sr_lager, _langa_namn(STANDARD_LEDNING, kartlager)[:1])
-        return [gdb, prefix, sr_lager]
+        return _minne_fyll(self, [gdb, prefix, sr_lager])
 
     def isLicensed(self):
         return True
@@ -1091,6 +1152,7 @@ class SkapaProjekteringslager(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')
         m = _ladda_modul('projektering')
         m.skapa_projekteringslager(
@@ -1149,8 +1211,8 @@ class Projekteringsprofil(object):
             displayName='H\u00f6jdsystem (skrivs p\u00e5 ritningen)', name='hojdsystem',
             datatype='GPString', parameterType='Required', direction='Input', category='Inst\u00e4llningar')
         hojdsystem.value = 'RH2000'
-        return [ledning, brunn, mark, z_falt, ut_mapp, namn, startbrunn, bara_valda,
-                intervall, sokradie, tolerans, hojdsystem]
+        return _minne_fyll(self, [ledning, brunn, mark, z_falt, ut_mapp, namn, startbrunn, bara_valda,
+                intervall, sokradie, tolerans, hojdsystem])
 
     def isLicensed(self):
         return True
@@ -1160,7 +1222,7 @@ class Projekteringsprofil(object):
             falt = _faltnamn(parameters[2])
             if falt:
                 _filter(parameters[3], [''] + falt)
-        if parameters[0].altered and parameters[0].valueAsText and not parameters[4].altered:
+        if parameters[0].altered and parameters[0].valueAsText and not parameters[4].altered and not parameters[4].valueAsText:
             l = _lagerobjekt(parameters[0].valueAsText)
             try:
                 ds = l.dataSource if l else parameters[0].valueAsText
@@ -1187,6 +1249,7 @@ class Projekteringsprofil(object):
         return
 
     def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
         _ladda_modul('skapa_ledningslager')
         m = _ladda_modul('projektering')
         filer = m.profil(

@@ -43,7 +43,8 @@ def _u(v):
 
 
 def lista_lager(lyr):
-    """Rader med beskrivning av ett lager: falt och exempelvarden."""
+    """Rader med beskrivning av ett lager: falt och exempelvarden. Ingen objektrakning (GetCount
+    mot SDE kan ta minuter per lager) - bara de forsta RADER raderna lases."""
     ut = []
     try:
         kalla = lyr.dataSource
@@ -59,30 +60,28 @@ def lista_lager(lyr):
     except Exception as e:
         ut.append('  (Describe misslyckades: %s)' % _u(e))
     try:
-        antal = int(arcpy.GetCount_management(lyr).getOutput(0))
-        ut.append('  antal objekt: %d' % antal)
-    except Exception:
-        pass
-    try:
         falt = [f for f in arcpy.ListFields(lyr) if f.type not in ('Geometry',)]
     except Exception as e:
         ut.append('  (ListFields misslyckades: %s)' % _u(e))
         return ut
     namn = [f.name for f in falt]
     exempel = dict((n, []) for n in namn)
+    n_rader = 0
     try:
         with arcpy.da.SearchCursor(lyr, namn) as cur:
-            for i, rad in enumerate(cur):
-                if i >= RADER:
-                    break
+            for rad in cur:
+                n_rader += 1
                 for n, v in zip(namn, rad):
                     if v is None or v == '':
                         continue
                     lst = exempel[n]
                     if len(lst) < EXEMPEL and v not in lst:
                         lst.append(v)
+                if n_rader >= RADER:
+                    break
     except Exception as e:
         ut.append('  (kunde inte lasa exempelvarden: %s)' % _u(e))
+    ut.append('  exempelvarden ur de forsta %d raderna' % n_rader)
     ut.append('  %-28s %-32s %-10s %5s  %s' % ('FALT', 'ALIAS', 'TYP', 'LANGD', 'EXEMPEL'))
     for f in falt:
         ex = ', '.join(_u(v) for v in exempel.get(f.name, []))
@@ -93,31 +92,42 @@ def lista_lager(lyr):
     return ut
 
 
-def lista(utfil=UTFIL, bara=BARA_LAGER):
-    mxd = arcpy.mapping.MapDocument('CURRENT')
-    rader = ['Falt i kartan %s' % _u(mxd.filePath or '(osparad)'), '']
-    n = 0
-    for df in arcpy.mapping.ListDataFrames(mxd):
-        rader.append('DATARAM: %s' % _u(df.name))
-        for lyr in arcpy.mapping.ListLayers(mxd, '', df):
-            if lyr.isGroupLayer:
-                continue
-            if bara and not any(_u(b).lower() in _u(lyr.longName).lower() for b in bara):
-                continue
-            try:
-                rader.extend(lista_lager(lyr))
-            except Exception as e:
-                rader.append('LAGER: %s  (fel: %s)' % (_u(lyr.name), _u(e)))
-            rader.append('')
-            n += 1
-    with io.open(utfil, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(rader) + '\n')
-    msg = '%d lager listade till %s' % (n, utfil)
+def _medd(text):
     try:
-        arcpy.AddMessage(msg)
+        arcpy.AddMessage(text)
     except Exception:
-        pass
-    print(msg)
+        print(text)
+
+
+def lista(utfil=UTFIL, bara=BARA_LAGER):
+    """Skriver filen lager for lager (sa att den finns aven om korningen avbryts) och rapporterar
+    forloppet med tid per lager."""
+    import time
+    mxd = arcpy.mapping.MapDocument('CURRENT')
+    n = 0
+    with io.open(utfil, 'w', encoding='utf-8') as f:
+        f.write('Falt i kartan %s\n\n' % _u(mxd.filePath or '(osparad)'))
+        for df in arcpy.mapping.ListDataFrames(mxd):
+            f.write('DATARAM: %s\n' % _u(df.name))
+            for lyr in arcpy.mapping.ListLayers(mxd, '', df):
+                try:
+                    if lyr.isGroupLayer or not lyr.isFeatureLayer:
+                        continue
+                except Exception:
+                    continue
+                if bara and not any(_u(b).lower() in _u(lyr.longName).lower() for b in bara):
+                    continue
+                t0 = time.time()
+                _medd('Laser %s ...' % _u(lyr.longName))
+                try:
+                    rader = lista_lager(lyr)
+                except Exception as e:
+                    rader = ['LAGER: %s  (fel: %s)' % (_u(lyr.name), _u(e))]
+                f.write('\n'.join(rader) + '\n\n')
+                f.flush()
+                n += 1
+                _medd('  klart pa %.1f s' % (time.time() - t0))
+    _medd('%d lager listade till %s' % (n, utfil))
     return utfil
 
 
