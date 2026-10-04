@@ -34,7 +34,7 @@ import arcpy
 
 from skapa_ledningslager import txt, logg, hitta_lager, hitta_falt, kalla, normalisera, _avst, TEXTTYP
 from natverk import Graf, _langd, _sr_namn
-from markprofil import _station
+from markprofil import _station, _punkt_vid
 
 VERSION = 1
 
@@ -140,10 +140,75 @@ def _nodnamn(nod):
     return txt(nod[1]) if nod[0] == 'B' else ''
 
 
+class Omraden(object):
+    """Driftomraden (polygoner) med namn: vilket omrade en punkt ligger i. Punkt-i-polygon i ren
+    Python (ringar ur SHAPE@; hal = ringar efter None i en del), sa att det gar att testa utan
+    arcpy-geometri. Forsta omradet som innehaller punkten vinner."""
+
+    def __init__(self, lager, namnfalt):
+        self.poster = []     # (namn, bbox, [ringar]) dar ring = [(x, y), ...]
+        namn_l = txt(getattr(lager, 'name', lager))
+        falt = _faltnamn(lager)
+        f_namn = _valj_falt(falt, namnfalt, 'omradesnamnfaltet', namn_l)
+        src, dq = kalla(lager)
+        arcpy.MakeFeatureLayer_management(src, 'lyr_gis_duf', dq)
+        with arcpy.da.SearchCursor('lyr_gis_duf', ['SHAPE@'] + ([f_namn] if f_namn else [])) as mark:
+            for rad in mark:
+                geom = rad[0]
+                if geom is None:
+                    continue
+                namn = _text(rad[1]) if f_namn else ''
+                ringar = []
+                for del_ in geom:
+                    ring = []
+                    for p in del_:
+                        if p is None:            # hal borjar
+                            if len(ring) >= 3:
+                                ringar.append(ring)
+                            ring = []
+                        else:
+                            ring.append((p.X, p.Y))
+                    if len(ring) >= 3:
+                        ringar.append(ring)
+                if not ringar:
+                    continue
+                xs = [x for r in ringar for x, _ in r]
+                ys = [y for r in ringar for _, y in r]
+                self.poster.append((namn, (min(xs), min(ys), max(xs), max(ys)), ringar))
+        arcpy.Delete_management('lyr_gis_duf')
+        logg('  %s: %d omraden' % (namn_l, len(self.poster)))
+
+    @staticmethod
+    def _i_ring(x, y, ring):
+        inne = False
+        n = len(ring)
+        for i in range(n):
+            x1, y1 = ring[i]
+            x2, y2 = ring[(i + 1) % n]
+            if (y1 > y) != (y2 > y):
+                xk = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+                if x < xk:
+                    inne = not inne
+        return inne
+
+    def omrade(self, x, y):
+        """Namnet pa omradet som innehaller (x, y), annars ''. Udda antal ringar runt punkten =
+        inne (ytterring + hal)."""
+        for namn, (xmin, ymin, xmax, ymax), ringar in self.poster:
+            if not (xmin <= x <= xmax and ymin <= y <= ymax):
+                continue
+            if sum(1 for r in ringar if self._i_ring(x, y, r)) % 2 == 1:
+                return namn
+        return ''
+
+
 def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
-              ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000', skriv_csv=True):
+              ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000', skriv_csv=True,
+              duf_lager=None, duf_falt=None):
     """Exporterar brunnar och ledningsstrackor mellan brunnar till json_ut (+ CSV bredvid).
+    duf_lager/duf_falt: polygonlager med driftomraden och namnfalt - varje ledning (mittpunkt) och
+    brunn far 'omrade', som analysen anvander for inspektionsgrad per omrade.
     Returnerar en sammanfattning (dict)."""
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
@@ -160,9 +225,16 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         omrade = 'lyr_gis_omr'
 
     sr = arcpy.Describe(kalla(led_lager[0])[0]).spatialReference
+    omraden = None
+    if duf_lager:
+        logg('Laser driftomraden')
+        omraden = Omraden(hitta_lager(duf_lager), duf_falt)
     logg('Laser brunnar')
     brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade)
     logg('  %d brunnar totalt' % len(brunnar))
+    if omraden is not None:
+        for b in brunnar:
+            b['omrade'] = omraden.omrade(b['x'], b['y'])
     graf = Graf(dict((b['littera'], (b['x'], b['y'])) for b in brunnar), float(tolerans))
 
     # Ledningarna: originalpunkter och attribut per objekt(del), bitarna i grafen
@@ -253,6 +325,9 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 'anlaggningsar': at.get('anlaggningsar'),
                 'lager': lager, 'oid': oid,
             }
+            if omraden is not None:
+                mitt = _punkt_vid(pts, _langd(pts) / 2.0)
+                post['omrade'] = omraden.omrade(mitt[0], mitt[1])
             for k in ('vg_fran', 'vg_till'):
                 if post[k] is not None:
                     post[k] = round(post[k], 3)
@@ -275,6 +350,11 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     fria = sum(1 for p in ledningar if not p['fran'] or not p['till'])
     utan_vg = sum(1 for p in ledningar if p['vg_fran'] is None or p['vg_till'] is None)
     utan_lock = sum(1 for b in brunnar if b['lockniva'] is None)
+    if omraden is not None:
+        per = {}
+        for p in ledningar:
+            per[p.get('omrade') or '(utanfor)'] = per.get(p.get('omrade') or '(utanfor)', 0) + 1
+        logg('  ledningar per omrade: ' + ', '.join('%s %d' % (k, v) for k, v in sorted(per.items())))
     logg('  %d ledningsstrackor, %d med fri ande, %d utan vattengang i nagon ande'
          % (len(ledningar), fria, utan_vg))
     logg('  %d brunnar utan ledning inom toleransen, %d utan lockniva' % (len(utan_ledning), utan_lock))
@@ -292,7 +372,8 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                   'brunnar': [txt(getattr(l, 'name', l)) for l in brunn_lager],
                   'brunn_id': brunn_id, 'lockniva': lock_falt, 'brunnstyp': typ_falt,
                   'vg_fran': vg_fran, 'vg_till': vg_till, 'dimension': dim_falt, 'material': mat_falt,
-                  'ledningstyp': ledntyp_falt, 'anlaggningsar': ar_falt},
+                  'ledningstyp': ledntyp_falt, 'anlaggningsar': ar_falt,
+                  'driftomraden': txt(duf_lager) if duf_lager else None, 'omradesnamn': duf_falt},
         'brunnar': brunnar,
         'ledningar': ledningar,
     }
@@ -304,9 +385,9 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
     logg('Skrev %s' % json_ut)
     if skriv_csv:
         stam = os.path.splitext(json_ut)[0]
-        _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'lockniva', 'x', 'y', 'lager'], brunnar)
+        _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'lockniva', 'omrade', 'x', 'y', 'lager'], brunnar)
         _skriv_csv(stam + '_ledningar.csv',
-                   ['fran', 'till', 'langd_m', 'vg_fran', 'vg_till', 'dimension', 'material',
+                   ['fran', 'till', 'omrade', 'langd_m', 'vg_fran', 'vg_till', 'dimension', 'material',
                     'ledningstyp', 'anlaggningsar', 'lager', 'oid', 'del', 'antal_delar'], ledningar)
         logg('Skrev %s_brunnar.csv och %s_ledningar.csv' % (stam, stam))
     return {'brunnar': len(brunnar), 'ledningar': len(ledningar), 'fria_andar': fria,

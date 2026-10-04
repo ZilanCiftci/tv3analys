@@ -347,8 +347,21 @@ gis_lutning_promille, djup_start_m, djup_slut_m, anlaggningsar. Test: scratchpad
 (låtsas-arcpy: brunn mitt på ledning + snett 0,5 m, interpolerad vg, fri ände, brunn utan ledning) och
 syntetisk gisdata för DUF 701 med inlagda fel (dimension, material, omvänd vg, fel fall, vg saknas,
 ledning saknas, omkastat/borttaget littera) – alla hittades; facit utan gis oförändrat. Handledning 7.11.
-Idéer kvar: inspektionsgrad (GIS-ledningar utan film), uppströmsanalys ur exporten utan ArcMap,
-djupklass i schaktlistan, ålder som konsekvensfaktor.
+**Inspektionsgrad per driftområde** (okt 2026, användarens önskemål "DUF-områden … hur mycket ledningsnät
+finns och hur många är filmade"): exporten tar valfritt `duf_lager`/`duf_falt` (kategori Driftområden,
+gissning STANDARD_DUF/STANDARD_DUF_NAMN); klassen `Omraden` i gisexport gör punkt-i-polygon i ren Python
+(ringar ur SHAPE@, None skiljer hål, udda antal ringar = inne, bbox-förfilter) och sätter `omrade` på
+brunnar (punkten) och ledningar (bitens mittpunkt via `markprofil._punkt_vid`). I tv3_analys:
+`inspektionsgrad(strackor, gisfiler)` → rader per (område, ledningstyp) + "alla"-summor med ledningar,
+längd i GIS, filmade (GIS-ledning kopplad till någon sträcka, GIS-längd räknas), andel; `ej_inspekterat`
+(GIS-ledningar utan film, sorterade område/år/material); `utan_gis` (filmade sträckor utan GIS-ledning).
+Excel: flikar **Inspektionsgrad** (fetstil på alla-rader, andel i %) och **Ej inspekterat**, rad i
+Sammanfattning (`_inspektionsgrad_text`), dold kolumn Driftområde (`Stracka.driftomrade`: ledningens,
+annars brunnarnas); JSON toppfält `inspektionsgrad`, `ej_inspekterat`, per sträcka `driftomrade`.
+Test: test_gisexport.py (två polygoner, hål, gräns) och gisdata_omr.json för DUF 701 (tre områden, 22
+ofilmade ledningar → 83 %, DUF 701 91 %, 702 60 %, 703 0 %).
+Idéer kvar: eget kartlager för ej inspekterade ledningar i Skapa ledningslager, uppströmsanalys ur
+exporten utan ArcMap, djupklass i schaktlistan, ålder som konsekvensfaktor.
 **Projektering** (sep 2026, `arcmap/projektering.py`, verktygen Skapa projekteringslager och
 Projekteringsprofil i .pyt, oprövat i riktig ArcMap; ej kopplat till TV-inspektionerna):
 `skapa_projekteringslager(gdb, prefix, sr/sr_lager)` skapar `<prefix>_Ledning` (LEDN_ID, TYP med

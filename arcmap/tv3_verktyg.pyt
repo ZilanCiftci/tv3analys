@@ -44,6 +44,8 @@ STANDARD_DIMENSION = ['DIMENSION', 'DIM', 'INNERDIAMETER', 'DIAMETER', 'DN']
 STANDARD_MATERIAL = ['MATERIAL', 'MTRL', 'MAT']
 STANDARD_LEDNTYP = ['LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SYSTEM']
 STANDARD_AR = ['ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
+STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']
+STANDARD_DUF_NAMN = ['DUF', 'DUF_NR', 'DUFNR', 'OMRADE', 'OMR\u00c5DE', 'NAMN', 'NAME', 'BETECKNING', 'ID']
 STANDARD_VG_FRAN = ['VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
 STANDARD_VG_TILL = ['VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
@@ -759,10 +761,19 @@ class ExporteraGisdata(object):
             datatype='GPString', parameterType='Required', direction='Input', category=K_INST)
         hojdsystem.value = 'RH2000'
 
+        K_DUF = 'Driftomr\u00e5den'
+        duf = _lagerparam('Driftomr\u00e5den (polygonlager, t.ex. DUF-omr\u00e5den, valfritt)', 'duf_lager',
+                          False, kartlager, 'Optional')
+        duf.category = K_DUF
+        duf_falt = arcpy.Parameter(
+            displayName='F\u00e4lt med omr\u00e5dets namn/nummer', name='duf_falt', datatype='GPString',
+            parameterType='Optional', direction='Input', category=K_DUF)
+
         _satt_varden(ledning, _langa_namn(STANDARD_LEDNING, kartlager))
         _satt_varden(brunn, _langa_namn(STANDARD_BRUNN, kartlager))
+        _satt_varden(duf, _langa_namn(STANDARD_DUF, kartlager))
         return [ledning, brunn, brunn_id, json_ut, lock, btyp, vg_fran, vg_till, dim, mat, ltyp, ar,
-                tolerans, omrade, hojdsystem]
+                tolerans, omrade, hojdsystem, duf, duf_falt]
 
     def isLicensed(self):
         return True
@@ -784,6 +795,12 @@ class ExporteraGisdata(object):
                     _filter(parameters[i], [''] + falt)
                     if not parameters[i].altered:
                         parameters[i].value = _forsta_traff(kand, falt)
+        if parameters[15].altered and parameters[15].valueAsText:
+            falt = _faltnamn(parameters[15])
+            if falt:
+                _filter(parameters[16], [''] + falt)
+                if not parameters[16].altered:
+                    parameters[16].value = _forsta_traff(STANDARD_DUF_NAMN, falt)
         if parameters[0].altered and parameters[0].valueAsText and not parameters[3].altered:
             l = _lagerobjekt(_lagerlista(parameters[0])[0]) if _lagerlista(parameters[0]) else None
             try:
@@ -800,6 +817,9 @@ class ExporteraGisdata(object):
         _kolla_geometri(parameters[0], ('Polyline',), 'Ledningslager')
         _kolla_geometri(parameters[1], ('Point',), 'Brunnslager')
         _kolla_geometri(parameters[13], ('Polygon',), 'Omr\u00e5deslagret')
+        _kolla_geometri(parameters[15], ('Polygon',), 'Driftomr\u00e5dena')
+        if parameters[15].valueAsText and not parameters[16].valueAsText:
+            parameters[16].setWarningMessage('Ange faltet med omradets namn, annars blir omradet tomt.')
         if parameters[12].value is not None and not parameters[12].value > 0:
             parameters[12].setErrorMessage('Storre an 0')
         if parameters[0].valueAsText and not (parameters[6].valueAsText and parameters[7].valueAsText):
@@ -821,7 +841,8 @@ class ExporteraGisdata(object):
             parameters[3].valueAsText,
             lock_falt=v(4), typ_falt=v(5), vg_fran=v(6), vg_till=v(7), dim_falt=v(8), mat_falt=v(9),
             ledntyp_falt=v(10), ar_falt=v(11), tolerans=float(parameters[12].value),
-            omradeslager=v(13), hojdsystem=parameters[14].valueAsText or 'RH2000')
+            omradeslager=v(13), hojdsystem=parameters[14].valueAsText or 'RH2000',
+            duf_lager=v(15), duf_falt=v(16))
         arcpy.AddMessage('Klart: %(brunnar)d brunnar, %(ledningar)d ledningsstrackor '
                          '(%(fria_andar)d med fri ande, %(utan_vg)d utan vattengang)' % r)
         return
