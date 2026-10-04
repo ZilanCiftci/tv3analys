@@ -128,7 +128,7 @@ ATTRIBUT = {
     "TUNNA": "tunna", "GROVA": "grova", "PAKET": "rotpaket",
     "RIKTN": "riktningsavvikelse", "TVÄRS": "tvärsförskjutning", "LÄFÖR": "längsförskjutning",
     "FAFOG": "fel i fog", "UTFÄL": "utfällning", "FINT": "fint", "GROVT": "grovt",
-    "HINDE": "hinder – inspektion avbruten", "ANNAN": "annan orsak", "EJÖPP": "ej öppen",
+    "HINDE": "hinder", "ANNAN": "annan orsak", "EJÖPP": "ej öppen",
     # ej-skade-koder
     "PGREN": "påstick/grenrör", "INHUG": "inhuggen", "BORRA": "borrad", "SAHUG": "sadelhuggen",
     "LAGAT": "lagat", "BÖJD": "böj", "PLAST": "plast", "BTG": "betong", "GJUTJ": "gjutjärn",
@@ -2472,7 +2472,16 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
 PROFIL_FIG = (7.4, 3.2)                 # tum
 PROFIL_AX = (0.10, 0.17, 0.87, 0.70)    # axelns läge i figuren (andel av bredd/höjd)
 LANGDSKALOR = [10, 20, 25, 40, 50, 75, 100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000]
-HOJDSKALOR = [1, 2, 5, 10, 20, 25, 50, 100, 200]
+HOJDSKALOR = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000]
+
+
+def _dk_axlar(ax) -> None:
+    """Decimalkomma på axlarna och lika många decimaler på alla ticks (steget avgör: 22,8 och 23,0)."""
+    from matplotlib.ticker import FuncFormatter
+    for axel, ticks in ((ax.xaxis, ax.get_xticks()), (ax.yaxis, ax.get_yticks())):
+        steg = min((b - a for a, b in zip(ticks, ticks[1:]) if b > a), default=1.0)
+        dec = max(0, -int(math.floor(math.log10(steg) + 1e-9)))
+        axel.set_major_formatter(FuncFormatter(lambda v, _, d=dec: dk(f"{v:.{d}f}")))
 
 
 def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
@@ -2552,11 +2561,13 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
         j = min(range(len(x)), key=lambda i: abs(x[i] - xs))   # höjd i profilen vid svackans position
         zi = z[j]
         ax.plot([xs, xs], [zi, zi + pa["svackdjup"]], color="#d03b3b", lw=1.5)
-        ax.annotate(f"svacka {pa['svackdjup'] * 100:.0f} cm", (xs, zi), xytext=(0, -14), textcoords="offset points",
+        nara_ande = abs(xs - x1) < 0.15 * (x1 - x0) or abs(xs - x0) < 0.15 * (x1 - x0)
+        ax.annotate(f"svacka {pa['svackdjup'] * 100:.0f} cm", (xs, zi + (pa["svackdjup"] if nara_ande else 0)),
+                    xytext=(0, 10 if nara_ande else -14), textcoords="offset points",   # ovanför nära brunnsnamnen
                     ha="center", fontsize=7.5, color="#d03b3b")
     if pa and pa["osaker"]:
-        ax.text(0.99, 0.03, "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
-                ha="right", va="bottom", fontsize=7, color="#d03b3b")
+        ax.text(0.01, 0.03, "OBS: inklinometerprofilen avviker från brunnshöjderna – osäker", transform=ax.transAxes,
+                ha="left", va="bottom", fontsize=7, color="#d03b3b")   # nere till vänster: tomt när höga änden är vänster
     if mark:
         ax.plot([xm for xm, _ in mark], [zm for _, zm in mark], color="#8c6d46", lw=1.4,
                 label="markyta (GIS)")
@@ -2579,14 +2590,12 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     titel += f"   ·   höjdskala 1:{hojdskala}   ·   längdskala 1:{langdskala}"
     h = s.hojdanpassning
     if h and h["offset"] is not None:
-        ax.text(0.01, 0.03, dk("höjdläge: " + h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else "")),
+        ax.text(0.01, 0.12 if pa and pa["osaker"] else 0.03, dk("höjdläge: " + h["status"] + (f" ({h['offset']:+.2f} m)" if h["offset"] else "")),
                 transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color="#52514e")
     ax.set_title(titel, fontsize=8.5, loc="left", fontweight="bold")
     ax.set_xlabel(f"position (m), 0 = {vanster}", fontsize=7.5)
     ax.set_ylabel("höjd (m)", fontsize=7.5)
-    from matplotlib.ticker import FuncFormatter
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: dk(f"{v:g}")))      # decimalkomma på axlarna
-    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: dk(f"{v:g}")))
+    _dk_axlar(ax)
     ax.tick_params(labelsize=7)
     ax.grid(color="#e1e0d9", lw=0.6)
     for sp in ("top", "right"):
@@ -2595,6 +2604,62 @@ def rita_profil(s: Stracka, path: str, bild_bredd_mm: float) -> bool:
     _spara_rapportbild(fig, path)
     plt.close(fig)
     return True
+
+
+TABELL_MIN_RADER = 3     # minsta antal datarader på var sida om en sidbrytning i observationstabellen
+
+
+def _Tabell(*args, **kw):
+    """Tabell som inte lämnar en ensam rad på en sida: delningen flyttas uppåt tills båda delarna har
+    minst TABELL_MIN_RADER datarader, och en kort tabell flyttas hel till nästa sida."""
+    from reportlab.platypus import Table
+
+    class Tabell(Table):
+        def split(self, availWidth, availHeight):
+            delar = Table.split(self, availWidth, availHeight)
+            rubrik = self.repeatRows
+            data = len(self._cellvalues) - rubrik
+            if len(delar) != 2 or data <= 2 * TABELL_MIN_RADER:
+                # för kort att dela snyggt: hel på nästa sida
+                return [] if len(delar) == 2 and data > 0 else delar
+            hojd = availHeight
+            for _ in range(TABELL_MIN_RADER + 1):
+                forst = len(delar[0]._cellvalues) - rubrik
+                kvar = len(delar[1]._cellvalues) - rubrik
+                if forst >= TABELL_MIN_RADER and kvar >= TABELL_MIN_RADER:
+                    return delar
+                if forst < TABELL_MIN_RADER:
+                    return []
+                hojd -= self._rowHeights[rubrik + forst - 1]
+                delar = Table.split(self, availWidth, hojd)
+                if len(delar) != 2:
+                    return []
+            return delar
+
+    return Tabell(*args, **kw)
+
+
+def _RubrikTabell(rubrik, tabell):
+    """Rubrik + tabell: rubriken följer alltid med tabellens första rader. Får inte rubriken och minst
+    TABELL_MIN_RADER rader plats på sidan flyttas båda till nästa sida; en lång tabell börjar ändå
+    på samma sida som rubriken (reportlabs KeepTogether flyttar hela tabellen till nästa sida)."""
+    from reportlab.platypus import KeepTogether
+
+    class RubrikTabell(KeepTogether):
+        def split(self, aW, aH):
+            rub, tab = self._content
+            _, hh = rub.wrap(aW, aH)
+            kvar = aH - hh - rub.getSpaceBefore() - rub.getSpaceAfter()
+            _, th = tab.wrap(aW, kvar)
+            if th <= kvar:
+                return [rub, tab]
+            delar = tab.split(aW, kvar)
+            ram = getattr(self, "_frame", None)
+            if delar or (ram is not None and getattr(ram, "_atTop", False)):
+                return [rub] + (delar or [tab])
+            return [self.FrameBreak(), rub, tab]      # inte plats för rubrik + några rader: nästa sida
+
+    return RubrikTabell([rubrik, tabell])
 
 
 def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
@@ -2616,6 +2681,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                            spaceBefore=8, spaceAfter=4)
     st_vit = ParagraphStyle("v", fontName=fet, fontSize=7.5, leading=9.5, textColor=colors.white)
     st_cell = ParagraphStyle("c", fontName=normal, fontSize=7.5, leading=9.5)
+    st_foto = ParagraphStyle("cf", parent=st_cell, fontSize=7, leading=9)    # långa filnamn på en rad
     st_ankare = ParagraphStyle("a", fontName=normal, fontSize=1, leading=1)
 
     bredd = A4[0] - 30 * mm
@@ -2703,7 +2769,6 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         el.append(P("Ingen inklinometerprofil finns registrerad för sträckan.", st_liten))
 
     # --- observationstabell ---
-    el.append(Paragraph("Observationer", st_h2))
     huvud = [P(h, st_vit) for h in ("Pos. m", "Tid", "Kod", "Observation", "Kl.", "Nivå", "Foto", "Grad", "Poäng")]
     rader = [huvud]
     stil = [
@@ -2711,6 +2776,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d9d9d9")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("ALIGN", (7, 1), (8, -1), "CENTER"),
     ]
     obs = [o for o in s.observationer if o.kod or o.infokod]
@@ -2731,21 +2797,23 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
     for i, o in enumerate(obs, 1):
         klocka = o.klocka_fran + (f"–{o.klocka_till}" if o.klocka_till and o.klocka_till != o.klocka_fran else "")
         # klickbart bildnamn → hoppar till fotografiet längre bak i rapporten
-        foto = ", ".join(f'<a href="#{fotoankare[n]}" color="#1f3864"><u>{esc(n)}</u></a>' if n in fotoankare else esc(n)
-                         for n, _ in o.bilder)
+        foto = "<br/>".join(f'<a href="#{fotoankare[n]}" color="#1f3864"><u>{esc(n)}</u></a>' if n in fotoankare else esc(n)
+                            for n, _ in o.bilder)
         rader.append([P(dk(f"{o.lage:.2f}"), st_cell), P(o.tid, st_cell), P(o.kod or o.infokod, st_cell),
                       P(o.beskrivning(), st_cell), P(klocka, st_cell),
                       P(f"{o.vattenniva}%" if o.vattenniva and o.vattenniva != "0" else "", st_cell),
-                      Paragraph(foto, st_cell), P(o.grad or "", st_cell), P(dk(f"{o.poang:.1f}".rstrip("0").rstrip(".")) if o.poang else "", st_cell)])
+                      Paragraph(foto, st_foto), P(o.grad or "", st_cell), P(dk(f"{o.poang:.1f}".rstrip("0").rstrip(".")) if o.poang else "", st_cell)])
         if o.grad and o.ar_skada:
             stil.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor(GRAD_FARG_LJUS.get(o.grad, "#ffffff"))))
     if len(rader) == 1:
         rader.append([P("Inga observationer registrerade", st_cell)] + [P("", st_cell)] * 8)
-    cw = [15 * mm, 17 * mm, 12 * mm, None, 13 * mm, 11 * mm, 32 * mm, 12 * mm, 14 * mm]
+    # bredder efter uppmätt textbredd (DejaVu 7,5 pt) + 2 × 3 pt cellmarginal: "110,04", "00:00:11",
+    # "KAM", "06–09", "Nivå", "0706202112412_A.JPG" (ett filnamn per rad, 7 pt), "Grad", "Poäng"
+    cw = [13 * mm, 15 * mm, 10 * mm, None, 12 * mm, 10 * mm, 32 * mm, 10 * mm, 12 * mm]
     cw[3] = bredd - sum(w for w in cw if w)
-    t = Table(rader, colWidths=cw, repeatRows=1)
+    t = _Tabell(rader, colWidths=cw, repeatRows=1)
     t.setStyle(TableStyle(stil))
-    el.append(t)
+    el.append(_RubrikTabell(Paragraph("Observationer", st_h2), t))   # rubriken följer med tabellens första rader
     el.append(Spacer(1, 4))
 
     # --- foton ---
