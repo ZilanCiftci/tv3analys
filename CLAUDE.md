@@ -192,8 +192,9 @@ bredd 2400 px, 200 dpi) i .pyt. Test: DUF 701 ger 26 sidor, validate.py OK, foto
 LibreOffice i sandlådan kan inte rendera, så layouten är kontrollerad strukturellt (python-pptx), inte
 visuellt – användaren justerar mallen.
 **Åtgärdspaket och kostnad** (okt 2026, steg 3, i `tv3_analys.py`): KONFIG `KOSTNADSFIL` (kostnader.csv i
-repot, schablon: strumpa 2 500–9 500 kr/m per dimensionsintervall, hatt 9 000, lagning 25 000 kr/m,
-framschaktning 60 000, ny_brunn 45 000, etablering 40 000), `ATGARD_KLASSER` (A; var A, B t.o.m. okt 2026), `SCHAKT_AUTOMATISKT`
+repot, användarens justerade belopp okt 2026: strumpa 2 600/2 750/3 000/4 000/8 100 kr/m per dimensionsintervall
+≤200/300/400/600/1200, hatt 25 000, lagning 25 000 kr/m, framschaktning 60 000, ny_brunn 45 000, etablering 45 000;
+DUF 701 med bara A + överbryggande B: 10,5 Mkr, varav hattar 2,9 Mkr – hattpriset är den stora posten), `ATGARD_KLASSER` (A; var A, B t.o.m. okt 2026), `SCHAKT_AUTOMATISKT`
 False (F3), `ETAPP_OVERBRYGGA_M` 60 (F5), `ETAPP_ORDNING` index|konsekvens, `BRUNNSTYP_ANDE_M` 1,5,
 `LAGNINGSKODER`, `FRAMSCHAKTA_BRUNNAR`. Stracka: `manuell_bedomning`/`kommentar`/`lagning_m` (ur tidigare
 prioritering.xlsx via `manuell:`/`--manuell`, `las_manuella` läser fliken Prioritering på rubriknamn och
