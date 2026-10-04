@@ -2741,28 +2741,34 @@ _FOTO_CACHE: dict[str, str] = {}
 
 
 def forminska_foto(pth: str, tmp: str) -> str:
-    """Förminskad kopia av ett foto (JPEG, längsta sidan FOTO_MAX_PX) i tmp, för inbäddning i PDF.
-    Originalet returneras när FOTO_MAX_PX är None, bilden redan är liten nog, eller något går fel.
-    Kopior cachas per process (samma bild kan höra till flera observationer)."""
-    if not FOTO_MAX_PX:
-        return pth
+    """Kopia av ett foto för inbäddning i PDF: JPEG, längsta sidan högst FOTO_MAX_PX, och vriden
+    enligt EXIF-orienteringen (reportlab läser inte EXIF, så ett foto taget på högkant hamnade
+    annars liggande). Originalet returneras när det redan är en liten RGB-JPEG utan rotation, eller
+    när något går fel. Kopior cachas per process (samma bild kan höra till flera observationer)."""
     nyckel = os.path.normcase(os.path.abspath(pth))
     if nyckel in _FOTO_CACHE and os.path.isfile(_FOTO_CACHE[nyckel]):
         return _FOTO_CACHE[nyckel]
     try:
-        from PIL import Image as PILImage
+        from PIL import Image as PILImage, ImageOps
         with PILImage.open(pth) as im:
             w, h = im.size
-            if max(w, h) <= FOTO_MAX_PX and (im.format or "").upper() == "JPEG":
+            try:
+                orientering = im.getexif().get(0x0112, 1)
+            except Exception:
+                orientering = 1
+            liten = not FOTO_MAX_PX or max(w, h) <= FOTO_MAX_PX
+            if liten and orientering in (None, 1) and im.mode == "RGB" and (im.format or "").upper() == "JPEG":
                 _FOTO_CACHE[nyckel] = pth
                 return pth
-            im.draft("RGB", (FOTO_MAX_PX, FOTO_MAX_PX))        # snabb nedskalad JPEG-avkodning (1/2, 1/4 …)
+            if FOTO_MAX_PX and orientering in (None, 1):
+                im.draft("RGB", (FOTO_MAX_PX, FOTO_MAX_PX))    # snabb nedskalad JPEG-avkodning (1/2, 1/4 …)
+            im = ImageOps.exif_transpose(im) or im            # vrid enligt EXIF och ta bort taggen
             if im.mode != "RGB":
-                im = im.convert("RGB")
-            if max(im.size) > FOTO_MAX_PX:
+                im = im.convert("RGB")                        # gråskala, CMYK, palett, alfa → RGB
+            if FOTO_MAX_PX and max(im.size) > FOTO_MAX_PX:
                 im.thumbnail((FOTO_MAX_PX, FOTO_MAX_PX))
             ut = os.path.join(tmp, f"foto_{len(_FOTO_CACHE)}_{os.getpid()}.jpg")
-            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True)
+            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET, optimize=True, exif=b"")
         _FOTO_CACHE[nyckel] = ut
         return ut
     except Exception:
