@@ -208,6 +208,10 @@ GIS_FALL_ORIMLIGT_M = 50    # m – större fall mellan brunnarna i GIS flaggas 
 GIS_PLATSHALLARE = {"AG", "STBEXTRA"}   # littera i TV3-filen som inte är riktiga brunnar – kontrolleras inte mot GIS
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
+GIS_VAG_MAX_HOPP = 4        # saknas direkt ledning i GIS mellan brunnarna söks en väg via andra brunnar (högst så
+                            # många ledningar, högst GIS_VAG_MAX_ANDEL × filmens längd + 20 m); annars tas brunnarnas
+                            # avstånd fågelvägen som kartlängd ("kartlängd fågelvägen")
+GIS_VAG_MAX_ANDEL = 2.0
                             # sträcka när bara en av brunnarna är okänd (den andra brunnens grannar i GIS prövas)
 # Materialnamn i film och GIS som ska räknas som samma (versaler; vänster = som det står, höger = grupp)
 GIS_MATERIAL = {"BTG": "Betong", "BETONG": "Betong", "BET": "Betong", "CONCRETE": "Betong",
@@ -1070,6 +1074,12 @@ class Stracka:
             if not saknas:
                 fl.append("ingen ledning i GIS mellan brunnarna")
             return fl
+        if g.get("_syntetisk") == "fagelvag":
+            fl.append(dk(f"ingen ledning i GIS mellan brunnarna – kartlängd fågelvägen {g['langd_m']:.1f} m"))
+            return fl
+        if g.get("_syntetisk") == "via":
+            fl.append(dk(f"ingen direkt ledning i GIS – kartlängd {g['langd_m']:.1f} m via "
+                         f"{', '.join(g['_via'])} ({len(g['_delar'])} ledningar)"))
         if self.langd >= 1:
             # vattengång: fallet mellan brunnarna enligt filmen mot GIS
             gs, ge = self._gis_vg()
@@ -1561,6 +1571,44 @@ def las_gis(path: str) -> dict:
             "hojdsystem": data.get("hojdsystem", "") or "RH2000", "fil": path}
 
 
+def _gis_vag(ns: str, ne: str, grannar: dict, langd: float) -> dict | None:
+    """Kortaste vägen i GIS från ns till ne via andra brunnar (högst GIS_VAG_MAX_HOPP ledningar, högst
+    GIS_VAG_MAX_ANDEL × filmens längd + 20 m). Returnerar en syntetisk ledningspost {fran, till, langd_m,
+    vg_fran, vg_till, dimension, material, ledningstyp, omrade, _syntetisk: "via", _via: [brunnar],
+    _delar: [ledningar]} eller None."""
+    import heapq
+    tak = GIS_VAG_MAX_ANDEL * max(langd, 1.0) + 20
+    basta: dict[str, float] = {ns: 0.0}
+    ko = [(0.0, 0, ns, [])]                 # (längd, hopp, brunn, [(granne, ledning) …])
+    while ko:
+        L, hopp, n, vag = heapq.heappop(ko)
+        if n == ne:
+            delar = [led for _, led in vag]
+            via = [b for b, _ in vag[:-1]]
+            def _riktad(led, fran):          # (vg vid fran, vg vid andra änden)
+                if _normlittera(led.get("fran")) == fran:
+                    return led.get("vg_fran"), led.get("vg_till")
+                return led.get("vg_till"), led.get("vg_fran")
+            vg0 = _riktad(delar[0], ns)[0]
+            vg1 = _riktad(delar[-1], via[-1] if via else ns)[1]
+            def _gemensamt(nyckel):
+                v = {d.get(nyckel) for d in delar}
+                return v.pop() if len(v) == 1 else None
+            return {"fran": ns, "till": ne, "langd_m": L, "vg_fran": vg0, "vg_till": vg1,
+                    "dimension": _gemensamt("dimension"), "material": _gemensamt("material"),
+                    "ledningstyp": _gemensamt("ledningstyp"), "anlaggningsar": _gemensamt("anlaggningsar"),
+                    "omrade": delar[0].get("omrade"), "_syntetisk": "via", "_via": via, "_delar": delar}
+        if hopp >= GIS_VAG_MAX_HOPP:
+            continue
+        for granne, led in grannar.get(n, []):
+            L2 = L + (led.get("langd_m") or 0.0)
+            if L2 > tak or granne == ns or (granne in basta and basta[granne] <= L2):
+                continue
+            basta[granne] = L2
+            heapq.heappush(ko, (L2, hopp + 1, granne, vag + [(granne, led)]))
+    return None
+
+
 def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
     """Kopplar GIS-data till sträckorna på brunnspar (båda riktningarna). Finns flera ledningar
     mellan samma brunnar tas den vars längd ligger närmast filmens. Utan markprofil används
@@ -1606,6 +1654,15 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         typ = (s.ledningstyp or "")[:1].upper()
         led = min(kand, key=lambda l: ((l.get("ledningstyp") or "")[:1].upper() != typ if typ else False,
                                        abs((l.get("langd_m") or 0) - s.langd))) if kand else None
+        if led is None and ns in brunnar and ne in brunnar and ns != ne:
+            # ingen direkt ledning: väg via andra brunnar, annars brunnarnas avstånd fågelvägen
+            led = _gis_vag(ns, ne, grannar, s.langd)
+            if led is None:
+                b0, b1 = brunnar[ns], brunnar[ne]
+                if all(isinstance(b.get(k), (int, float)) for b in (b0, b1) for k in ("x", "y")):
+                    d = math.hypot(b0["x"] - b1["x"], b0["y"] - b1["y"])
+                    if d >= 1.0:                     # brunnar utan koordinater (0, 0) ger ingen kartlängd
+                        led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"]}
         for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
@@ -1960,9 +2017,13 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     for s in strackor:
         if s.langd >= 1 and s.gis and s.gis.get("ledning"):
             k = s.gallande_klass
-            i = id(s.gis["ledning"])
-            if i not in klass_pa or k < klass_pa[i]:
-                klass_pa[i] = k
+            led = s.gis["ledning"]
+            if led.get("_syntetisk") == "fagelvag":
+                continue                                   # ingen GIS-ledning att räkna som filmad
+            for d in led.get("_delar") or [led]:
+                i = id(d)
+                if i not in klass_pa or k < klass_pa[i]:
+                    klass_pa[i] = k
     grupp: dict[tuple[str, str], dict] = {}
 
     def lagg(nyckel, led, klass):
@@ -2002,7 +2063,8 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
                       "andel_AB": g["AB_m"] / g["filmad_m"] if g["filmad_m"] else None})
     ej.sort(key=lambda e: (e["omrade"], e["anlaggningsar"] if isinstance(e["anlaggningsar"], int) else 9999,
                            str(e["material"]), -(e["langd_m"] or 0)))
-    utan = [s for s in strackor if s.langd >= 1 and not (s.gis and s.gis.get("ledning"))]
+    utan = [s for s in strackor if s.langd >= 1 and not (s.gis and s.gis.get("ledning")
+                                                          and s.gis["ledning"].get("_syntetisk") != "fagelvag")]
     return {"rader": rader, "ej_inspekterat": ej, "utan_gis": (len(utan), sum(s.langd for s in utan))}
 
 

@@ -435,6 +435,17 @@ infotabellrad; PPTX fakta-rad; konsolutskrift. Test: scratchpad/ny/ (syntetisk "
 sju sträckor ur DUF 701: förvärrad RBR4, relinad utan skador → D, oförändrad, avbruten vid 10 m, motströms
 filmad, samma dag = dubblett, 2019 = äldre än DUF 701) – alla fall rätt; facit DUF 701 ensam och filer.txt
 oförändrade (filen har inga par över filgränser).
+**Kartlängd utan direkt GIS-ledning** (okt 2026, användarens fråga "varför står det att kartlängden är okänd, jag
+har ju GIS-data"): KONFIG `GIS_VAG_MAX_HOPP` 4, `GIS_VAG_MAX_ANDEL` 2,0. I `koppla_gis`, när båda brunnarna finns men
+ingen ledning: `_gis_vag(ns, ne, grannar, langd)` (Dijkstra via `grannar`, tak = andel × filmlängd + 20 m) ger en
+syntetisk ledningspost {fran, till, langd_m, vg i ändarna, dimension/material/ledningstyp/år om alla delar är lika,
+omrade ur första delen, `_syntetisk` "via", `_via` [mellanbrunnar], `_delar` [ledningar]}; annars brunnarnas avstånd
+fågelvägen (`_syntetisk` "fagelvag", bara langd_m, ≥ 1 m – (0,0)-koordinater ger ingen). gisflagga: "ingen direkt
+ledning i GIS – kartlängd 17,4 m via KTB99999 (2 ledningar)" resp. "ingen ledning i GIS mellan brunnarna – kartlängd
+fågelvägen 44,7 m" (fågelvägen ger inga fler flaggor). `inspektionsgrad` räknar `_delar` som filmade, fågelväg
+som utan GIS-ledning (`utan_gis`). Effekt: sammanslagningen får kartlängd och överlapp. Test: scratchpad/gisvag/
+(gisdata med KTB72028–KTB61192 delad via KTB99999 och SRB63043–SRB62385 borttagen med koordinater → 187 överlapp
+3,9 m); gisdata_omr och filer.txt oförändrade.
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter
