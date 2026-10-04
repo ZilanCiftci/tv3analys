@@ -215,6 +215,15 @@ FRAMSCHAKTA_BRUNNAR: list[str] = []    # F9: lås vilka brunnar som schaktas fra
 # utan flaggan när layouten ändrats.
 BEHALL_RAPPORTER = False
 
+# Hastighet för PDF-rapporterna. Fotona förminskas till högst FOTO_MAX_PX pixlar på längsta sidan
+# innan de bäddas in (ett 1920×1080-foto på 1,2 MB blir ca 100 kB; i A4 visas fotot 85 mm brett,
+# så 960 px är ~290 dpi – ingen synlig skillnad, men rapporten blir 5–8 gånger mindre och snabbare
+# att skriva; 960 = halva full-HD, vilket JPEG-avkodaren klarar i ett steg). None = originalstorlek.
+# RAPPORT_PROCESSER = antal parallella processer (None = antal kärnor − 1, 1 = en i taget).
+FOTO_MAX_PX = 960
+FOTO_JPEG_KVALITET = 82
+RAPPORT_PROCESSER: int | None = None
+
 # Kolumner som döljs som standard i Excel (grupperade – fäll ut med plustecknet ovanför
 # kolumnrubrikerna, eller Data > Dela upp grupp). Allt finns kvar i filen. Tom lista = visa allt.
 # Ange rubriken utan enhet ("Längd", inte "Längd (m)") – enheten står på egen rad i Excel.
@@ -2640,14 +2649,15 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
         for o, n, pth in hittade:
             try:
                 from PIL import Image as PILImage
-                with PILImage.open(pth) as im:
+                pth_liten = forminska_foto(pth, tmp)
+                with PILImage.open(pth_liten) as im:
                     w, h = im.size
                 bh = bw * h / w
                 if bh > 95 * mm:
                     bh, bw_ = 95 * mm, 95 * mm * w / h
                 else:
                     bw_ = bw
-                img = Image(pth, width=bw_, height=bh)
+                img = Image(pth_liten, width=bw_, height=bh)
             except Exception:
                 img = P(f"[kunde inte läsa {n}]", st_liten)
             txt = Paragraph(f"<b>{esc(n)}</b> · {o.lage:.2f} m · {esc(o.tid)}<br/>{esc(o.beskrivning())}", st_liten)
@@ -2697,10 +2707,65 @@ def rensa_gamla_rapporter(strackor: list[Stracka], katalog: str) -> int:
     return n
 
 
+_FOTO_CACHE: dict[str, str] = {}
+
+
+def forminska_foto(pth: str, tmp: str) -> str:
+    """Förminskad kopia av ett foto (JPEG, längsta sidan FOTO_MAX_PX) i tmp, för inbäddning i PDF.
+    Originalet returneras när FOTO_MAX_PX är None, bilden redan är liten nog, eller något går fel.
+    Kopior cachas per process (samma bild kan höra till flera observationer)."""
+    if not FOTO_MAX_PX:
+        return pth
+    nyckel = os.path.normcase(os.path.abspath(pth))
+    if nyckel in _FOTO_CACHE and os.path.isfile(_FOTO_CACHE[nyckel]):
+        return _FOTO_CACHE[nyckel]
+    try:
+        from PIL import Image as PILImage
+        with PILImage.open(pth) as im:
+            w, h = im.size
+            if max(w, h) <= FOTO_MAX_PX and (im.format or "").upper() == "JPEG":
+                _FOTO_CACHE[nyckel] = pth
+                return pth
+            im.draft("RGB", (FOTO_MAX_PX, FOTO_MAX_PX))        # snabb nedskalad JPEG-avkodning (1/2, 1/4 …)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            if max(im.size) > FOTO_MAX_PX:
+                im.thumbnail((FOTO_MAX_PX, FOTO_MAX_PX))
+            ut = os.path.join(tmp, f"foto_{len(_FOTO_CACHE)}_{os.getpid()}.jpg")
+            im.save(ut, "JPEG", quality=FOTO_JPEG_KVALITET)
+        _FOTO_CACHE[nyckel] = ut
+        return ut
+    except Exception:
+        return pth
+
+
+def _snabb_reportlab() -> None:
+    """Stänger av ASCII85-kodningen av bilddata i reportlab. Den körs i ren Python när
+    C-tillägget saknas och tog 90 % av rapporttiden; binär inbäddning ger dessutom mindre filer."""
+    try:
+        from reportlab import rl_config
+        rl_config.useA85 = 0
+    except Exception:
+        pass
+
+
+def _rapport_jobb(s: "Stracka", sokvag: str) -> tuple[int, str, str]:
+    """En rapport i en arbetsprocess. Returnerar (nr, fil, felmeddelande eller '')."""
+    import tempfile
+    _snabb_reportlab()
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            skriv_rapport(s, sokvag, tmp)
+        return s.nr, s.fil, ""
+    except Exception as e:  # noqa: BLE001 – felet rapporteras i huvudprocessen
+        return s.nr, s.fil, str(e)
+
+
 def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
-                    behall: bool = False) -> tuple[int, int]:
+                    behall: bool = False, processer: int | None = None) -> tuple[int, int]:
     """Skriver en PDF per sträcka i <katalog>. urval: alla | AB | A.
     behall=True hoppar över sträckor vars PDF redan finns (länken sätts ändå).
+    processer: antal parallella processer (None = RAPPORT_PROCESSER / antal kärnor − 1, 1 = seriellt).
     Returnerar (antal skrivna, antal befintliga som behölls)."""
     import tempfile
     try:
@@ -2708,28 +2773,67 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
     except ImportError:
         print("  reportlab saknas – inga PDF-rapporter skapas (pip install reportlab)")
         return 0, 0
+    _snabb_reportlab()
     os.makedirs(katalog, exist_ok=True)
     gamla = rensa_gamla_rapporter(strackor, katalog)
     if gamla:
         print(f"  {gamla} inaktuella rapporter borttagna (annan klass eller littera än nu)")
     valda = [s for s in strackor if urval == "alla" or s.klass in urval]
     n = behallna = 0
+    att_skriva: list[tuple[Stracka, str]] = []
+    for s in valda:
+        namn = rapport_filnamn(s)
+        sokvag = os.path.join(katalog, namn)
+        if behall and os.path.isfile(sokvag):
+            s.rapport_fil = os.path.join(os.path.basename(katalog), namn)
+            behallna += 1
+        else:
+            att_skriva.append((s, sokvag))
+    if not att_skriva:
+        return 0, behallna
+
+    if processer is None:
+        processer = RAPPORT_PROCESSER
+    if processer is None:
+        processer = max(1, (os.cpu_count() or 2) - 1)
+    processer = min(int(processer), len(att_skriva))
+    klara = 0
+
+    def framsteg():
+        if klara % 25 == 0 or klara == len(att_skriva):
+            print(f"  rapporter: {klara}/{len(att_skriva)}", end="\r")
+
+    if processer > 1:
+        try:
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            with ProcessPoolExecutor(max_workers=processer) as pool:
+                jobb = {pool.submit(_rapport_jobb, s, sokvag): (s, sokvag) for s, sokvag in att_skriva}
+                for f in as_completed(jobb):
+                    s, sokvag = jobb[f]
+                    nr, fil, fel = f.result()
+                    if fel:
+                        print(f"  FEL rapport sträcka {nr} ({fil}): {fel}")
+                    else:
+                        s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
+                        n += 1
+                    klara += 1
+                    framsteg()
+            print()
+            return n, behallna
+        except Exception as e:  # noqa: BLE001 – t.ex. miljö utan processpool: kör seriellt
+            print(f"  parallell körning misslyckades ({e}) – skriver rapporterna en i taget")
+            n = klara = 0
+
     with tempfile.TemporaryDirectory() as tmp:
-        for i, s in enumerate(valda, 1):
-            namn = rapport_filnamn(s)
-            sokvag = os.path.join(katalog, namn)
-            if behall and os.path.isfile(sokvag):
-                s.rapport_fil = os.path.join(os.path.basename(katalog), namn)
-                behallna += 1
-                continue
+        for s, sokvag in att_skriva:
             try:
                 skriv_rapport(s, sokvag, tmp)
-                s.rapport_fil = os.path.join(os.path.basename(katalog), namn)
+                s.rapport_fil = os.path.join(os.path.basename(katalog), os.path.basename(sokvag))
                 n += 1
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"  FEL rapport sträcka {s.nr} ({s.fil}): {e}")
-            if i % 25 == 0 or i == len(valda):
-                print(f"  rapporter: {i}/{len(valda)}", end="\r")
+            klara += 1
+            framsteg()
     print()
     return n, behallna
 
@@ -2873,6 +2977,8 @@ def main(argv=None):
                     help="PDF-rapport per sträcka: alla (standard), bara klass A och B, bara A, eller inga")
     ap.add_argument("--behall-rapporter", action="store_true", default=BEHALL_RAPPORTER,
                     help="hoppa över PDF-rapporter som redan finns i utdatakatalogen (snabbare omkörning)")
+    ap.add_argument("--processer", type=int, default=None, metavar="N",
+                    help="antal parallella processer för PDF-rapporterna (standard: antal kärnor − 1; 1 = en i taget)")
     ap.add_argument("--karta", choices=["ja", "nej"], default="ja" if SKRIV_KARTUNDERLAG else "nej",
                     help=f"skriv {KARTUNDERLAG_FIL} för ArcMap-skriptet i arcmap/ (standard: ja)")
     ap.add_argument("--diagram", action="store_true", default=SPARA_DIAGRAM,
@@ -3055,7 +3161,7 @@ def main(argv=None):
     if a.rapporter != "inga":
         print(f"\nSkriver PDF-rapporter ({a.rapporter}) ...")
         n, behallna = skriv_rapporter(strackor, os.path.join(a.utdata, "rapporter"), a.rapporter,
-                                      behall=a.behall_rapporter)
+                                      behall=a.behall_rapporter, processer=a.processer)
         print(f"  {n} rapporter skrivna till {os.path.join(a.utdata, 'rapporter')}"
               + (f", {behallna} befintliga behållna" if behallna else ""))
     excel_fil = os.path.join(a.utdata, "prioritering.xlsx")
