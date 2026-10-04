@@ -353,7 +353,9 @@ gissning STANDARD_DUF/STANDARD_DUF_NAMN); klassen `Omraden` i gisexport gör pun
 (ringar ur SHAPE@, None skiljer hål, udda antal ringar = inne, bbox-förfilter) och sätter `omrade` på
 brunnar (punkten) och ledningar (bitens mittpunkt via `markprofil._punkt_vid`). I tv3_analys:
 `inspektionsgrad(strackor, gisfiler)` → rader per (område, ledningstyp) + "alla"-summor med ledningar,
-längd i GIS, filmade (GIS-ledning kopplad till någon sträcka, GIS-längd räknas), andel; `ej_inspekterat`
+längd i GIS, filmade (GIS-ledning kopplad till någon sträcka, GIS-längd räknas), andel, samt A/B (st),
+AB_m och andel_AB av filmad längd (sämsta gällande klass per GIS-ledning, användarens fråga "hur många
+procent A och B fel finns det"); `ej_inspekterat`
 (GIS-ledningar utan film, sorterade område/år/material); `utan_gis` (filmade sträckor utan GIS-ledning).
 Excel: flikar **Inspektionsgrad** (fetstil på alla-rader, andel i %) och **Ej inspekterat**, rad i
 Sammanfattning (`_inspektionsgrad_text`), dold kolumn Driftområde (`Stracka.driftomrade`: ledningens,
