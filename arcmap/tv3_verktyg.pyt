@@ -28,6 +28,7 @@ if HAR not in sys.path:
 
 # .lyr-fil med symbologi som anvands om ingen annan anges (sparas fran ArcMap, se handledningen 7.2)
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
+MARKERING_LYR = os.path.join(HAR, 'markering.lyr')      # symbol for aktuell stracka i Exportera kartor
 
 # Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
 STANDARD_LEDNING = ['A Ledning']
@@ -1052,8 +1053,20 @@ class ExporteraKartor(object):
             displayName='Sl\u00e4ck lagret med alla str\u00e4ckor - visa bara den aktuella str\u00e4ckan',
             name='dolj_strackor', datatype='GPBoolean', parameterType='Optional', direction='Input')
         dolj.value = False
+        K_SYMB = 'Markering av den aktuella str\u00e4ckan'
+        mark_lyr = arcpy.Parameter(
+            displayName='Markeringssymbol (.lyr, t.ex. bred gul linje; tomt = str\u00e4cklagrets symbologi)',
+            name='markering_lyr', datatype='DEFile', parameterType='Optional', direction='Input',
+            category=K_SYMB)
+        _filter(mark_lyr, ['lyr'])
+        if os.path.isfile(MARKERING_LYR):
+            mark_lyr.value = MARKERING_LYR
+        transparens = arcpy.Parameter(
+            displayName='Genomskinlighet p\u00e5 markeringen (%)', name='markering_transparens',
+            datatype='GPLong', parameterType='Optional', direction='Input', category=K_SYMB)
+        transparens.value = 50
         return _minne_fyll(self, [bedomda, ut_mapp, urval, per_etapp, skalor, marginal, dpi, markering, samlad,
-                skriv_falt, kartmapp, mall_ligg, mall_sta, kopiera, dolj])
+                skriv_falt, kartmapp, mall_ligg, mall_sta, kopiera, dolj, mark_lyr, transparens])
 
     def isLicensed(self):
         return True
@@ -1078,9 +1091,11 @@ class ExporteraKartor(object):
                 parameters[4].setErrorMessage('Heltal separerade med ;')
         if parameters[5].value is not None and parameters[5].value < 0:
             parameters[5].setErrorMessage('Minst 0')
-        for i in (11, 12):
+        for i in (11, 12, 15):
             if parameters[i].valueAsText and not os.path.isfile(parameters[i].valueAsText):
                 parameters[i].setErrorMessage('Filen finns inte')
+        if parameters[16].value is not None and not 0 <= parameters[16].value <= 100:
+            parameters[16].setErrorMessage('0-100 procent')
         if bool(parameters[11].valueAsText) != bool(parameters[12].valueAsText):
             parameters[12 if parameters[11].valueAsText else 11].setWarningMessage(
                 'Bara en mall angiven - den anvands for alla kartor. Ange bada for automatiskt val.')
@@ -1104,7 +1119,9 @@ class ExporteraKartor(object):
                     mall_liggande=parameters[11].valueAsText or None,
                     mall_staende=parameters[12].valueAsText or None,
                     kopiera_synliga=parameters[13].value is not False,
-                    dolj_strackor=bool(parameters[14].value))
+                    dolj_strackor=bool(parameters[14].value),
+                    markering_lyr=parameters[15].valueAsText or None,
+                    transparens=int(parameters[16].value) if parameters[16].value is not None else None)
         try:
             arcpy.RefreshActiveView()
         except Exception:
