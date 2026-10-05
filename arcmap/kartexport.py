@@ -175,7 +175,15 @@ def _huvudram(mxd):
         return ramar[0]
 
 
-KOPIANAMN = 'Aktuell stracka (export)'   # tillfallig kopia av strackslagret nar det slacks
+KOPIANAMN = 'Aktuell stracka (export)'   # tillfalligt lager som visar den aktuella strackan
+MARKERING_LYR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'markering.lyr')
+MARKERING_TRANSPARENS = 50               # procent genomskinlighet pa det tillfalliga lagret
+MARKERING_TIPS = (
+    'Ingen markeringssymbol (.lyr) - den aktuella strackan visas med strackslagrets egen symbologi '
+    '(klassfarger). Skapa symbolen en gang i ArcMap: hogerklicka strackslagret > Properties > '
+    'Symbology > Features > Single symbol, valj en gul linje med bredd ca 8 pt > OK; hogerklicka '
+    'lagret igen > Save As Layer File... och spara som %s. Filen ar forvald i dialogen nar den finns; '
+    'genomskinligheten satts av verktyget.' % MARKERING_LYR)
 
 
 class Layout(object):
@@ -183,18 +191,22 @@ class Layout(object):
     dataramen, dess matt per skalenhet, lagret med strackorna och ev. markeringslagret."""
 
     def __init__(self, mxd, namn, lagernamn, markeringsnamn=None, lyr=None, kopiera_fran=None,
-                 kopiera_synliga=None, dolj_strackor=False):
+                 kopiera_synliga=None, dolj_strackor=False, markering_lyr=None, transparens=None):
         """kopiera_fran: (lager, markeringslager) ur den oppna kartan - saknas de i mallen laggs de
         in i mallens dataram for exporten (mallen sparas inte). kopiera_synliga: den oppna kartans
         kartdokument - alla dess synliga toppnivalager (inkl. grupplager) laggs in i mallen i samma
         ordning, sa att kartan ser ut som pa skarmen. dolj_strackor: slack lagret med alla strackor
         under exporten och visa bara den aktuella (markeringslagret, eller en tillfallig kopia av
         lagret med definitionsfraga nar inget markeringslager finns). Ar lagret redan slackt i
-        kartan gors detsamma automatiskt."""
+        kartan gors detsamma automatiskt. markering_lyr: .lyr-fil med symbolen for den aktuella
+        strackan (t.ex. bred gul linje) - utan markeringslager laggs da ett tillfalligt lager med den
+        symbologin overst, aven nar strackslagret ar tant; transparens: procent genomskinlighet pa
+        det tillfalliga lagret."""
         self.mxd = mxd
         self.namn = namn
         self._kopia = None
         self._gammal_synlig = None
+        self._transparens = transparens
         try:
             if txt(mxd.activeView).upper() != 'PAGE_LAYOUT':
                 mxd.activeView = 'PAGE_LAYOUT'      # dataramens utbredning galler layouten, inte datavyn
@@ -236,6 +248,14 @@ class Layout(object):
             self._gammalt_urval = list(self.lyr.getSelectionSet() or [])
         except Exception:
             pass
+        if self.mark_lyr is None and markering_lyr:
+            if os.path.isfile(txt(markering_lyr)):
+                self.mark_lyr = self._skapa_kopia(lagernamn, txt(markering_lyr))
+                if self.mark_lyr is not None:
+                    logg('  %s: den aktuella strackan visas med symbolen i %s (tillfalligt lager "%s")'
+                         % (self.namn, os.path.basename(txt(markering_lyr)), KOPIANAMN))
+            else:
+                logg('  markeringssymbolen finns inte: %s' % txt(markering_lyr))
         try:
             synligt = bool(self.lyr.visible)
         except Exception:
@@ -243,30 +263,66 @@ class Layout(object):
         if dolj_strackor or not synligt:
             self._dolj(lagernamn, dolj_strackor)
 
+    def _skapa_kopia(self, lagernamn, lyr_fil=None):
+        """Lagger ett tillfalligt lager overst i dataramen som visar den aktuella strackan
+        (definitionsfraga satts i markera) och returnerar det, eller None. Med lyr_fil skapas
+        lagret fran strackslagrets datakalla och far symbologin ur filen; annars en kopia av
+        strackslagret (med dess symbologi). Genomskinligheten satts fran self._transparens."""
+        kopia = None
+        try:
+            if lyr_fil:
+                src = kalla(self.lyr)[0]
+                ny = arcpy.mapping.Layer(src)
+                ny.name = KOPIANAMN
+                # Symbologin satts innan lagret laggs i kartan (AddLayer lagger in en kopia)
+                arcpy.ApplySymbologyFromLayer_management(ny, lyr_fil)
+                arcpy.mapping.AddLayer(self.df, ny, 'TOP')
+                sokt = KOPIANAMN.lower()
+            else:
+                arcpy.mapping.AddLayer(self.df, self.lyr, 'TOP')
+                sokt = txt(getattr(self.lyr, 'name', lagernamn)).strip().lower()
+            # Det nya lagret ligger overst, dvs. forst bland lagren med det namnet
+            for l in arcpy.mapping.ListLayers(self.mxd, '', self.df):
+                try:
+                    if txt(l.name).strip().lower() == sokt and not getattr(l, 'isGroupLayer', False):
+                        kopia = l
+                        break
+                except Exception:
+                    continue
+        except Exception as e:
+            logg('  kunde inte lagga in ett tillfalligt lager for den aktuella strackan i %s: %s'
+                 % (self.namn, txt(e)))
+        if kopia is None:
+            return None
+        try:
+            kopia.name = KOPIANAMN
+        except Exception:
+            pass
+        try:
+            kopia.definitionQuery = ''
+            kopia.visible = True
+        except Exception:
+            pass
+        if self._transparens is not None:
+            try:
+                kopia.transparency = int(self._transparens)
+            except Exception as e:
+                logg('  kunde inte satta genomskinlighet pa "%s": %s' % (KOPIANAMN, txt(e)))
+        self._kopia = kopia
+        self._gammal_dq = ''
+        return kopia
+
     def _dolj(self, lagernamn, begart):
-        """Slacker lagret med alla strackor under exporten. Finns inget markeringslager laggs en
-        kopia av lagret overst i dataramen (namn KOPIANAMN) och anvands som markeringslager - dess
-        definitionsfraga satts till den aktuella strackan. Kopian tas bort i aterstall()."""
+        """Slacker lagret med alla strackor under exporten. Finns inget markeringslager laggs ett
+        tillfalligt lager (KOPIANAMN) overst och anvands som markeringslager - dess
+        definitionsfraga satts till den aktuella strackan. Lagret tas bort i aterstall()."""
         try:
             self._gammal_synlig = bool(self.lyr.visible)
         except Exception:
             self._gammal_synlig = None
         if self.mark_lyr is None:
-            kopia = None
-            try:
-                arcpy.mapping.AddLayer(self.df, self.lyr, 'TOP')
-                # Kopian ligger overst i dataramen, dvs. forst bland lagren med samma namn
-                kort = txt(getattr(self.lyr, 'name', lagernamn)).strip().lower()
-                for l in arcpy.mapping.ListLayers(self.mxd, '', self.df):
-                    try:
-                        if txt(l.name).strip().lower() == kort and not getattr(l, 'isGroupLayer', False):
-                            kopia = l
-                            break
-                    except Exception:
-                        continue
-            except Exception as e:
-                logg('  kunde inte lagga in en kopia av strackslagret i %s: %s' % (self.namn, txt(e)))
-            if kopia is None:
+            self.mark_lyr = self._skapa_kopia(lagernamn)
+            if self.mark_lyr is None:
                 logg('  OBS: %s - strackslagret kan inte slackas utan markeringslager (ingen kopia kunde '
                      'laggas in); lagret visas tant' % self.namn)
                 try:
@@ -274,18 +330,6 @@ class Layout(object):
                 except Exception:
                     pass
                 return
-            try:
-                kopia.name = KOPIANAMN
-            except Exception:
-                pass
-            try:
-                kopia.definitionQuery = ''
-                kopia.visible = True
-            except Exception:
-                pass
-            self._kopia = kopia
-            self.mark_lyr = kopia
-            self._gammal_dq = ''
         try:
             self.lyr.visible = False
         except Exception as e:
@@ -293,7 +337,7 @@ class Layout(object):
             return
         logg('  %s: strackslagret ar slackt%s - bara den aktuella strackan visas%s'
              % (self.namn, '' if begart else ' i kartan',
-                '' if self._kopia is None else ' (tillfallig kopia "%s" med definitionsfraga)' % KOPIANAMN))
+                '' if self._kopia is None else ' (tillfalligt lager "%s")' % KOPIANAMN))
 
     def _kopiera_synliga(self, oppen):
         """Lagger in den oppna kartans synliga toppnivalager i mallens dataram, i samma ordning
@@ -440,7 +484,8 @@ def valj_layout(layouter, utb, skalor, marginal):
 def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL_M, dpi=200,
               markeringslager=None, samlad=True, per_etapp=False, skriv_falt=True,
               kartmapp=None, bara_valda_klasser=KLASSER, mall_liggande=None, mall_staende=None,
-              kopiera_synliga=True, dolj_strackor=False):
+              kopiera_synliga=True, dolj_strackor=False, markering_lyr=None,
+              transparens=MARKERING_TRANSPARENS):
     """Exporterar en PDF per stracka (eller per etapp) till ut_mapp. Returnerar lista med
     (filnamn, skala, ryms, layoutnamn). urval: 'atgard' (METOD ifyllt), 'AB' (BEDOMNING i A/B),
     'valda' (markerade i kartan), 'alla'. markeringslager: lager som pekar pa samma featureklass
@@ -453,7 +498,9 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
     strack- och markeringslagret). Utan mallar anvands den oppna kartans layout.
     dolj_strackor: slack lagret med alla strackor under exporten sa att bara den aktuella strackan
     syns (markeringslagret, eller en tillfallig kopia av lagret med definitionsfraga); gors ocksa
-    automatiskt nar lagret ar slackt i kartan.
+    automatiskt nar lagret ar slackt i kartan. markering_lyr: .lyr-fil med symbolen for den
+    aktuella strackan (bred gul linje); utan markeringslager laggs ett tillfalligt lager med den
+    symbologin overst (aven med strackslagret tant); transparens: procent genomskinlighet pa det.
     kartmapp: mapp som skrivs i faltet KARTA i stallet for ut_mapp (Citrix)."""
     mxd = _mxd()
     if mxd is None:
@@ -480,6 +527,9 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
             mark_namn = txt(getattr(hitta_lager(markeringslager), 'longName', markeringslager))
         except Exception as e:
             logg('  markeringslagret hittades inte (%s) - urval anvands i stallet' % txt(e))
+    if not mark_namn and not (markering_lyr and os.path.isfile(txt(markering_lyr))):
+        logg(MARKERING_TIPS if not markering_lyr else
+             'Markeringssymbolen finns inte (%s). %s' % (txt(markering_lyr), MARKERING_TIPS))
     layouter = []
     mallar = [(m, n) for m, n in ((mall_liggande, 'liggande'), (mall_staende, 'staende')) if m]
     if mallar:
@@ -496,7 +546,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                         mark_lyr_oppen = None
                 lo = Layout(doc, '%s (%s)' % (namn, os.path.basename(txt(mall))), lagernamn, mark_namn,
                             kopiera_fran=(lyr, mark_lyr_oppen), kopiera_synliga=mxd if kopiera_synliga else None,
-                            dolj_strackor=dolj_strackor)
+                            dolj_strackor=dolj_strackor, markering_lyr=markering_lyr, transparens=transparens)
                 lo.kontrollera_kalla(src)
                 layouter.append(lo)
                 logg('Mall %s: dataramen ar %.0f x %.0f m i skala 1:%d%s'
@@ -508,7 +558,8 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                 lo.stang()
             raise
     else:
-        lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr, dolj_strackor=dolj_strackor)
+        lo = Layout(mxd, 'oppna kartan', lagernamn, mark_namn, lyr=lyr, dolj_strackor=dolj_strackor,
+                    markering_lyr=markering_lyr, transparens=transparens)
         layouter.append(lo)
         logg('Dataramen ar %.0f x %.0f m i skala 1:%d' % (lo.ram[0] * skalor[0], lo.ram[1] * skalor[0], skalor[0]))
 
