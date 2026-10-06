@@ -208,7 +208,7 @@ GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från s
 GIS_SAKNAS_UNDER = -999     # vattengång/locknivå i GIS under så här räknas som saknad (SVOA: −9999)
 GIS_FALL_ORIMLIGT_M = 50    # m – större fall mellan brunnarna i GIS flaggas som orimligt i stället för riktning/fall
 GIS_PLATSHALLARE = {"AG", "STBEXTRA"}   # littera i TV3-filen som inte är riktiga brunnar – kontrolleras inte mot GIS
-GRENROR_LITTERA = r"^A{1,2}G\d*$"   # littera som betyder anslutning till grenrör/påstick på en annan ledning (AG, AAG1 …):
+GRENROR_LITTERA = r"^[DSK]?A{1,2}G\d*$"   # littera som betyder anslutning till grenrör/påstick på en annan ledning (AG, AAG1, DAG4, SAG …):
                                     # ingen brunn finns – sträckan kopplas till GIS-ledningen från den kända brunnen som
                                     # slutar i en fri ände. Samma hantering för servisanslutning och ände utan brunn
                                     # (propp): andra littera markeras med ratt = grenrör / servis / ände i brunnslittera.csv
