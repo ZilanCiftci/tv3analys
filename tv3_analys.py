@@ -210,7 +210,8 @@ GIS_FALL_ORIMLIGT_M = 50    # m – större fall mellan brunnarna i GIS flaggas 
 GIS_PLATSHALLARE = {"AG", "STBEXTRA"}   # littera i TV3-filen som inte är riktiga brunnar – kontrolleras inte mot GIS
 GRENROR_LITTERA = r"^A{1,2}G\d*$"   # littera som betyder anslutning till grenrör/påstick på en annan ledning (AG, AAG1 …):
                                     # ingen brunn finns – sträckan kopplas till GIS-ledningen från den kända brunnen som
-                                    # slutar i en fri ände. Andra littera markeras med ratt = grenrör i brunnslittera.csv
+                                    # slutar i en fri ände. Samma hantering för servisanslutning och ände utan brunn
+                                    # (propp): andra littera markeras med ratt = grenrör / servis / ände i brunnslittera.csv
 GIS_GRENROR_LANGD_TOL = 0.3         # andel – GIS-ledningen med fri ände får avvika så mycket (+ 3 m) från filmens längd
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
@@ -514,16 +515,22 @@ class Stracka:
     filmstatus: str = ""            # "", "ersatt av nr X (…)", "ingår i sammanslagen nr Y", "sammanslagen av nr 72 + 73 …"
     sammanslagen_av: list = field(default_factory=list)   # [nr, nr] för en sammanslagen sträcka
     sammanslagning: dict | None = None   # {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L, overlapp} för ritningen
-    grenror_markerat: set = field(default_factory=set)   # "start"/"slut" markerade som grenrör i brunnslittera.csv
+    grenror_markerat: dict = field(default_factory=dict)   # sida ("start"/"slut") -> typ ur brunnslittera.csv
 
     def grenror(self, sida: str) -> bool:
-        """True när brunnen i den änden (sida "start"/"slut") inte är en brunn utan en anslutning
-        till grenrör/påstick på en annan ledning: littera enligt GRENROR_LITTERA eller markerad
-        med ratt = grenrör i litterafilen."""
+        """True när änden (sida "start"/"slut") inte är en brunn utan ett grenrör/påstick på en annan
+        ledning, en servisanslutning eller en ledningsände utan brunn: littera enligt GRENROR_LITTERA
+        eller markerad med ratt = grenrör/servis/ände i litterafilen."""
+        return self.grenror_typ(sida) is not None
+
+    def grenror_typ(self, sida: str) -> str | None:
+        """"grenrör", "servis" eller "ände utan brunn" för en ände utan brunn, annars None."""
         if sida in self.grenror_markerat:
-            return True
+            return self.grenror_markerat[sida]
         lit = self.startbrunn if sida == "start" else self.slutbrunn
-        return bool(GRENROR_LITTERA and re.match(GRENROR_LITTERA, _normlittera(lit), re.I))
+        if GRENROR_LITTERA and re.match(GRENROR_LITTERA, _normlittera(lit), re.I):
+            return "grenrör"
+        return None
     tidigare: dict | None = None    # närmast föregående inspektion av brunnsparet i en annan TV3-fil (OMFILMNING_OVER_FILER):
                                     # {fil, nr, datum, klass, index, langd, antal_skador, utveckling, antal} – antal = alla äldre filmer
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
@@ -1108,11 +1115,12 @@ class Stracka:
         gren = self.gis.get("grenror")
         if gren:
             kand = self.slutbrunn if gren["sida"] == "start" else self.startbrunn
+            typ = self.grenror_typ(gren["sida"]) or "grenrör"
             if g:
-                fl.append(dk(f"grenrör: GIS-ledningen från {kand} med fri ände ({g.get('langd_m') or 0:.1f} m) antagen"
+                fl.append(dk(f"{typ}: GIS-ledningen från {kand} med fri ände ({g.get('langd_m') or 0:.1f} m) antagen"
                              + (f" – längden avviker från filmens {self.langd:.1f} m" if gren.get("langd_avviker") else "")))
             else:
-                fl.append(f"grenrör: ingen ledning med fri ände från {kand} i GIS")
+                fl.append(f"{typ}: ingen ledning med fri ände från {kand} i GIS")
                 return fl
         if not g:
             if not saknas:
@@ -1299,6 +1307,19 @@ def las_littera(path: str) -> list[dict]:
     return regler
 
 
+def _andtyp(ratt: str) -> str | None:
+    """Ord i litterafilens ratt-kolumn som betyder "ingen brunn": grenrör, servis eller ände
+    (propp, fri ände). Returnerar typen som visas i flaggan, annars None."""
+    t = _normlittera(ratt)
+    if re.fullmatch(r"GRENR[ÖO]R|P[ÅA]STICK", t):
+        return "grenrör"
+    if re.fullmatch(r"SERVIS(ANSLUTNING)?", t):
+        return "servis"
+    if re.fullmatch(r"(FRI)?[ÄA]NDE|PROPP|INGENBRUNN", t):
+        return "ände utan brunn"
+    return None
+
+
 def ratta_littera(strackor: list[Stracka], regler: list[dict]) -> int:
     """Byter ut brunnslittera enligt reglerna i start-, slut- och utgångsbrunn.
     Returnerar antal sträckor som ändrats; ändringen noteras i Stracka.littera_rattat."""
@@ -1321,12 +1342,13 @@ def ratta_littera(strackor: list[Stracka], regler: list[dict]) -> int:
                     continue
                 if r["motbrunn"] and (r["motbrunn"] not in par or r["motbrunn"] == nv):
                     continue
-                if re.fullmatch(r"GRENR[ÖO]R", _normlittera(r["ratt"])):
-                    # ingen brunn utan ett påstick på en annan ledning – litterat behålls, änden
-                    # kopplas i GIS till ledningen från den kända brunnen (se koppla_gis)
+                typ = _andtyp(r["ratt"])
+                if typ:
+                    # ingen brunn utan grenrör/servis/ände – litterat behålls, änden kopplas i GIS
+                    # till ledningen från den kända brunnen som slutar i en fri ände (se koppla_gis)
                     if falt in ("startbrunn", "slutbrunn"):
-                        s.grenror_markerat.add(falt[:-5] if falt == "startbrunn" else "slut")
-                        andringar.append(f"{v} = grenrör")
+                        s.grenror_markerat["start" if falt == "startbrunn" else "slut"] = typ
+                        andringar.append(f"{v} = {typ}")
                 elif r["ratt"] != v:
                     andringar.append(f"{v}→{r['ratt']}")
                     setattr(s, falt, r["ratt"])
