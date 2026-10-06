@@ -7,7 +7,7 @@ innan Exportera GIS-data, Markprofil och Uppstroms stalls in.
 Kors som verktyget "Lista falt" i tv3_verktyg.pyt, eller i ArcMaps Python-fonster:
 
     UTFIL = r'C:\Temp\kartans_falt.txt'
-    execfile(r'C:\...\arcmap\lista_falt.py')
+    execfile(r'C:\...\arcmap\moduler\lista_falt.py')
 
 Utdata: en textfil (UTF-8) med, per lager: namn, datakalla, geometrityp, antal objekt, och per
 falt: namn, alias, typ, langd samt upp till EXEMPEL distinkta varden ur de forsta RADER raderna.

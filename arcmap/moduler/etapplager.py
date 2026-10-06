@@ -23,7 +23,7 @@ from skapa_ledningslager import txt, logg, hitta_lager, kalla, normalisera, _ska
 
 LAGERNAMN = 'Etapper (atgardspaket)'
 LAGERNAMN_BRUNNAR = 'Brunnar att schakta fram'
-HAR = os.path.dirname(os.path.abspath(__file__))
+HAR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # arcmap-mappen (.lyr-filerna)
 LYR_ETAPPER = os.path.join(HAR, 'etapper.lyr')
 LYR_FRAMSCHAKT = os.path.join(HAR, 'framschaktning.lyr')
 

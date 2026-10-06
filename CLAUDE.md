@@ -118,7 +118,7 @@ Utdata i `tv3_resultat/` (eller `-o`):
 Kartframställning: `arcmap/tv3_verktyg.pyt` är en Python Toolbox (ArcMap 10.x) med verktygen
 **Skapa ledningslager** (dialog: JSON-fil, lager, brunnsfält, utdata, valfritt område/.lyr/CSV,
 tolerans, max hopp, extra fält) och **Uppdatera bedömning**. Logiken ligger i
-`arcmap/skapa_ledningslager.py` (Python 2.7 + arcpy; funktionerna `skapa()` och `uppdatera()`,
+`arcmap/moduler/skapa_ledningslager.py` (Python 2.7 + arcpy; funktionerna `skapa()` och `uppdatera()`,
 modulen laddas om vid varje verktygskörning). Samma fil kan köras med `execfile` i Python-fönstret
 med KONFIG-blocket. Verktyget läser `kartunderlag.json`, letar upp varje brunnspar i
 brunnslagret (`A Nedstign och övriga brunnar`, fält `EntityID`) och klipper ut ledningen
@@ -574,6 +574,16 @@ konsolen säger "filen är en delmängd och räknas inte (ta bort den ur listan)
 scratchpad/trasig/ (DUF 701 med nr 5 → '5A', nr 7 → '6', LF + '#2 …' i en kommentar: identiska sträckor/observationer/profiler
 som originalet), scratchpad/upp701/ (användarens två filer: båda = Peab ensam). Facit, filer.txt med GIS och ny/ (ny inspektion
 över filgränser) oförändrade. Handledning kap. 8 (två frågor).
+**Modulerna i arcmap/moduler** (okt 2026, användaren: "så många lösa filer i arcmap-foldern … samla verktygsfilerna i
+undermappen"): alla `arcmap/*.py` (skapa_ledningslager, natverk, markprofil, gisexport, kartexport, etapplager, projektering,
+lista_falt) ligger i `arcmap/moduler/`; i `arcmap/` ligger bara `tv3_verktyg.pyt`, användarens `.lyr`-filer och
+`senaste_val.json`. `.pyt`: `MODULMAPP = HAR/moduler` läggs först i sys.path (gamla kopior i arcmap-mappen används inte –
+testat med en kopia som kastar fel), STANDARD_LYR/MARKERING_LYR/MINNESFIL kvar i HAR. Modulerna: `ARCMAP_MAPP` = föräldern
+till moduler (skapa_ledningslager LYR_FIL/LYR_SVACKOR/LYR_BAKFALL, kartexport MARKERING_LYR), etapplager `HAR` = föräldern.
+execfile-sökvägar i docstrings och handledningen: `arcmap\moduler\…`. Scratchpad-testerna importerar från arcmap/moduler
+(samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
+.lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
+arcmap/moduler/.
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter

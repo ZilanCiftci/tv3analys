@@ -8,7 +8,7 @@ Tva satt att kora:
      "Skapa ledningslager" - da valjer du JSON-fil, lager och utdata i en dialog.
 
   2. I ArcMaps Python-fonster med kartan oppen, med installningarna i KONFIG nedan:
-         execfile(r'H:\PY\tv3analys\arcmap\skapa_ledningslager.py')
+         execfile(r'H:\PY\tv3analys\arcmap\moduler\skapa_ledningslager.py')
 
 Indata ar kartunderlag.json fran tv3_analys.py. Ledningslagret byggs om till en graf
 (Natverk): varje ledningsdel delas dar en brunn ur JSON-filen ligger inom TOLERANS fran
@@ -60,7 +60,8 @@ JSON_IN = r'H:\PY\tv3analys\tv3_resultat\kartunderlag.json'
 UT_FC   = r'H:\PY\tv3analys\Karta\bedomda_ledningar'       # .gdb-vag eller mapp (= shapefil)
 CSV_UT  = r'H:\PY\tv3analys\Karta\omatchade_par.csv'
 # Symbologi. Satts en gang i ArcMap och sparas som .lyr i arcmap-mappen (handledningen 7.2).
-LYR_FIL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bedomda_ledningar.lyr')
+ARCMAP_MAPP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .lyr-filerna ligger i arcmap-mappen
+LYR_FIL = os.path.join(ARCMAP_MAPP, 'bedomda_ledningar.lyr')
 
 TOLERANS = 2.0     # meter mellan ledningens vertex och brunnen
 MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLAGER anges)
@@ -741,8 +742,8 @@ BAKFALL_FALT = BAKFALL_FALT + SLUTFALT
 LAGERNAMN_SVACKOR = 'Svackor'
 LAGERNAMN_BAKFALL = 'Bakfall'
 # Symbologi for de tva lagren, sparad fran ArcMap en gang (som bedomda_ledningar.lyr)
-LYR_SVACKOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'svackor.lyr')
-LYR_BAKFALL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bakfall.lyr')
+LYR_SVACKOR = os.path.join(ARCMAP_MAPP, 'svackor.lyr')
+LYR_BAKFALL = os.path.join(ARCMAP_MAPP, 'bakfall.lyr')
 SYMBOLOGI_TIPS_SVACKOR = [
     'Symbologi for svackor (spara som arcmap/svackor.lyr): Quantities > Graduated symbols pa',
     '  SVACKA_CM i tre steg (2-5, 5-10, >10 cm); rod farg nar ANDEL_DIAM > 0,5.',
