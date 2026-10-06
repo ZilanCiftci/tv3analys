@@ -334,14 +334,17 @@ class Natverk(object):
                 for b in self.rutnat.get((cx, cy), ()):
                     yield b
 
-    def _andnod(self, x, y):
-        """Nod for en fri ledningsande; andar inom toleransen delar nod."""
+    def _andnod(self, x, y, utom=None):
+        """Nod for en fri ledningsande; andar inom toleransen delar nod. utom = noden for samma lednings
+        andra ande: en ledning kortare an toleransen far inte samma nod i bada andar (den forsvann da ur
+        natet - t.ex. en 1,5 m lang ledning till en ande utan brunn med toleransen 3 m), utom nar den ar sluten."""
         c = self.tol
         cx, cy = int(x // c), int(y // c)
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for nyckel, ex, ey in self.andar.get((cx + dx, cy + dy), ()):
-                    if (ex - x) ** 2 + (ey - y) ** 2 <= c * c:
+                    d2 = (ex - x) ** 2 + (ey - y) ** 2
+                    if d2 <= c * c and (nyckel != utom or d2 < 1e-12):
                         return nyckel
         # anden ligger vid en brunn som inte inspekterats: brunnens nod (andar pa var sin sida om en
         # stor brunn hanger da ihop aven nar de ar mer an toleransen isar)
@@ -350,7 +353,7 @@ class Natverk(object):
             for dy in (-1, 0, 1):
                 for nyckel, bx, by in self.passera.get((cx + dx, cy + dy), ()):
                     d2 = (bx - x) ** 2 + (by - y) ** 2
-                    if d2 <= c * c and (basta is None or d2 < basta[0]):
+                    if d2 <= c * c and nyckel != utom and (basta is None or d2 < basta[0]):
                         basta = (d2, nyckel, bx, by)
         if basta:
             nyckel = basta[1]
@@ -405,10 +408,11 @@ class Natverk(object):
                 behall[bid] = (m, d, q)
             traffar = behall
 
-        noder = [(0.0, self._andnod(punkter[0][0], punkter[0][1]), punkter[0])]
+        forsta = self._andnod(punkter[0][0], punkter[0][1])
+        noder = [(0.0, forsta, punkter[0])]
         for bid, (m, d, q) in traffar.items():
             noder.append((m, ('B', bid), q))
-        noder.append((matt[-1], self._andnod(punkter[-1][0], punkter[-1][1]), punkter[-1]))
+        noder.append((matt[-1], self._andnod(punkter[-1][0], punkter[-1][1], utom=forsta), punkter[-1]))
         noder.sort(key=lambda n: n[0])
 
         n_bitar = 0

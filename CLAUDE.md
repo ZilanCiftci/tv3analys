@@ -643,7 +643,12 @@ inom toleransen från den andra, så båda projicerades på samma punkt på den 
 vägsökningen tog (andra sträckor fick sicksack B1→B2→B1→B3). `Natverk.lagg_till` (ärvs av natverk.Graf, alltså även
 GIS-exporten och Uppströms) behåller nu bara brunnen närmast linjen när två brunnars lägen längs ledningen ligger närmare
 än halva deras verkliga avstånd. Test: scratchpad/test_tatt.py (B1–B2 3 m, ledning från B1 norrut förbi B2, tolerans 3 m;
-föll med gamla koden). Scratchpad-testerna importerar från arcmap/moduler
+föll med gamla koden). Samma dag: "ÄND10 → DTB1005879 … grenror: ingen vag fran brunnen
+till den fria anden", fast analysen kopplat "GIS-ledningen från DTB1005879 med fri ände (1,5 m)" – ledningen (1,5 m) var
+kortare än toleransen (3 m), så `_andnod` slog ihop dess två ändar till samma nod och den försvann ur nätet (fri_ande_nara
+hittade noden vid brunnen, vägen dit hade längd 0). `_andnod(x, y, utom)`: lednings slutände får inte samma nod som dess
+startände (utom vid sluten ledning, < 1e-6 m), inte heller samma V-brunn. Test: scratchpad/test_stubbe.py (föll med gamla
+koden); övriga tester och rev_nat2 oförändrade. Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
