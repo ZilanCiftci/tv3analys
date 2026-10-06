@@ -78,6 +78,8 @@ HAR, MODULMAPP = _anvand_modulmapp()
 
 # .lyr-fil med symbologi som anvands om ingen annan anges (sparas fran ArcMap, se handledningen 7.2)
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
+LYR_SVACKOR = os.path.join(HAR, 'svackor.lyr')          # symbologi for svacklagret (sparas fran ArcMap)
+LYR_BAKFALL = os.path.join(HAR, 'bakfall.lyr')
 MARKERING_LYR = os.path.join(HAR, 'markering.lyr')      # symbol for aktuell stracka i Exportera kartor
 
 # Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
@@ -265,6 +267,16 @@ def _faltnamn(param):
         return []
 
 
+def _satt_symbologi(param, lyr):
+    """Satter .lyr-filens symbologi pa en utdataparameter om filen finns. Maste goras i
+    updateParameters/getParameterInfo - ArcMap bortser fran symbologi som satts i execute."""
+    if lyr and os.path.isfile(lyr):
+        try:
+            param.symbology = lyr
+        except Exception:
+            pass
+
+
 def _forsta_traff(kandidater, faltnamn):
     """Forsta kandidaten som finns bland faltnamnen (skiftlage spelar ingen roll)."""
     upp = dict((f.upper(), f) for f in faltnamn)
@@ -362,6 +374,7 @@ class SkapaLedningslager(object):
             datatype='DELayer', parameterType='Optional', direction='Input')
         if os.path.isfile(STANDARD_LYR):
             lyr_fil.value = STANDARD_LYR
+            _satt_symbologi(ut_fc, STANDARD_LYR)
 
         csv_ut = arcpy.Parameter(
             displayName='Rapport \u00f6ver omatchade brunnspar (.csv, valfritt)', name='csv_ut',
@@ -417,6 +430,8 @@ class SkapaLedningslager(object):
             displayName='Bakfall (linjelager, valfritt)', name='bakfall_ut',
             datatype='DEFeatureClass', parameterType='Optional', direction='Output',
             category='Svackor och bakfall (ur inklinometerprofilerna)')
+        _satt_symbologi(svackor_ut, LYR_SVACKOR)
+        _satt_symbologi(bakfall_ut, LYR_BAKFALL)
 
         kat = 'Parallella ledningar (spill och dag i samma schakt, br\u00e4ddbrunnar)'
         typ_falt = arcpy.Parameter(
@@ -455,6 +470,11 @@ class SkapaLedningslager(object):
                     _filter(parameters[i], [''] + falt)
                     if not parameters[i].altered and not parameters[i].valueAsText:
                         parameters[i].value = _forsta_traff(kand, falt)
+        # Symbologi for utdatalagren. ArcMap anvander bara symbologi som satts har (eller i
+        # getParameterInfo) - satt i execute ignoreras den, och lagret fick standardsymbolen.
+        _satt_symbologi(parameters[4], parameters[6].valueAsText)
+        _satt_symbologi(parameters[15], LYR_SVACKOR)
+        _satt_symbologi(parameters[16], LYR_BAKFALL)
         return
 
     def updateMessages(self, parameters):
@@ -467,6 +487,8 @@ class SkapaLedningslager(object):
             parameters[8].setErrorMessage('Storre an 0')
         if parameters[9].value is not None and parameters[9].value < 1:
             parameters[9].setErrorMessage('Minst 1')
+        if parameters[6].valueAsText and not os.path.isfile(parameters[6].valueAsText):
+            parameters[6].setWarningMessage('Filen finns inte - lagret far standardsymbolen')
         return
 
     def execute(self, parameters, messages):
@@ -497,11 +519,9 @@ class SkapaLedningslager(object):
             klipp_avbrutna=bool(parameters[19].value),
         )
         parameters[4].value = ut
-        if parameters[6].valueAsText and os.path.isfile(parameters[6].valueAsText):
-            parameters[4].symbology = parameters[6].valueAsText
-        for i, lyr in ((15, m.LYR_SVACKOR), (16, m.LYR_BAKFALL)):
-            if parameters[i].valueAsText and os.path.isfile(lyr):
-                parameters[i].symbology = lyr
+        _satt_symbologi(parameters[4], parameters[6].valueAsText)
+        _satt_symbologi(parameters[15], LYR_SVACKOR)
+        _satt_symbologi(parameters[16], LYR_BAKFALL)
         return
 
 

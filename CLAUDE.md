@@ -586,7 +586,12 @@ som sträng, "<string>" i traceback) – förut märktes det inte eftersom ArcMa
 Rättat: `_hitta_modulmapp()` provar dirname(__file__), alla sys.path-poster och cwd och tar den första där
 `moduler/skapa_ledningslager.py` finns (HAR = den mappen, så .lyr och minnesfilen hamnar rätt); `_ladda_modul`
 kör `_anvand_modulmapp()` före varje import och ger vid ImportError ett felmeddelande med alla provade mappar och
-`__file__`. Test: scratchpad/pytkoll2_test.py (fel __file__, utan __file__, mappen saknas). Scratchpad-testerna importerar från arcmap/moduler
+`__file__`. Test: scratchpad/pytkoll2_test.py (fel __file__, utan __file__, mappen saknas). Samma dag: "scriptet sätter inte
+lyrfilen rätt, än fast jag har skapat en lyrfil" – Skapa ledningslager satte `parameters[4].symbology` i `execute`,
+vilket ArcMap ignorerar för utdataparametrar (bara getParameterInfo/updateParameters räknas). Nu `_satt_symbologi(param,
+lyr)` i getParameterInfo (STANDARD_LYR, LYR_SVACKOR/LYR_BAKFALL = arcmap/svackor.lyr/bakfall.lyr i .pyt) och i
+updateParameters (vald .lyr i param 6 och svack/bakfall-filerna), kvar i execute (ofarligt); updateMessages varnar när den
+valda .lyr-filen saknas. Test: scratchpad/pytkoll3_test.py. Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
