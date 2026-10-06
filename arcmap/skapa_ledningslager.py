@@ -561,6 +561,7 @@ EGNA_FALT = [
     ('NR',         'LONG',   None, 'Sträcknummer i TV3-filen'),
     ('RAPPORT',    'TEXT',   254, 'Inspektionsprotokoll (PDF)'),
     ('VIDEO',      'TEXT',   254, 'Videofil'),
+    ('VIDEO2',     'TEXT',   254, 'Videofil 2 (andra filmen i en sammanslagen stracka)'),
     ('ANT_FILM',   'LONG',   None, 'Antal inspektioner av sträckan'),
     ('ANT_DELAR',  'LONG',   None, 'Antal ledningsobjekt i kartan'),
     ('SRC_LAGER',  'TEXT',   100, 'Källager'),
@@ -1196,12 +1197,13 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             return os.path.join(txt(rapportmapp), os.path.basename(r))
         return r if os.path.isabs(r) else os.path.join(utdata_mapp, r)
 
-    def video_sokvag(post):
-        """Sokvag till filmen: filnamnet i filmmapp om angiven, annars som tv3_analys fann den."""
-        namn = txt(post.get('videofil') or '') or os.path.basename(txt(post.get('video_sokvag') or ''))
+    def video_sokvag(post, suffix=''):
+        """Sokvag till filmen: filnamnet i filmmapp om angiven, annars som tv3_analys fann den.
+        suffix '_b' ger den andra filmen i en sammanslagen stracka (videofil_b/video_sokvag_b)."""
+        namn = txt(post.get('videofil' + suffix) or '') or os.path.basename(txt(post.get('video_sokvag' + suffix) or ''))
         if filmmapp:
             return os.path.join(txt(filmmapp), namn) if namn else ''
-        return txt(post.get('video_sokvag') or '')
+        return txt(post.get('video_sokvag' + suffix) or '')
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
@@ -1252,7 +1254,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 klipp(s.get('omrade'), 60), klipp(s.get('datum'), 10),
                 klipp(os.path.basename(txt(s.get('tv3_fil') or '')), 100),
                 s.get('nr'),
-                klipp(rapport_sokvag(s), 254), klipp(video_sokvag(s), 254),
+                klipp(rapport_sokvag(s), 254), klipp(video_sokvag(s), 254), klipp(video_sokvag(s, '_b'), 254),
                 antal_per_par.get(par, 1), n_objekt,
                 lager0[:100], oid0,
             ] + extra))

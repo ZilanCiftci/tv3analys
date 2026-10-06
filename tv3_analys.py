@@ -330,6 +330,7 @@ class Observation:
     lopande_langd: float | None = None   # sätts för A-rader
     bild_sokvag: str | None = None       # hittad sökväg till bildfilen
     bild_b_sokvag: str | None = None
+    film_nr: int | None = None           # ursprunglig delfilm (nr) när sträckan är sammanslagen
 
     @property
     def bilder(self) -> list[tuple[str, str | None]]:
@@ -430,6 +431,8 @@ class Stracka:
     media_kataloger: list[str] = field(default_factory=list)   # film-/mediakataloger för just denna fil
     bild_kataloger: list[str] = field(default_factory=list)    # bildkataloger för just denna fil (valfritt)
     video_sokvag: str | None = None      # hittad sökväg till videofilen
+    videofil_b: str | None = None        # andra filmen när sträckan är sammanslagen av två delfilmer
+    video_sokvag_b: str | None = None
 
     # ---- härledda värden ----
     @property
@@ -1902,6 +1905,7 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     nyare, aldre = (b, a) if nyare_b else (a, b)
 
     def marka(o, film):
+        o.film_nr = film.nr
         o.kommentar = f"film nr {film.nr}" + (f" – {o.kommentar}" if o.kommentar else "")
 
     # Snitt i respektive films egen axel: den äldre filmens observationer bortom snittet tas bort
@@ -1970,7 +1974,11 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
                              utgangsbrunn=a.startbrunn, riktning="Medströms",
                              datum=nyare.datum, klockslag=nyare.klockslag, flerinspekterad=True, rapport_fil=None,
                              sammanslagen_av=[a.nr, b.nr], _cache={})
-    ny.videofil = a.videofil + (f" + {b.videofil}" if b.videofil and b.videofil != a.videofil else "")
+    # Film a:s videofil i Videofil, film b:s i Videofil 2 (egen länk i Excel, VIDEO2 i kartan)
+    if not a.videofil and b.videofil:
+        ny.videofil, ny.video_sokvag = b.videofil, b.video_sokvag
+    elif b.videofil and b.videofil != a.videofil:
+        ny.videofil_b, ny.video_sokvag_b = b.videofil, b.video_sokvag
     ny.manuell_bedomning = a.manuell_bedomning or b.manuell_bedomning
     ny.kommentar = a.kommentar or b.kommentar
     ny.lagning_m = a.lagning_m if a.lagning_m is not None else b.lagning_m
@@ -2792,7 +2800,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
            "Höjdanpassning", "Täckning min (m)", "Täckning max (m)", "Höjdflagga",
            "GIS-flagga", "Driftområde", "Lutning GIS (‰)", "Djup start (m)", "Djup slut (m)", "Anläggningsår", "Renoveringsår GIS",
            "Brunnstyp start", "Brunnstyp slut", "Etapp", "Metod", "Kostnad (kr)", "Åtgärdsflagga",
-           "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil"]
+           "Manuell bedömning", "Kommentar", "Lagning (m)", "Rapport", "Videofil", "Videofil 2"]
     raknas = {id(s) for s in strackor}
     sorterade = sorterade_strackor(strackor) + sorted((s for s in visade(alla) if id(s) not in raknas), key=lambda s: (s.fil, s.nr))
     rader = []
@@ -2833,13 +2841,15 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                        if rang else None),
                       s.atgardsflagga if rang else "",
                       s.manuell_bedomning, s.kommentar, s.lagning_m,
-                      "Öppna rapport" if s.rapport_fil else "", s.videofil])
+                      "Öppna rapport" if s.rapport_fil else "", s.videofil, s.videofil_b or ""])
     video_urls = [fil_url(s.video_sokvag) if s.video_sokvag else None for s in sorterade]
+    video_b_urls = [fil_url(s.video_sokvag_b) if s.video_sokvag_b else None for s in sorterade]
     rapport_urls = [s.rapport_fil.replace("\\", "/") if s.rapport_fil else None for s in sorterade]   # relativ länk
     start = tabell(ws, kol, rader, {"Skador (kod+grad)": 45, "Prioritetsklass": 24, "Driftåtgärd": 28, "Rapport": 15,
                                     "Manuell bedömning": 18, "Kommentar": 30, "Höjdanpassning": 30, "Höjdflagga": 26, "GIS-flagga": 40,
                                     "Åtgärdsflagga": 40, "Kostnad": 12, "Lagning": 10, "Filmstatus": 28, "Tidigare inspektion": 44},
-                   klasskol=1, lankar={len(kol) - 1: video_urls, len(kol) - 2: rapport_urls},
+                   klasskol=1, lankar={kol.index("Videofil"): video_urls, kol.index("Videofil 2"): video_b_urls,
+                                       kol.index("Rapport"): rapport_urls},
                    dolda=DOLDA_KOLUMNER.get("Prioritering"))
     ci = kol.index("Svackdjup/diameter") + 1
     ck = kol.index("Kostnad (kr)") + 1
@@ -2901,12 +2911,14 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                 continue
             bs = o.bild_sokvag or (o.bild_b_sokvag if not o.bild else None)
             bild_urls.append(fil_url(bs) if bs else None)
-            video_urls.append(fil_url(s.video_sokvag) if s.video_sokvag else None)
+            fran_b = s.videofil_b and s.sammanslagning and o.film_nr == s.sammanslagning["b_nr"]
+            vf, vs = (s.videofil_b, s.video_sokvag_b) if fran_b else (s.videofil, s.video_sokvag)
+            video_urls.append(fil_url(vs) if vs else None)
             rader.append([s.fil, s.nr, s.startbrunn, s.slutbrunn, KLASS_TEXT[s.klass], o.lage, o.tid,
                           o.kod or o.infokod, o.beskrivning(),
                           {"K": "Konstruktion", "D": "Drift", "I": "Info"}.get(o.typ, "Info"),
                           o.grad, o.poang or None, o.lopande, o.lopande_langd,
-                          o.klocka_fran, o.klocka_till, o.vattenniva, o.bild or o.bild_b, o.kommentar, s.videofil])
+                          o.klocka_fran, o.klocka_till, o.vattenniva, o.bild or o.bild_b, o.kommentar, vf])
     tabell(ws, kol, rader, {"Beskrivning": 50, "Kommentar": 30, "Prioritetsklass": 24}, klasskol=4,
            lankar={kol.index("Bild"): bild_urls, kol.index("Videofil"): video_urls},
            dolda=DOLDA_KOLUMNER.get("Observationer"))
@@ -3150,6 +3162,8 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "rapport": s.rapport_fil.replace("\\", "/") if s.rapport_fil else None,
             "videofil": s.videofil,
             "video_sokvag": s.video_sokvag,
+            "videofil_b": s.videofil_b,
+            "video_sokvag_b": s.video_sokvag_b,
             "hojdanpassning": s.hojdanpassning["status"] if s.hojdanpassning else None,
             "hojd_offset_m": (round(s.hojdanpassning["offset"], 2)
                               if s.hojdanpassning and s.hojdanpassning["offset"] is not None else None),
@@ -3834,7 +3848,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                      else ("okänd (höjdfel i filen)" if s.hojdfel else "–"))
          + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
-        ("Videofil", s.videofil or "–", "TV3-fil", s.fil),
+        ("Videofil", (s.videofil or "–") + (f" + {s.videofil_b}" if s.videofil_b else ""), "TV3-fil", s.fil),
     ]
     h, tk = s.hojdanpassning, s.tackning
     if h:
