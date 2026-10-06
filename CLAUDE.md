@@ -637,7 +637,13 @@ skapa_ledningslager `BRUNN_AVSTAND_MAX_M`/`BRUNN_AVSTAND_ANDEL`, `_langt_isar(po
 (hindrar km-långa vägar via V-noderna), loggas, diagnos "brunnarna ligger X m isar i kartan, filmen Y m – troligen fel
 littera … (ratta i brunnslittera.csv)", räknas inte bland "båda brunnarna på en ledning". Test: scratchpad/test_isar.py
 (rimligt 190/200, 20 m film 200 m isär, avbruten 20/200 matchas, 1 800 m > 1 000) och isar/ (DUF 701 nr 2 med brunnarna 3 km
-isär); facit, littera_forslag.csv för gisvag, gren och gisdata_omr oförändrade. Scratchpad-testerna importerar från arcmap/moduler
+isär); facit, littera_forslag.csv för gisvag, gren och gisdata_omr oförändrade. Samma dag: "BDNBL1006934 → BDNBL1006933 … brunnarna
+ligger på samma plats i kartan" – brunnarna ligger 3 m isär med tolerans 3 m; en annan ledning från den ena brunnen passerade
+inom toleransen från den andra, så båda projicerades på samma punkt på den ledningen och fick en bit med längd 0 som
+vägsökningen tog (andra sträckor fick sicksack B1→B2→B1→B3). `Natverk.lagg_till` (ärvs av natverk.Graf, alltså även
+GIS-exporten och Uppströms) behåller nu bara brunnen närmast linjen när två brunnars lägen längs ledningen ligger närmare
+än halva deras verkliga avstånd. Test: scratchpad/test_tatt.py (B1–B2 3 m, ledning från B1 norrut förbi B2, tolerans 3 m;
+föll med gamla koden). Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
