@@ -21,7 +21,7 @@ Lägg det som `CLAUDE.md` i repots rot (eller läs in det som första prompt).
 
 ## 2. Nuvarande leverans (allt i ett skript)
 
-`tv3_analys.py` (~1 200 rader, Python 3.10+, beroenden: `openpyxl`, `matplotlib`, `reportlab`).
+`tv3_analys.py` (~4 600 rader, Python 3.10+, beroenden: `openpyxl`, `matplotlib`, `reportlab`; `python-pptx` för `--pptx`/`tv3_pptx.py`).
 Övriga filer: `filer.txt` (exempel-listfil), `brunnslittera.csv` (exempel på ersättningslittera:
 `fel;ratt;fil;nr;motbrunn;kommentar` – felmärkta brunnar i TV3-filen byts ut vid inläsning;
 `fil`/`nr`/`motbrunn` är valfria och begränsar raden till en fil, ett sträcknummer eller ett
@@ -762,7 +762,7 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 - Svenska överallt. Korta, konkreta svar; visa exempel (PDF/bild) när något ändras i layouten.
 - Rendera och titta på PDF/diagram innan leverans (pdftoppm → bild) – flera fel hittades så.
 - Hjälptexter i rapporter är oönskade ("det kan vi se själva").
-- Dokumentation som Word (.docx), inte Markdown. Filnamn utan åäö i zip.
+- Dokumentation som Word (.docx), inte Markdown. Filnamn utan åäö i zip. Dokumentationsgenomgång okt 2026 mot koden (rättat i make_docs.js): python-pptx i installationen, flaggorna `--bilder`/`--markprofil` i tabellen, avsnitt 3.4 (var dubblerat 3.3), flikarna Inspektionsgrad/Ej inspekterat och `littera_forslag.csv` under Resultatfiler, kolumnerna Tidigare inspektion/Renoveringsår GIS/Driftområde, KONFIG-rader (SVACKA_MAX_M, BAKFALL_*, GIS_SAKNAS_UNDER, GIS_FALL_ORIMLIGT_M, GIS_PLATSHALLARE, RELINAD_SOM_MATERIAL, BEHALL_RAPPORTER …), verktygslistan i avsnitt 7 (alla elva verktyg + minnet av senaste val), grafmatchningen i stället för vertexjämförelse, FAQ utan "listar saknade bilder"; metodbeskrivningen: avbruten även vid < 85 % av kartlängd, omfilmning/sammanslagning/ny inspektion automatiskt (inte "slås ihop manuellt"), höjdfel och GIS-kontroll som punkter, exempel 2 räknat med kodvikt (18,5 p → 92,5, konstruktion 85).
 - Behåll ett enda skript med KONFIG-block överst; parametrar ska gå att ändra utan att röra
   koden.
 
