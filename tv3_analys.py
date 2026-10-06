@@ -1117,8 +1117,12 @@ class Stracka:
             kand = self.slutbrunn if gren["sida"] == "start" else self.startbrunn
             typ = self.grenror_typ(gren["sida"]) or "grenrör"
             if g:
-                fl.append(dk(f"{typ}: GIS-ledningen från {kand} med fri ände ({g.get('langd_m') or 0:.1f} m) antagen"
-                             + (f" – längden avviker från filmens {self.langd:.1f} m" if gren.get("langd_avviker") else "")))
+                fl.append(dk(f"{typ}: GIS-ledningen från {kand} med fri ände ({g.get('langd_m') or 0:.1f} m) antagen"))
+            elif gren.get("kandidat"):
+                fl.append(dk(f"{typ}: ledningen med fri ände från {kand} i GIS är "
+                             f"{gren['kandidat'].get('langd_m') or 0:.1f} m, filmen {self.langd:.1f} m – "
+                             f"inte kopplad (längden avviker)"))
+                return fl
             else:
                 fl.append(f"{typ}: ingen ledning med fri ände från {kand} i GIS")
                 return fl
@@ -1311,11 +1315,13 @@ def _andtyp(ratt: str) -> str | None:
     """Ord i litterafilens ratt-kolumn som betyder "ingen brunn": grenrör, servis eller ände
     (propp, fri ände). Returnerar typen som visas i flaggan, annars None."""
     t = _normlittera(ratt)
-    if re.fullmatch(r"GRENR[ÖO]R|P[ÅA]STICK", t):
+    if not t or re.search(r"\d", t):           # riktiga littera innehåller siffror
+        return None
+    if re.search(r"GRENR|P[ÅA]STICK", t):
         return "grenrör"
-    if re.fullmatch(r"SERVIS(ANSLUTNING)?", t):
+    if "SERVIS" in t:
         return "servis"
-    if re.fullmatch(r"(FRI)?[ÄA]NDE|PROPP|INGENBRUNN", t):
+    if re.search(r"[ÄA]NDE|PROPP|INGENBRUNN", t):   # ände, fri ände, ledningsände, ände utan brunn
         return "ände utan brunn"
     return None
 
@@ -1662,7 +1668,8 @@ def las_gis(path: str) -> dict:
 
 def _sammanfoga_fria_andar(ledningar: list[dict], tolerans: float) -> int:
     """Ledningsdelar som slutar i en fri ände (ingen brunn) där en annan dels fria ände ligger inom
-    toleransen – t.ex. materialbyte mitt på sträckan – fogas ihop till en ledning mellan brunnarna.
+    toleransen – t.ex. materialbyte mitt på sträckan – fogas ihop till en ledning mellan brunnarna,
+    eller från en brunn till en fri ände utan partner (grenrör/servis/propp delad vid en skarv).
     Bara parvisa möten fogas (tre ändar på samma ställe är en förgrening). Den hopfogade posten
     ersätter delarna i listan: längd = summan, vattengång ur ändarna, dimension/material/typ/år bara
     om alla delar är lika, `delar` = [{langd_m, material, dimension, anlaggningsar}], `skarvar` = [xy].
@@ -1710,7 +1717,10 @@ def _sammanfoga_fria_andar(ledningar: list[dict], tolerans: float) -> int:
             klar = False
             while True:
                 p = partner.get((id(cur), andra(in_sida)))
-                if not p or id(p[0]) in {id(d) for d, _ in kedja} or id(p[0]) in anv:
+                if not p:
+                    klar = len(kedja) > 1          # kedjan slutar i en fri ände utan partner
+                    break
+                if id(p[0]) in {id(d) for d, _ in kedja} or id(p[0]) in anv:
                     break
                 cur, in_sida = p
                 kedja.append((cur, in_sida))
@@ -1849,10 +1859,13 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                 if kand and abs((kand[0].get("langd_m") or 0) - s.langd) <= tol:
                     led = kand[0]
                 elif len(kand) == 1:
-                    led = kand[0]
+                    # ensam kandidat med avvikande längd: kopplas inte (fel kartlängd skulle göra
+                    # sträckan "avbruten"), men koordinaten skickas till kartan och flaggan visar den
+                    grenror["kandidat"] = kand[0]
                     grenror["langd_avviker"] = True
-        if led is None and ns in brunnar and ne in brunnar and ns != ne:
+        if led is None and grenror is None and ns in brunnar and ne in brunnar and ns != ne:
             # ingen direkt ledning: väg via andra brunnar, annars brunnarnas avstånd fågelvägen
+            # (inte för en grenrörsände – den är uttryckligen ingen brunn)
             led = _gis_vag(ns, ne, grannar, s.langd)
             if led is None:
                 b0, b1 = brunnar[ns], brunnar[ne]
@@ -2048,7 +2061,9 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
                              sammanslagen_av=[a.nr, b.nr], _cache={})
     # Film a:s videofil i Videofil, film b:s i Videofil 2 (egen länk i Excel, VIDEO2 i kartan)
     if not a.videofil and b.videofil:
-        ny.videofil, ny.video_sokvag = b.videofil, b.video_sokvag
+        # a saknar film: b:s film i Videofil 2, så att a:s observationer inte länkar till fel film
+        ny.videofil, ny.video_sokvag = "", None
+        ny.videofil_b, ny.video_sokvag_b = b.videofil, b.video_sokvag
     elif b.videofil and b.videofil != a.videofil:
         ny.videofil_b, ny.video_sokvag_b = b.videofil, b.video_sokvag
     ny.manuell_bedomning = a.manuell_bedomning or b.manuell_bedomning
@@ -2257,8 +2272,8 @@ def inspektionsgrad(strackor: list[Stracka], filer: list[dict]) -> dict:
     ej = []
     for gf in filer:
         for led in gf["ledningar"]:
-            if not led.get("fran") or not led.get("till") or led.get("_dubblett"):
-                continue                                   # fri ände eller samma ledning i flera filer
+            if (not led.get("fran") and not led.get("till")) or led.get("_dubblett"):
+                continue                                   # lös bit utan brunn, eller samma ledning i flera filer
             omr = led.get("omrade") or "(utan område)"
             typ = (led.get("ledningstyp") or "").strip() or "(okänd typ)"
             f = klass_pa.get(id(led))
@@ -3161,8 +3176,9 @@ def etapper_for_karta(etapper: list[dict] | None) -> list[dict] | None:
 
 def _fri_ande_xy(s: Stracka) -> list | None:
     """Koordinaten för GIS-ledningens fria ände (grenrörsänden) när sträckan kopplats så, annars None."""
-    g = s.gis and s.gis.get("ledning")
-    if not g or not (s.gis.get("grenror") or {}):
+    gren = s.gis and s.gis.get("grenror")
+    g = s.gis and (s.gis.get("ledning") or (gren or {}).get("kandidat"))
+    if not g or not gren:
         return None
     xy = g.get("till_xy") if not g.get("till") else g.get("fran_xy")
     return [round(float(xy[0]), 3), round(float(xy[1]), 3)] if isinstance(xy, (list, tuple)) and len(xy) == 2 else None
