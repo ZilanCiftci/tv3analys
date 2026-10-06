@@ -80,6 +80,7 @@ HAR, MODULMAPP = _anvand_modulmapp()
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
 LYR_SVACKOR = os.path.join(HAR, 'svackor.lyr')          # symbologi for svacklagret (sparas fran ArcMap)
 LYR_BAKFALL = os.path.join(HAR, 'bakfall.lyr')
+LYR_EJ_FILMAD = os.path.join(HAR, 'ej_filmad.lyr')      # symbologi for ofilmade delar av avbrutna strackor
 MARKERING_LYR = os.path.join(HAR, 'markering.lyr')      # symbol for aktuell stracka i Exportera kartor
 
 # Lager som fylls i automatiskt om de finns i kartan (exakt namn, skiftlage spelar ingen roll)
@@ -446,10 +447,15 @@ class SkapaLedningslager(object):
             name='klipp_avbrutna', datatype='GPBoolean', parameterType='Optional', direction='Input',
             category='Avbrutna inspektioner')
         klipp_avbrutna.value = True
+        ej_filmad_ut = arcpy.Parameter(
+            displayName='Ej filmad del av avbrutna str\u00e4ckor (linjelager med egen f\u00e4rg, valfritt)',
+            name='ej_filmad_ut', datatype='DEFeatureClass', parameterType='Optional', direction='Output',
+            category='Avbrutna inspektioner')
+        _satt_symbologi(ej_filmad_ut, LYR_EJ_FILMAD)
 
         return _minne_fyll(self, [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
                                   tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut,
-                                  svackor_ut, bakfall_ut, typ_falt, dim_falt, klipp_avbrutna])
+                                  svackor_ut, bakfall_ut, typ_falt, dim_falt, klipp_avbrutna, ej_filmad_ut])
 
     def isLicensed(self):
         return True
@@ -475,6 +481,12 @@ class SkapaLedningslager(object):
         _satt_symbologi(parameters[4], parameters[6].valueAsText)
         _satt_symbologi(parameters[15], LYR_SVACKOR)
         _satt_symbologi(parameters[16], LYR_BAKFALL)
+        _satt_symbologi(parameters[20], LYR_EJ_FILMAD)
+        # Foresla lagret for ofilmade delar bredvid huvudlagret nar avbrutna klipps
+        if (parameters[4].valueAsText and parameters[19].value and not parameters[20].altered
+                and not parameters[20].valueAsText):
+            stam, andelse = os.path.splitext(parameters[4].valueAsText)
+            parameters[20].value = stam + '_ej_filmad' + (andelse if andelse.lower() == '.shp' else '')
         return
 
     def updateMessages(self, parameters):
@@ -517,11 +529,13 @@ class SkapaLedningslager(object):
             typ_falt=parameters[17].valueAsText or None,
             dim_falt=parameters[18].valueAsText or None,
             klipp_avbrutna=bool(parameters[19].value),
+            ej_filmad_ut=(parameters[20].valueAsText or None) if parameters[19].value else None,
         )
         parameters[4].value = ut
         _satt_symbologi(parameters[4], parameters[6].valueAsText)
         _satt_symbologi(parameters[15], LYR_SVACKOR)
         _satt_symbologi(parameters[16], LYR_BAKFALL)
+        _satt_symbologi(parameters[20], LYR_EJ_FILMAD)
         return
 
 

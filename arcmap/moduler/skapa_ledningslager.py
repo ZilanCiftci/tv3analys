@@ -84,6 +84,7 @@ POANG_TYP = 2              # avvikelsepoang per ledning med annan typ an filmen
 POANG_DIM = 1              # ... med annan dimension
 EXTRA_DELAR = 1            # en vag med ratt typ far ha sa manga fler bitar an den kortaste
 KLIPP_AVBRUTNA = True      # avbruten/ofullstandig film: rita bara den filmade delen fran kamerans brunn
+EJ_FILMAD_UT = None        # t.ex. r'C:\GIS\tv3.gdb\bedomda_ej_filmad' - resten av avbrutna strackor, egen farg
 URVAL    = 'INTERSECT'     # 'WITHIN' om ledningen maste ligga helt inom omradet
 
 # Falt fran ledningslagret som ska folja med till resultatet.
@@ -812,9 +813,11 @@ SVACK_FALT = SVACK_FALT + SLUTFALT
 BAKFALL_FALT = BAKFALL_FALT + SLUTFALT
 LAGERNAMN_SVACKOR = 'Svackor'
 LAGERNAMN_BAKFALL = 'Bakfall'
+LAGERNAMN_EJ_FILMAD = 'Ej filmad del (avbruten inspektion)'
 # Symbologi for de tva lagren, sparad fran ArcMap en gang (som bedomda_ledningar.lyr)
 LYR_SVACKOR = os.path.join(ARCMAP_MAPP, 'svackor.lyr')
 LYR_BAKFALL = os.path.join(ARCMAP_MAPP, 'bakfall.lyr')
+LYR_EJ_FILMAD = os.path.join(ARCMAP_MAPP, 'ej_filmad.lyr')   # symbologi for den ofilmade delen (sparas fran ArcMap)
 SYMBOLOGI_TIPS_SVACKOR = [
     'Symbologi for svackor (spara som arcmap/svackor.lyr): Quantities > Graduated symbols pa',
     '  SVACKA_CM i tre steg (2-5, 5-10, >10 cm); rod farg nar ANDEL_DIAM > 0,5.',
@@ -1159,12 +1162,14 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           kopiera_falt=None, lagg_till_i_kartan=True,
           rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=MAX_DELAR,
           svackor_ut=None, bakfall_ut=None, svacka_min_cm=SVACKA_MIN_CM,
-          typ_falt=None, dim_falt=None, klipp_avbrutna=KLIPP_AVBRUTNA):
+          typ_falt=None, dim_falt=None, klipp_avbrutna=KLIPP_AVBRUTNA, ej_filmad_ut=None):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen.
     svackor_ut/bakfall_ut: valfria lager med svackor (punkt) och bakfall (linje).
     typ_falt/dim_falt: falt i ledningslagret med ledningstyp och dimension - vid parallella
     ledningar (spill/dag i samma schakt) tas den som stammer med filmen (GIS_AVVIK annars).
-    klipp_avbrutna: avbruten/ofullstandig film ritas bara sa langt kameran kom (KLIPPT)."""
+    klipp_avbrutna: avbruten/ofullstandig film ritas bara sa langt kameran kom (KLIPPT).
+    ej_filmad_ut: valfritt linjelager med resten av den klippta strackan (den del kameran inte nadde),
+    samma falt och lankar som den filmade delen - for att rita den med egen farg."""
     kopiera_falt = kopiera_falt or []
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
@@ -1289,7 +1294,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     har_z = False
 
     ut_fil, ut_ws, ut_namn, ar_shapefil, max_text, doman_ws = _utdata(ut_fc)
-    for extra in (svackor_ut, bakfall_ut):
+    for extra in (svackor_ut, bakfall_ut, ej_filmad_ut):
         if extra:
             _utdata(extra)          # kontrollerar att mappen finns innan vi borjar
 
@@ -1481,6 +1486,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
     n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = n_grenror_langd = 0
+    ej_filmade = []            # rader for lagret over ofilmade delar (skrivs efter huvudlagret)
     lang_lista = []
     avvik_lista = []
     if attr_per_oid:
@@ -1556,6 +1562,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             # Avbruten/ofullstandig film: bara den filmade delen fran kamerans brunn
             hela_pts = pts                     # hela vagen a -> b (svackor/bakfall skalas mot den)
             klippt = ''
+            ej_filmad_rest = None
             langd_film = _tal(s.get('langd_m'))
             l_karta = _langd(pts)
             if (klipp_avbrutna and (s.get('avbruten') or s.get('ofullstandig')) and langd_film
@@ -1567,6 +1574,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                     pts = klippt_pts
                     klippt = '%.1f av %.1f m fran %s' % (langd_film, l_karta, b if fran_b else a)
                     n_klippta += 1
+                    # resten - den del kameran inte nadde - till lagret over ofilmade delar
+                    rest = (_klipp_pts(hela_pts, 0.0, l_karta - langd_film) if fran_b
+                            else _klipp_pts(hela_pts, langd_film, l_karta))
+                    if ej_filmad_ut and len(rest) >= 2:
+                        ej_filmad_rest = (rest, 'ej filmad: %.1f av %.1f m (kameran kom %.1f m fran %s)'
+                                          % (l_karta - langd_film, l_karta, langd_film, b if fran_b else a))
 
             # Kartvagen orimligt lang mot filmen (fel vag genom natet, eller fel littera)?
             if langd_film and langd_film >= 1 and not (s.get('avbruten') or s.get('ofullstandig')):
@@ -1595,7 +1608,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             lager0, oid0 = vagen[0][2], vagen[0][3]
             extra = extra_per_oid.get((lager0, oid0), [None] * len(kopiera))
 
-            insert.insertRow(utan_null([
+            rad = [
                 ny, mask, man, bed, bed_typ, stil,
                 klipp(s.get('startbrunn'), 50), klipp(s.get('slutbrunn'), 50),
                 klipp(s.get('klasstext'), 40),
@@ -1615,7 +1628,16 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 antal_per_par.get(par, 1), n_objekt,
                 lager0[:100], oid0,
                 klipp(avvik, 100), klipp(klippt, 100),
-            ] + extra))
+            ] + extra
+            insert.insertRow(utan_null(rad))
+            if ej_filmad_rest:
+                arr_r = arcpy.Array()
+                for x, y, z in ej_filmad_rest[0]:
+                    arr_r.add(arcpy.Point(x, y))
+                rad_r = list(rad)
+                rad_r[0] = arcpy.Polyline(arr_r, sr, False, False)
+                rad_r[ut_falt.index('KLIPPT')] = klipp(ej_filmad_rest[1], 100)
+                ej_filmade.append(rad_r)
             traffade.add(par)
             traffade.add(plain)
             vagar[par] = ([(x, y) for x, y, z in hela_pts], a, b)
@@ -1626,6 +1648,19 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         del insert
 
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
+    ej_filmad_fil = None
+    if ej_filmad_ut:
+        # samma falt som huvudlagret (mall), sa att rapport-, film- och alla andra falt foljer med
+        ej_filmad_fil, ej_ws, ej_namn, ej_shp, ej_max, ej_dom = _utdata(ej_filmad_ut)
+        _radera_utdata(ej_filmad_fil)
+        arcpy.CreateFeatureclass_management(ej_ws, ej_namn, 'POLYLINE', ut_fil, 'DISABLED', 'DISABLED', sr)
+        ins_r = arcpy.da.InsertCursor(ej_filmad_fil, ut_falt)
+        try:
+            for rad_r in ej_filmade:
+                ins_r.insertRow(utan_null(rad_r))
+        finally:
+            del ins_r
+        logg('  %d ofilmade delar av avbrutna strackor skrivna till %s' % (len(ej_filmade), ej_filmad_fil))
     if n_grenror:
         logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror
              + (' (%d hittade pa filmens langd, utan koordinat)' % n_grenror_langd if n_grenror_langd else ''))
@@ -1752,6 +1787,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     if geojson_ut:
         n_geo = skriv_geojson(ut_fil, [f for f in ut_falt if f != 'SHAPE@'], geojson_ut)
         logg('  %d objekt skrivna till %s (GeoJSON, WGS84, 2D)' % (n_geo, geojson_ut))
+        if ej_filmad_fil:
+            stam, andelse = os.path.splitext(geojson_ut)
+            gj = '%s_ej_filmad%s' % (stam, andelse or '.geojson')
+            n_geo = skriv_geojson(ej_filmad_fil, [f for f in ut_falt if f != 'SHAPE@'], gj)
+            logg('  %d objekt skrivna till %s (GeoJSON)' % (n_geo, gj))
 
     # ---------------------------------------------------- 8b. Svackor och bakfall
     extra_lager = {}
@@ -1776,6 +1816,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                         if os.path.isfile(lyr_extra):
                             arcpy.ApplySymbologyFromLayer_management(l_extra, lyr_extra)
                         arcpy.mapping.AddLayer(df, l_extra, 'TOP')
+                if ej_filmad_fil:
+                    l_ej = arcpy.mapping.Layer(ej_filmad_fil)
+                    l_ej.name = LAGERNAMN_EJ_FILMAD
+                    if os.path.isfile(LYR_EJ_FILMAD):
+                        arcpy.ApplySymbologyFromLayer_management(l_ej, LYR_EJ_FILMAD)
+                    arcpy.mapping.AddLayer(df, l_ej, 'TOP')
                 ny_lyr = arcpy.mapping.Layer(ut_fil)
                 ny_lyr.name = LAGERNAMN
                 if lyr_fil and os.path.isfile(lyr_fil):
@@ -1813,4 +1859,5 @@ if __name__ == '__main__':
               kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP,
               geojson_ut=GEOJSON_UT, max_delar=MAX_DELAR,
               svackor_ut=SVACKOR_UT, bakfall_ut=BAKFALL_UT, svacka_min_cm=SVACKA_MIN_CM,
-              typ_falt=TYP_FALT, dim_falt=DIM_FALT, klipp_avbrutna=KLIPP_AVBRUTNA)
+              typ_falt=TYP_FALT, dim_falt=DIM_FALT, klipp_avbrutna=KLIPP_AVBRUTNA,
+              ej_filmad_ut=EJ_FILMAD_UT)
