@@ -216,10 +216,11 @@ ANDE_LITTERA = r"^[ÄA]NDE?\d*$"     # littera som betyder ledningsände utan br
 GIS_GRENROR_LANGD_TOL = 0.3         # andel – GIS-ledningen med fri ände får avvika så mycket (+ 3 m) från filmens längd
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
-GIS_VAG_MAX_HOPP = 4        # saknas direkt ledning i GIS mellan brunnarna söks en väg via andra brunnar (högst så
+GIS_VAG_MAX_HOPP = 8        # saknas direkt ledning i GIS mellan brunnarna söks en väg via andra brunnar (högst så
                             # många ledningar, högst GIS_VAG_MAX_ANDEL × filmens längd + 20 m); annars tas brunnarnas
                             # avstånd fågelvägen som kartlängd ("kartlängd fågelvägen")
 GIS_VAG_MAX_ANDEL = 2.0
+GIS_DIM_TOL = 0.1           # dimensioner inom 10 % räknas som samma vid val mellan parallella GIS-ledningar
 GIS_SKARV_TOL_M = None      # m – två ledningars fria ändar (ingen brunn) närmare varandra än så är en skarv (t.ex.
                             # materialbyte mitt på sträckan): delarna fogas ihop till en ledning mellan brunnarna.
                             # None = exportens tolerans (tolerans_m i gisdata.json), annars talet.
@@ -1763,17 +1764,25 @@ def _sammanfoga_fria_andar(ledningar: list[dict], tolerans: float) -> int:
     return len(nya)
 
 
-def _gis_vag(ns: str, ne: str, grannar: dict, langd: float) -> dict | None:
+def _gis_vag(ns: str, ne: str, grannar: dict, langd: float, typ: str = "") -> dict | None:
     """Kortaste vägen i GIS från ns till ne via andra brunnar (högst GIS_VAG_MAX_HOPP ledningar, högst
-    GIS_VAG_MAX_ANDEL × filmens längd + 20 m). Returnerar en syntetisk ledningspost {fran, till, langd_m,
-    vg_fran, vg_till, dimension, material, ledningstyp, omrade, _syntetisk: "via", _via: [brunnar],
-    _delar: [ledningar]} eller None."""
+    GIS_VAG_MAX_ANDEL × filmens längd + 20 m). Med typ (filmens ledningstyp, första bokstaven S/D/K)
+    väljs i första hand vägar med färst ledningar av annan typ – spill och dag ligger ofta parallellt
+    mellan samma brunnar. Returnerar en syntetisk ledningspost {fran, till, langd_m, vg_fran, vg_till,
+    dimension, material, ledningstyp, omrade, _syntetisk: "via", _via: [brunnar], _delar: [ledningar]}
+    eller None."""
     import heapq
     tak = GIS_VAG_MAX_ANDEL * max(langd, 1.0) + 20
-    basta: dict[str, float] = {ns: 0.0}
-    ko = [(0.0, 0, ns, [])]                 # (längd, hopp, brunn, [(granne, ledning) …])
+    typ = (typ or "")[:1].upper()
+
+    def _fel_typ(led) -> int:
+        t = (led.get("ledningstyp") or "")[:1].upper()
+        return int(bool(typ and t and t != typ))
+
+    basta: dict[str, tuple[int, float]] = {ns: (0, 0.0)}
+    ko = [((0, 0.0), 0, ns, [])]            # ((fel typ, längd), hopp, brunn, [(granne, ledning) …])
     while ko:
-        L, hopp, n, vag = heapq.heappop(ko)
+        (fel, L), hopp, n, vag = heapq.heappop(ko)
         if n == ne:
             delar = [led for _, led in vag]
             via = [b for b, _ in vag[:-1]]
@@ -1796,10 +1805,11 @@ def _gis_vag(ns: str, ne: str, grannar: dict, langd: float) -> dict | None:
             continue
         for granne, led in grannar.get(n, []):
             L2 = L + (led.get("langd_m") or 0.0)
-            if L2 > tak or granne == ns or (granne in basta and basta[granne] <= L2):
+            nyckel = (fel + _fel_typ(led), L2)
+            if L2 > tak or granne == ns or (granne in basta and basta[granne] <= nyckel):
                 continue
-            basta[granne] = L2
-            heapq.heappush(ko, (L2, hopp + 1, granne, vag + [(granne, led)]))
+            basta[granne] = nyckel
+            heapq.heappush(ko, (nyckel, hopp + 1, granne, vag + [(granne, led)]))
     return None
 
 
@@ -1846,11 +1856,18 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
     for s in strackor:
         ns, ne = _normlittera(s.startbrunn), _normlittera(s.slutbrunn)
         kand = pa_par.get(frozenset((ns, ne)), [])
-        # vid flera ledningar mellan samma brunnar: samma ledningstyp först (S/D parallellt i samma
-        # schakt har nästan samma längd), sedan längd närmast filmens
+        # vid flera ledningar mellan samma brunnar (spill och dag parallellt i samma schakt, bräddbrunnar
+        # med två kammare): samma ledningstyp först, sedan samma dimension, sist längd närmast filmens
         typ = (s.ledningstyp or "")[:1].upper()
-        led = min(kand, key=lambda l: ((l.get("ledningstyp") or "")[:1].upper() != typ if typ else False,
-                                       abs((l.get("langd_m") or 0) - s.langd))) if kand else None
+        dim = s.dimension_mm
+
+        def _parallell(l: dict) -> tuple:
+            t = (l.get("ledningstyp") or "")[:1].upper()
+            d = l.get("dimension")
+            return (bool(typ and t and t != typ),
+                    bool(dim and d and abs(dim - d) > GIS_DIM_TOL * max(dim, d)),
+                    abs((l.get("langd_m") or 0) - s.langd))
+        led = min(kand, key=_parallell) if kand else None
         grenror = None
         if led is None and s.grenror("start") != s.grenror("slut"):
             # anslutning till grenrör: ingen brunn i den änden – ta GIS-ledningen från den kända
@@ -1871,13 +1888,18 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         if led is None and grenror is None and ns in brunnar and ne in brunnar and ns != ne:
             # ingen direkt ledning: väg via andra brunnar, annars brunnarnas avstånd fågelvägen
             # (inte för en grenrörsände – den är uttryckligen ingen brunn)
-            led = _gis_vag(ns, ne, grannar, s.langd)
-            if led is None:
-                b0, b1 = brunnar[ns], brunnar[ne]
-                if all(isinstance(b.get(k), (int, float)) for b in (b0, b1) for k in ("x", "y")):
-                    d = math.hypot(b0["x"] - b1["x"], b0["y"] - b1["y"])
-                    if d >= 1.0:                     # brunnar utan koordinater (0, 0) ger ingen kartlängd
-                        led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
+            b0, b1 = brunnar[ns], brunnar[ne]
+            d = None
+            if all(isinstance(b.get(k), (int, float)) for b in (b0, b1) for k in ("x", "y")):
+                d = math.hypot(b0["x"] - b1["x"], b0["y"] - b1["y"])
+                if d < 1.0:                          # brunnar utan koordinater (0, 0) ger ingen kartlängd
+                    d = None
+            # en avbruten film är kortare än ledningen – taket för vägens längd räknas då från avståndet
+            # mellan brunnarna (filmen kan ha passerat flera brunnar innan kameran stannade)
+            bas = max(s.langd, d or 0.0) if s.avbruten else s.langd
+            led = _gis_vag(ns, ne, grannar, bas, typ)
+            if led is None and d is not None:
+                led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"],
                  "grenror": grenror}
@@ -3249,6 +3271,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "ledningstyp": s.ledningstyp.capitalize(),
             "relinad": s.relinad,
             "avbruten": s.avbruten,
+            "ofullstandig": s.ofullstandig,      # avbruten eller klart kortare än kartlängden
             "flerinspekterad": s.flerinspekterad,
             "filmstatus": s.filmstatus or None,
             "sammanslagen_av": s.sammanslagen_av or None,
@@ -3288,6 +3311,8 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "grenror": (s.gis or {}).get("grenror", {}).get("sida") if s.gis and s.gis.get("grenror") else None,
             "grenror_xy": _fri_ande_xy(s),
             "gis_ledning": _gis_ledning_id(s),
+            # brunnar som filmen passerar enligt GIS (ingen direkt ledning) – ArcMap släpper igenom dem
+            "gis_via": list((s.gis or {}).get("ledning", {}).get("_via") or []) if (s.gis or {}).get("ledning") else [],
             "gis_lutning_promille": round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
             "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
             "djup_slut_m": round(s.djup_slut, 2) if s.djup_slut is not None else None,
