@@ -67,6 +67,15 @@ MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLA
 MAX_HOPP = 2       # brunnar en filmad stracka far passera, inkl. slutbrunnen (2 = en mellanbrunn)
 MAX_DELAR = 8      # hogsta antal ledningsbitar en stracka far besta av
 GRENROR_RADIE_EXTRA = 1.0   # m utover toleransen: sa langt fran kartunderlagets koordinat far den fria anden ligga
+# Parallella ledningar (spill och dag i samma schakt, braddbrunnar med tva kammare): nar flera vagar
+# ar lika korta valjs den vars ledningstyp (forsta bokstaven S/D/K) och dimension stammer med filmen.
+TYP_FALT = None            # falt i ledningslagret med ledningstyp, t.ex. 'PipeType' (DSL/SSL/KSL)
+DIM_FALT = None            # falt med dimension, t.ex. 'PipeDimension'
+DIM_TOLERANS = 0.1         # dimensioner inom 10 % raknas som samma (225 i filmen, 230 i GIS)
+POANG_TYP = 2              # avvikelsepoang per ledning med annan typ an filmen
+POANG_DIM = 1              # ... med annan dimension
+EXTRA_DELAR = 1            # en vag med ratt typ far ha sa manga fler bitar an den kortaste
+KLIPP_AVBRUTNA = True      # avbruten/ofullstandig film: rita bara den filmade delen fran kamerans brunn
 URVAL    = 'INTERSECT'     # 'WITHIN' om ledningen maste ligga helt inom omradet
 
 # Falt fran ledningslagret som ska folja med till resultatet.
@@ -364,10 +373,11 @@ class Natverk(object):
             n_bitar += 1
         return n_bitar
 
-    def vag(self, a, b, max_hopp, max_delar=8):
+    def vag(self, a, b, max_hopp, max_delar=8, poang=None):
         """Vagen med farst bitar fran brunn a till brunn b, eller None. Hogst
-        max_hopp - 1 andra sokta brunnar far passeras, och hogst max_delar bitar."""
-        return self._vag(('B', a), ('B', b), max_hopp, max_delar)
+        max_hopp - 1 andra sokta brunnar far passeras, och hogst max_delar bitar.
+        poang: se _vag - val mellan parallella ledningar efter typ och dimension."""
+        return self._vag(('B', a), ('B', b), max_hopp, max_delar, poang)
 
     def fri_ande_nara(self, x, y, radie):
         """Noden for den fria ledningsande som ligger narmast (x, y) inom radie, annars None."""
@@ -383,16 +393,62 @@ class Natverk(object):
                         basta = (d2, nyckel)
         return basta[1] if basta else None
 
-    def vag_till_punkt(self, a, x, y, max_hopp, max_delar=8, radie=None):
+    def vag_till_punkt(self, a, x, y, max_hopp, max_delar=8, radie=None, poang=None):
         """Vagen fran brunn a till den fria ledningsande som ligger vid (x, y) - en ledning som
         slutar i ett grenror/pastick pa en annan ledning i stallet for i en brunn. Returnerar
         None om ingen fri ande finns inom radie (standard tolerans + GRENROR_RADIE_EXTRA) eller ingen vag."""
         mal = self.fri_ande_nara(x, y, radie if radie is not None else self.tol + GRENROR_RADIE_EXTRA)
         if mal is None:
             return None
-        return self._vag(('B', a), mal, max_hopp, max_delar)
+        return self._vag(('B', a), mal, max_hopp, max_delar, poang)
 
-    def _vag(self, start, mal, max_hopp, max_delar=8):
+    def _vag(self, start, mal, max_hopp, max_delar=8, poang=None):
+        """Vagen med farst bitar. Med poang (funktion (lager, oid) -> avvikelsepoang mot filmen,
+        t.ex. annan ledningstyp eller dimension) jamfors alla vagar med hogst EXTRA_DELAR fler
+        bitar an den kortaste, och den med lagst poang tas - sa att en spillvattenfilm hamnar
+        pa spilledningen och inte pa dagvattenledningen bredvid i samma schakt."""
+        forsta = self._kortaste(start, mal, max_hopp, max_delar)
+        if forsta is None or poang is None:
+            return forsta
+        if self._poang(forsta, poang) == 0:
+            return forsta
+        return self._basta(start, mal, max_hopp, min(max_delar, len(forsta) + EXTRA_DELAR), poang, forsta)
+
+    @staticmethod
+    def _poang(vagen, poang):
+        return sum(poang(lager, oid) for lager, oid in set((l, o) for n, p, l, o in vagen))
+
+    def _basta(self, start, mal, max_hopp, max_delar, poang, forsta, tak=2000):
+        """Alla enkla vagar start -> mal med hogst max_delar bitar och max_hopp - 1 mellanbrunnar
+        (djupet forst, hogst tak vagar), rankade pa (poang, antal bitar, langd)."""
+        basta = (self._poang(forsta, poang), len(forsta), _langd(sla_ihop(forsta)), forsta)
+        n = [0]
+
+        def gren(nod, vagen, hopp, sedda):
+            if n[0] >= tak or len(vagen) >= max_delar:
+                return
+            for annan, pts, lager, oid in self.kanter.get(nod, ()):
+                if annan == mal:
+                    n[0] += 1
+                    v = vagen + [(annan, pts, lager, oid)]
+                    nyckel = (self._poang(v, poang), len(v), _langd(sla_ihop(v)), v)
+                    if nyckel[:3] < tuple(basta[:3]):
+                        basta[:] = nyckel
+                    continue
+                if annan in sedda:
+                    continue
+                h = hopp + (1 if annan[0] == 'B' else 0)
+                if h > max_hopp - 1:
+                    continue
+                sedda.add(annan)
+                gren(annan, vagen + [(annan, pts, lager, oid)], h, sedda)
+                sedda.discard(annan)
+
+        basta = list(basta)
+        gren(start, [], 0, set([start]))
+        return basta[3]
+
+    def _kortaste(self, start, mal, max_hopp, max_delar=8):
         from collections import deque
         if start not in self.kanter or mal not in self.kanter:
             return None
@@ -490,6 +546,62 @@ def _langd(pts):
     return sum(_avst(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
 
 
+def _typbokstav(v):
+    """Forsta bokstaven i en ledningstyp: 'Spillvatten'/'SSL' -> 'S', 'DSL' -> 'D', 'Kombinerat' -> 'K'."""
+    t = (txt(v) or '').strip().upper()
+    return t[:1] if t and t[:1].isalpha() else ''
+
+
+def _dim_mm(v):
+    """Forsta talet i en dimensionstext: '600/900' -> 600, 'Ø 225' -> 225, 'ODEF' -> None."""
+    m = re.search(r'\d+', txt(v) or '')
+    return int(m.group(0)) if m else None
+
+
+def _avvikelse(post, typ, dim):
+    """(poang, text) for en GIS-ledning med ledningstyp typ och dimension dim mot filmens uppgifter.
+    Okanda varden pa nagon sida ger ingen avvikelse."""
+    p, delar = 0, []
+    ft, gt = _typbokstav(post.get('ledningstyp')), _typbokstav(typ)
+    if ft and gt and ft != gt:
+        p += POANG_TYP
+        delar.append('typ %s i filmen, %s i GIS' % (ft, txt(typ).strip()))
+    fd, gd = _dim_mm(post.get('dimension')), _dim_mm(dim)
+    if fd and gd and abs(fd - gd) > DIM_TOLERANS * max(fd, gd):
+        p += POANG_DIM
+        delar.append('dimension %d i filmen, %d i GIS' % (fd, gd))
+    return p, '; '.join(delar)
+
+
+def _klipp_pts(pts, m0, m1):
+    """Delen av punktlistan mellan matten m0 och m1 (m fran forsta punkten), med interpolerade
+    andpunkter. Utanfor linjen kapas matten till [0, langd]."""
+    L = _langd(pts)
+    m0, m1 = max(0.0, m0), min(L, m1)
+    if m1 - m0 <= 1e-9:
+        return pts[:1]
+
+    def punkt_vid(m):
+        matt = 0.0
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
+            seg = _avst(a, b)
+            if seg > 0 and matt + seg >= m - 1e-9:
+                t = min(1.0, max(0.0, (m - matt) / seg))
+                z = (a[2] + t * (b[2] - a[2])) if a[2] is not None and b[2] is not None else None
+                return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), z)
+            matt += seg
+        return pts[-1]
+
+    ut, matt = [punkt_vid(m0)], 0.0
+    for i in range(len(pts) - 1):
+        matt += _avst(pts[i], pts[i + 1])
+        if m0 < matt < m1:
+            ut.append(pts[i + 1])
+    ut.append(punkt_vid(m1))
+    return ut
+
+
 def _punkt_vid(pts, d):
     """Punkt (x, y) pa avstandet d langs punktlistan (klamms till andarna)."""
     if d <= 0:
@@ -524,7 +636,7 @@ def _kartposition(post, pos, l_karta, a, b):
     kartmeter fran kamerans brunn, samma regel som markprofilen)."""
     langd_film = _tal(post.get('langd_m'))
     skala = 1.0
-    if not post.get('avbruten') and langd_film and langd_film > 0:
+    if not (post.get('avbruten') or post.get('ofullstandig')) and langd_film and langd_film > 0:
         skala = l_karta / langd_film
     d = pos * skala
     utg = normalisera(post.get('utgangsbrunn'))
@@ -592,6 +704,8 @@ EGNA_FALT = [
     ('ANT_DELAR',  'LONG',   None, 'Antal ledningsobjekt i kartan'),
     ('SRC_LAGER',  'TEXT',   100, 'Källager'),
     ('SRC_OID',    'LONG',   None, 'Käll-OID'),
+    ('GIS_AVVIK',  'TEXT',   100, 'Avvikelse mot GIS-ledningen (typ/dimension)'),
+    ('KLIPPT',     'TEXT',   100, 'Avbruten film: ritad del av kartlinjen'),
 ]
 
 
@@ -954,9 +1068,13 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
           kopiera_falt=None, lagg_till_i_kartan=True,
           rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=8,
-          svackor_ut=None, bakfall_ut=None, svacka_min_cm=SVACKA_MIN_CM):
+          svackor_ut=None, bakfall_ut=None, svacka_min_cm=SVACKA_MIN_CM,
+          typ_falt=None, dim_falt=None, klipp_avbrutna=KLIPP_AVBRUTNA):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen.
-    svackor_ut/bakfall_ut: valfria lager med svackor (punkt) och bakfall (linje)."""
+    svackor_ut/bakfall_ut: valfria lager med svackor (punkt) och bakfall (linje).
+    typ_falt/dim_falt: falt i ledningslagret med ledningstyp och dimension - vid parallella
+    ledningar (spill/dag i samma schakt) tas den som stammer med filmen (GIS_AVVIK annars).
+    klipp_avbrutna: avbruten/ofullstandig film ritas bara sa langt kameran kom (KLIPPT)."""
     kopiera_falt = kopiera_falt or []
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
@@ -1186,6 +1304,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # ---------------------------------------------------- 5. Bygg natverk av ledningsbitar
     nat = Natverk(sokta, tolerans)
     extra_per_oid = {}
+    attr_per_oid = {}          # (lager, oid) -> (ledningstyp, dimension) nar typ_falt/dim_falt angetts
     n_lednkoll = n_nara = n_bitar = 0
     for lyr in led_lager:
         namn = txt(getattr(lyr, 'name', lyr))
@@ -1200,9 +1319,19 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         # Bara de kopierade falt som finns i just detta lager lases; ovriga blir NULL
         har = kallfalt_per_lager.get(namn, {})
         lasbara = [(i, har[k].name) for i, (k, u, typ) in enumerate(kopiera) if k in har]
-        with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + [n for i, n in lasbara]) as mark:
+        attrfalt = []                     # ledningstyp och dimension for val mellan parallella ledningar
+        for f in (typ_falt, dim_falt):
+            fn = har.get(txt(f).upper()) if f else None
+            if f and not fn:
+                logg('  VARNING: faltet %s finns inte i %s - typ/dimension jamfors inte dar' % (txt(f), namn))
+            attrfalt.append(fn.name if fn else None)
+        attrlas = [fn for fn in attrfalt if fn]
+        with arcpy.da.SearchCursor('lyr_led', ['OID@', 'SHAPE@'] + [n for i, n in lasbara] + attrlas) as mark:
             for rad in mark:
                 oid, geom = rad[0], rad[1]
+                if attrlas:
+                    v = dict(zip(attrlas, rad[2 + len(lasbara):]))
+                    attr_per_oid[(namn, oid)] = (v.get(attrfalt[0]), v.get(attrfalt[1]))
                 n_lednkoll += 1
                 if geom is None:
                     continue
@@ -1257,13 +1386,29 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
-    n_skrivna = n_flerdelade = n_grenror = 0
+    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = 0
+    avvik_lista = []
+    if attr_per_oid:
+        logg('  ledningstyp/dimension ur %s jamfors med filmen vid val mellan parallella ledningar'
+             % '/'.join(txt(f) for f in (typ_falt, dim_falt) if f))
 
     insert = arcpy.da.InsertCursor(ut_fil, ut_falt)
     try:
         for par, s in bedomda.items():
             a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
-            vagen = nat.vag(a, b, max_hopp, max_delar)
+            poang = None
+            if attr_per_oid:
+                def poang(lager, oid, s=s):
+                    t = attr_per_oid.get((lager, oid))
+                    return _avvikelse(s, t[0], t[1])[0] if t else 0
+            # Passerar filmen flera brunnar enligt tv3_analys GIS-koppling (ingen direkt ledning, t.ex.
+            # en avbruten film som gick forbi brunnar utan att stanna) far vagen passera just sa manga
+            via = [v for v in (s.get('gis_via') or []) if v]
+            hopp_s = max(max_hopp, len(via) + 1)
+            delar_s = max(max_delar, 4 * (len(via) + 1))
+            vagen = nat.vag(a, b, hopp_s, delar_s, poang)
+            if vagen and hopp_s > max_hopp:
+                n_via += 1
             grenror = s.get('grenror') if s.get('grenror') in ('start', 'slut') else None
             vand = False
             if not vagen and grenror and s.get('grenror_xy'):
@@ -1271,7 +1416,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 # tv3_analys hittade i GIS-exporten (koordinat i kartunderlaget)
                 try:
                     gx, gy = float(s['grenror_xy'][0]), float(s['grenror_xy'][1])
-                    vagen = nat.vag_till_punkt(b if grenror == 'start' else a, gx, gy, max_hopp, max_delar)
+                    vagen = nat.vag_till_punkt(b if grenror == 'start' else a, gx, gy, hopp_s, delar_s,
+                                               poang=poang)
                 except (TypeError, ValueError, IndexError):
                     vagen = None
                 if vagen:
@@ -1286,6 +1432,36 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             if len(pts) < 2:
                 continue
             n_objekt = len(set((lager, oid) for nod, p, lager, oid in vagen))
+
+            # Avvikelse mot GIS-ledningen (annan typ/dimension an filmen) - aven efter basta val
+            avvik = ''
+            if attr_per_oid:
+                texter = []
+                for lager, oid in sorted(set((l, o) for n, p, l, o in vagen), key=lambda k: (k[0], k[1])):
+                    t = attr_per_oid.get((lager, oid))
+                    if t:
+                        tx = _avvikelse(s, t[0], t[1])[1]
+                        if tx and tx not in texter:
+                            texter.append(tx)
+                avvik = '; '.join(texter)
+                if avvik:
+                    n_avvik += 1
+                    avvik_lista.append('%s -> %s (%s nr %s): %s' % (a, b, txt(s.get('fil')), s.get('nr'), avvik))
+
+            # Avbruten/ofullstandig film: bara den filmade delen fran kamerans brunn
+            hela_pts = pts                     # hela vagen a -> b (svackor/bakfall skalas mot den)
+            klippt = ''
+            langd_film = _tal(s.get('langd_m'))
+            l_karta = _langd(pts)
+            if (klipp_avbrutna and (s.get('avbruten') or s.get('ofullstandig')) and langd_film
+                    and 0 < langd_film < l_karta - max(tolerans, 0.5)):
+                utg = normalisera(s.get('utgangsbrunn'))
+                fran_b = utg == b or (utg != a and normalisera(s.get('startbrunn')) == b)
+                klippt_pts = _klipp_pts(pts, l_karta - langd_film, l_karta) if fran_b else _klipp_pts(pts, 0.0, langd_film)
+                if len(klippt_pts) >= 2:
+                    pts = klippt_pts
+                    klippt = '%.1f av %.1f m fran %s' % (langd_film, l_karta, b if fran_b else a)
+                    n_klippta += 1
 
             arr = arcpy.Array()
             for x, y, z in pts:
@@ -1324,10 +1500,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 klipp(rapport_sokvag(s), 254), klipp(video_sokvag(s), 254), klipp(video_sokvag(s, '_b'), 254),
                 antal_per_par.get(par, 1), n_objekt,
                 lager0[:100], oid0,
+                klipp(avvik, 100), klipp(klippt, 100),
             ] + extra))
             traffade.add(par)
             traffade.add(plain)
-            vagar[par] = ([(x, y) for x, y, z in pts], a, b)
+            vagar[par] = ([(x, y) for x, y, z in hela_pts], a, b)
             n_skrivna += 1
             if n_objekt > 1:
                 n_flerdelade += 1
@@ -1337,6 +1514,21 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
     if n_grenror:
         logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror)
+    if n_via:
+        logg('  %d strackor passerar fler brunnar an max hopp - tillatet eftersom GIS-kopplingen i'
+             ' tv3_analys gick via dem (gis_via)' % n_via)
+    if n_klippta:
+        logg('  %d avbrutna/ofullstandiga filmer ritade bara sa langt kameran kom (falt KLIPPT)' % n_klippta)
+    if attr_per_oid:
+        if n_avvik:
+            logg('  OBS: %d strackor ligger pa en GIS-ledning med annan typ eller dimension an filmen'
+                 ' (falt GIS_AVVIK) - kontrollera littera eller kartan:' % n_avvik)
+            for rad in avvik_lista[:30]:
+                logg('    ' + rad)
+            if len(avvik_lista) > 30:
+                logg('    ... och %d till' % (len(avvik_lista) - 30))
+        else:
+            logg('  alla strackor ligger pa GIS-ledningar med samma typ och dimension som filmen')
     logg('  %d av %d brunnspar matchade (%d sammansatta av flera ledningsobjekt)'
          % (len(traffade), len(bedomda), n_flerdelade))
     n_hoppade = len(data.get('strackor', [])) - sum(antal_per_par.values())
@@ -1379,7 +1571,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             else:
                 diagnos = 'grenror: ingen vag fran brunnen till den fria anden (hoj max hopp?)'
         elif a in brunns_id and b in brunns_id:
-            diagnos = nat.diagnos(a, b, max_hopp, max_delar)
+            via = [v for v in (s.get('gis_via') or []) if v]
+            diagnos = nat.diagnos(a, b, max(max_hopp, len(via) + 1), max(max_delar, 4 * (len(via) + 1)))
+            if via:
+                diagnos += ' (GIS-vagen i analysen gick via %s)' % ', '.join(txt(v) for v in via)
         elif a in brunns_id or b in brunns_id:
             diagnos = 'brunnen %s finns inte i brunnslagren' % (b if a in brunns_id else a)
         else:
@@ -1496,4 +1691,5 @@ if __name__ == '__main__':
               tolerans=TOLERANS, marginal=MARGINAL, max_hopp=MAX_HOPP, urval=URVAL,
               kopiera_falt=KOPIERA_FALT, rapportmapp=RAPPORTMAPP, filmmapp=FILMMAPP,
               geojson_ut=GEOJSON_UT, max_delar=MAX_DELAR,
-              svackor_ut=SVACKOR_UT, bakfall_ut=BAKFALL_UT, svacka_min_cm=SVACKA_MIN_CM)
+              svackor_ut=SVACKOR_UT, bakfall_ut=BAKFALL_UT, svacka_min_cm=SVACKA_MIN_CM,
+              typ_falt=TYP_FALT, dim_falt=DIM_FALT, klipp_avbrutna=KLIPP_AVBRUTNA)

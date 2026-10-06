@@ -357,9 +357,23 @@ class SkapaLedningslager(object):
             datatype='DEFeatureClass', parameterType='Optional', direction='Output',
             category='Svackor och bakfall (ur inklinometerprofilerna)')
 
+        kat = 'Parallella ledningar (spill och dag i samma schakt, br\u00e4ddbrunnar)'
+        typ_falt = arcpy.Parameter(
+            displayName='F\u00e4lt med ledningstyp i ledningslagret (S/D/K, t.ex. PipeType) - v\u00e4ljer den '
+                        'parallella ledning som har filmens typ',
+            name='typ_falt', datatype='GPString', parameterType='Optional', direction='Input', category=kat)
+        dim_falt = arcpy.Parameter(
+            displayName='F\u00e4lt med dimension i ledningslagret (t.ex. PipeDimension)',
+            name='dim_falt', datatype='GPString', parameterType='Optional', direction='Input', category=kat)
+        klipp_avbrutna = arcpy.Parameter(
+            displayName='Avbruten/ofullst\u00e4ndig film: rita bara den filmade delen fr\u00e5n kamerans brunn (f\u00e4lt KLIPPT)',
+            name='klipp_avbrutna', datatype='GPBoolean', parameterType='Optional', direction='Input',
+            category='Avbrutna inspektioner')
+        klipp_avbrutna.value = True
+
         return _minne_fyll(self, [json_in, ledning, brunn, brunn_id, ut_fc, omrade, lyr_fil, csv_ut,
                                   tolerans, max_hopp, marginal, kopiera, rapportmapp, filmmapp, geojson_ut,
-                                  svackor_ut, bakfall_ut])
+                                  svackor_ut, bakfall_ut, typ_falt, dim_falt, klipp_avbrutna])
 
     def isLicensed(self):
         return True
@@ -372,6 +386,14 @@ class SkapaLedningslager(object):
                 parameters[4].value = os.path.join(mapp, 'bedomda_ledningar.shp')
             if not parameters[7].altered and not parameters[7].valueAsText:
                 parameters[7].value = os.path.join(mapp, STANDARD_CSV)
+        # Falt for ledningstyp/dimension ur (forsta) ledningslagret, gissade pa SVOA:s namn
+        if parameters[1].altered and parameters[1].valueAsText:
+            falt = _faltnamn(parameters[1])
+            if falt:
+                for i, kand in ((17, STANDARD_LEDNTYP), (18, STANDARD_DIMENSION)):
+                    _filter(parameters[i], [''] + falt)
+                    if not parameters[i].altered and not parameters[i].valueAsText:
+                        parameters[i].value = _forsta_traff(kand, falt)
         return
 
     def updateMessages(self, parameters):
@@ -409,6 +431,9 @@ class SkapaLedningslager(object):
             geojson_ut=parameters[14].valueAsText or None,
             svackor_ut=parameters[15].valueAsText or None,
             bakfall_ut=parameters[16].valueAsText or None,
+            typ_falt=parameters[17].valueAsText or None,
+            dim_falt=parameters[18].valueAsText or None,
+            klipp_avbrutna=bool(parameters[19].value),
         )
         parameters[4].value = ut
         if parameters[6].valueAsText and os.path.isfile(parameters[6].valueAsText):
