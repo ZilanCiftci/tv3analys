@@ -580,7 +580,13 @@ lista_falt) ligger i `arcmap/moduler/`; i `arcmap/` ligger bara `tv3_verktyg.pyt
 `senaste_val.json`. `.pyt`: `MODULMAPP = HAR/moduler` läggs först i sys.path (gamla kopior i arcmap-mappen används inte –
 testat med en kopia som kastar fel), STANDARD_LYR/MARKERING_LYR/MINNESFIL kvar i HAR. Modulerna: `ARCMAP_MAPP` = föräldern
 till moduler (skapa_ledningslager LYR_FIL/LYR_SVACKOR/LYR_BAKFALL, kartexport MARKERING_LYR), etapplager `HAR` = föräldern.
-execfile-sökvägar i docstrings och handledningen: `arcmap\moduler\…`. Scratchpad-testerna importerar från arcmap/moduler
+execfile-sökvägar i docstrings och handledningen: `arcmap\moduler\…`. I ArcMap gav första körningen "ImportError: No module named
+skapa_ledningslager" (rad 64 = `__import__`): `__file__` pekar inte på .pyt:n när ArcMap kör verktyget (koden körs
+som sträng, "<string>" i traceback) – förut märktes det inte eftersom ArcMap lägger verktygslådans mapp i sys.path.
+Rättat: `_hitta_modulmapp()` provar dirname(__file__), alla sys.path-poster och cwd och tar den första där
+`moduler/skapa_ledningslager.py` finns (HAR = den mappen, så .lyr och minnesfilen hamnar rätt); `_ladda_modul`
+kör `_anvand_modulmapp()` före varje import och ger vid ImportError ett felmeddelande med alla provade mappar och
+`__file__`. Test: scratchpad/pytkoll2_test.py (fel __file__, utan __file__, mappen saknas). Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
