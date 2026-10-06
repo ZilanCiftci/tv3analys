@@ -552,6 +552,28 @@ ofullständig 40/50, gis_via förbi två JSON-brunnar med max hopp 2, utan fält
 (DUF 701 nr 2 med parallell DSL i exakt filmens längd → SSL; nr 22 avbruten via fem brunnar 6×30 m = 180 m: hittas med 8 hopp
 och brunnsavståndet som tak). Facit oförändrat (40/55/20/61/5, filer.txt 40/54/20/61/5), kartunderlaget identiskt med
 gisvag- och gisdata_omr-data utöver de nya fälten. Handledning 7 (Parallella ledningar, Avbrutna inspektioner), 7.1, 7.11, KONFIG.
+**Inläsning utan tyst bortfall och samma film i två filer** (okt 2026, användaren: "DNBL69901 - DNBL70370 kommer aldrig med i
+min analys … flertalet ledningar"; sedan två filer i DUF 701-mappen: `DUF 701.TV3` och `Peab Anläggning AB 2021-06-29.TV3`).
+Svar: DUF 701.TV3 (= testdata) är en äkta delmängd av Peab-filen – nr 1–185 identiska (brunnar, datum, längd, video,
+observationer, profil); Peab har 79 sträckor till (nr 186–264, 2021-06-17–24, Äppelviken, operatör Zbigniew Korzen, projekt
+DUF 701), bl.a. nr 245–247 DNBL69900 → DNBL69901 → DNBL70370 → DAG. Peab ensam: 258 aktiva, 46/65/55/87/5. Sträckan saknades för att
+listfilen pekar på den mindre filen, inte p.g.a. inläsningen (båda filerna lästes fullständigt även av gamla koden). Rättat ändå
+(granskning av inläsningen): `_tv3_rader` delar på CRLF (ensamt LF/CR i fält = mellanslag; `splitlines()` gjorde en rad av
+resten av kommentaren, och började den med `#` blev den en ny sektion – testkopia med "\n#2 brunnen" i en TVDAT-kommentar gav
+med gamla koden 39 av 1 998 observationer); sektionsrubrik bara för `#` utan `;` som matchar `TV3_SEKTION`;
+`_nr_nyckel` ('012' = '12' = '12,0'); sträcknummer som inte är heltal eller förekommer flera gånger får nr efter filens
+största och `Stracka.nr_fil` = originalet (tidigare föll de bort tyst resp. skrev över varandra och fick gemensamma
+observationer); `fordela()` fördelar TVDAT/PROFILADM/PROFILDAT-raderna – vid dubbletter k:te blocket till k:te sträckan,
+nytt block när positionen börjar om (TVDAT växer alltid, PROFILDAT monoton i alla 181 profiler) eller vid varje PROFILADM-rad;
+rader till okända nummer och TVADM-rader utan nummer räknas; `las_tv3(path, littera, varningar)` – main skickar `fel`, så
+varningarna hamnar i fel.txt och som OBS. `_samma_film(strackor)` körs först i `_over_filer` när det finns flera filer:
+aktiva filmer med lika (brunnspar, datum, klockslag, längd 0,1 m, videofil, antal observationer) räknas en gång i filen med
+flest sträckor, kopian "ersatt av samma film nr X i FIL (dubblett)" (även tomma filmer och samma brunn i båda ändar, som den
+vanliga jämförelsen hoppar över – utan detta gav båda filerna 264 i stället för 258, fem E och KNB62724 → KNB62724 dubbelt);
+konsolen säger "filen är en delmängd och räknas inte (ta bort den ur listan)" när inga aktiva finns kvar i filen. Test:
+scratchpad/trasig/ (DUF 701 med nr 5 → '5A', nr 7 → '6', LF + '#2 …' i en kommentar: identiska sträckor/observationer/profiler
+som originalet), scratchpad/upp701/ (användarens två filer: båda = Peab ensam). Facit, filer.txt med GIS och ny/ (ny inspektion
+över filgränser) oförändrade. Handledning kap. 8 (två frågor).
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter
