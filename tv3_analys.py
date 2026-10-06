@@ -212,6 +212,7 @@ GRENROR_LITTERA = r"^A{1,2}G\d*$"   # littera som betyder anslutning till grenr�
                                     # ingen brunn finns – sträckan kopplas till GIS-ledningen från den kända brunnen som
                                     # slutar i en fri ände. Samma hantering för servisanslutning och ände utan brunn
                                     # (propp): andra littera markeras med ratt = grenrör / servis / ände i brunnslittera.csv
+ANDE_LITTERA = r"^[ÄA]NDE?\d*$"     # littera som betyder ledningsände utan brunn (ÄND 35, ÄNDE1 …) – hanteras som grenrör
 GIS_GRENROR_LANGD_TOL = 0.3         # andel – GIS-ledningen med fri ände får avvika så mycket (+ 3 m) från filmens längd
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
@@ -464,7 +465,9 @@ class Stracka:
 
     @property
     def avbruten(self) -> bool:
-        return any(o.kod == "KAM" and o.attribut == "HINDE" for o in self.observationer)
+        """Inspektionen avbröts: koden KAM oavsett orsak (HINDE hinder, ANNAN annan orsak, tomt).
+        T.o.m. okt 2026 räknades bara HINDE – KAM/ANNAN (3 i DUF 701) visades inte som avbrutna."""
+        return any(o.kod == "KAM" for o in self.observationer)
 
     @property
     def relinad(self) -> bool:
@@ -527,9 +530,11 @@ class Stracka:
         """"grenrör", "servis" eller "ände utan brunn" för en ände utan brunn, annars None."""
         if sida in self.grenror_markerat:
             return self.grenror_markerat[sida]
-        lit = self.startbrunn if sida == "start" else self.slutbrunn
-        if GRENROR_LITTERA and re.match(GRENROR_LITTERA, _normlittera(lit), re.I):
+        lit = _normlittera(self.startbrunn if sida == "start" else self.slutbrunn)
+        if GRENROR_LITTERA and re.match(GRENROR_LITTERA, lit, re.I):
             return "grenrör"
+        if ANDE_LITTERA and re.match(ANDE_LITTERA, lit, re.I):
+            return "ände utan brunn"
         return None
     tidigare: dict | None = None    # närmast föregående inspektion av brunnsparet i en annan TV3-fil (OMFILMNING_OVER_FILER):
                                     # {fil, nr, datum, klass, index, langd, antal_skador, utveckling, antal} – antal = alla äldre filmer
@@ -2904,7 +2909,8 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                       len(s.skador()), s.antal_anslutningar, s.serviser_uppstroms,
                       round(s.langd_uppstroms) if s.langd_uppstroms is not None else None,
                       s.sammanfattning_skador(), s.driftatgard,
-                      "Ja" if s.avbruten else "", "Ja" if s.flerinspekterad else "", s.filmstatus, tidigare_text(s),
+                      "Ja" if s.avbruten else ("Ja (kortare än kartan)" if s.ofullstandig else ""),
+                      "Ja" if s.flerinspekterad else "", s.filmstatus, tidigare_text(s),
                       "Ja" if s.relinad else "",
                       s.littera_rattat,
                       round(pa["svackdjup"] * 100) if pa and pa["svackdjup"] is not None else None,
@@ -3947,7 +3953,7 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
          "Dimension / form", f"{dim}, {s.form.lower()}"),
         ("Antal anslutningar", str(s.antal_anslutningar), "Antal skador", str(len(s.skador()))),
         ("Konstruktionsindex", f"{s.index('K'):.1f} p/100 m (maxgrad {s.maxgrad('K') or '–'})",
-         "Avbruten inspektion", "Ja" if s.avbruten else "Nej"),
+         "Avbruten inspektion", "Ja" if s.avbruten else ("Ja (kortare än kartan)" if s.ofullstandig else "Nej")),
         ("Driftindex", f"{s.index('D'):.1f} p/100 m (maxgrad {s.maxgrad('D') or '–'})",
          "Totalindex", f"{s.index():.1f} p/100 m"),
         ("Svacka (djup / längd)", f"{pa['svackdjup'] * 100:.0f} cm / {pa['svacklangd']:.1f} m"
