@@ -528,6 +528,7 @@ listas separat i Excel eller som egen rapport"): KONFIG `DELFILMER_SEPARAT` Fals
 kvar), Observationer tar den sammanslagna sträckans observationer (delfilmerna hoppas över; med flaggan tvärtom som
 förut), `skriv_rapporter` skriver bara `visade` och `rensa_gamla_rapporter` tar bort delfilmernas gamla PDF:er
 (aktuella = visade, prefix = alla), Sammanfattning-texten anpassad. DUF 701: 187 rader i Prioritering (var 191).
+**Videofil 2** (okt 2026, användarens fråga "länken i Excel går bara till den första filmen?"): `_sammanslagen` sätter `videofil` = film a (video_sokvag från koppla_media, som körs före omfilmningen) och `Stracka.videofil_b`/`video_sokvag_b` = film b (tidigare "a + b" i samma fält, vilket med filmmapp i ArcMap gav en trasig sökväg); `Observation.film_nr` sätts av `marka`. Excel: kolumn **Videofil 2** sist i Prioritering (egen länk; `lankar` på kol.index), Observationer länkar per observation till film b när `o.film_nr == sammanslagning['b_nr']`; JSON `videofil_b`/`video_sokvag_b`; PDF-raden Videofil visar "a + b"; kartfält `VIDEO2` (video_sokvag(post, '_b'), filmmapp gäller). Test: låtsasfilmer för 72/73/170/171 → 186/187 rätt länkar, facit oförändrat.
 **Höjdfel i TV3-filen** (okt 2026, användarens rapport DUF 700 Ålsten Del 5 nr 26: lutning −26 111,8 ‰ och lodrät
 profil – brunnshöjderna i filen skiljer ~2 400 m): KONFIG `HOJD_SAKNAS_UNDER` −999 (PROFILADM/PROFILDAT-höjder
 under det → None, som GIS_SAKNAS_UNDER), `HOJD_ORIMLIG_M` 50. `kontrollera_hojder(s)` körs i `las_tv3` efter
