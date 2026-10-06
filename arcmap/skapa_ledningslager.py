@@ -66,6 +66,7 @@ TOLERANS = 2.0     # meter mellan ledningens vertex och brunnen
 MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLAGER anges)
 MAX_HOPP = 2       # brunnar en filmad stracka far passera, inkl. slutbrunnen (2 = en mellanbrunn)
 MAX_DELAR = 8      # hogsta antal ledningsbitar en stracka far besta av
+GRENROR_RADIE_EXTRA = 1.0   # m utover toleransen: sa langt fran kartunderlagets koordinat far den fria anden ligga
 URVAL    = 'INTERSECT'     # 'WITHIN' om ledningen maste ligga helt inom omradet
 
 # Falt fran ledningslagret som ska folja med till resultatet.
@@ -385,8 +386,8 @@ class Natverk(object):
     def vag_till_punkt(self, a, x, y, max_hopp, max_delar=8, radie=None):
         """Vagen fran brunn a till den fria ledningsande som ligger vid (x, y) - en ledning som
         slutar i ett grenror/pastick pa en annan ledning i stallet for i en brunn. Returnerar
-        None om ingen fri ande finns inom radie (standard tolerans + 1 m) eller ingen vag."""
-        mal = self.fri_ande_nara(x, y, radie if radie is not None else self.tol + 1.0)
+        None om ingen fri ande finns inom radie (standard tolerans + GRENROR_RADIE_EXTRA) eller ingen vag."""
+        mal = self.fri_ande_nara(x, y, radie if radie is not None else self.tol + GRENROR_RADIE_EXTRA)
         if mal is None:
             return None
         return self._vag(('B', a), mal, max_hopp, max_delar)
@@ -752,7 +753,7 @@ def skriv_svackor_bakfall(data, vagar, sr, svackor_ut, bakfall_ut, rapport_sokva
                 pos = _tal(post.get('svackpos_m'))
                 if djup is None or pos is None or djup < svacka_min_cm:
                     continue
-                par = frozenset((normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))))
+                par = par_for(post)[2]
                 if par not in vagar:
                     continue
                 pts, a, b = vagar[par]
@@ -784,7 +785,7 @@ def skriv_svackor_bakfall(data, vagar, sr, svackor_ut, bakfall_ut, rapport_sokva
                 segment = post.get('bakfall_segment') or []
                 if not segment:
                     continue
-                par = frozenset((normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))))
+                par = par_for(post)[2]
                 if par not in vagar:
                     continue
                 pts, a, b = vagar[par]
@@ -837,6 +838,23 @@ def rakna_om_bedomning(fc):
     return n, manuella
 
 
+def par_for(post):
+    """Nyckeln for en post: brunnsparet, dar en grenrorsande (ingen brunn) gors unik med den fria
+    andens koordinat - samma platshallarlittera (AG) kan sta for flera pastick fran samma brunn."""
+    a, b = normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))
+    xy = post.get('grenror_xy')
+    if post.get('grenror') in ('start', 'slut') and xy:
+        try:
+            tag = '@%d,%d' % (round(float(xy[0])), round(float(xy[1])))
+        except (TypeError, ValueError, IndexError):
+            tag = ''
+        if post['grenror'] == 'start':
+            a = (a or '') + tag
+        else:
+            b = (b or '') + tag
+    return a, b, frozenset((a, b))
+
+
 def las_kartunderlag(json_in):
     """Laser JSON-filen. Returnerar (data, bedomda, antal_per_par) dar bedomda ar
     {frozenset(brunnspar): post} med den varsta bedomningen per par."""
@@ -847,10 +865,9 @@ def las_kartunderlag(json_in):
 
     bedomda, antal_per_par = {}, {}
     for post in data.get('strackor', []):
-        a, b = normalisera(post.get('startbrunn')), normalisera(post.get('slutbrunn'))
+        a, b, par = par_for(post)
         if not a or not b or a == b:
             continue
-        par = frozenset((a, b))
         antal_per_par[par] = antal_per_par.get(par, 0) + 1
         tidigare = bedomda.get(par)
         if tidigare is None or (KLASSORDNING.get(txt(post.get('maskinell_bedomning')), 9)
@@ -1017,7 +1034,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     json_brunnar = set()
     grenror_namn = set()           # littera som ar pastick pa en annan ledning (grenror), inte brunnar
     for par, post in bedomda.items():
-        json_brunnar.update(par)
+        json_brunnar.update(n for n in par if '@' not in n)    # '@' = grenrorsande med koordinat
         if post.get('grenror'):
             grenror_namn.add(normalisera(post.get('startbrunn') if post['grenror'] == 'start'
                                          else post.get('slutbrunn')))
@@ -1265,6 +1282,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             pts = sla_ihop(vagen)
             if vand:
                 pts = pts[::-1]                    # orientera start -> slut
+                vagen = vagen[::-1]                # sa att SRC_LAGER/SRC_OID och extrafalt tas vid startbrunnen
             if len(pts) < 2:
                 continue
             n_objekt = len(set((lager, oid) for nod, p, lager, oid in vagen))
@@ -1275,7 +1293,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             ny = arcpy.Polyline(arr, sr, har_z, False)
 
             mask = txt(s.get('maskinell_bedomning') or 'E')[:2]
-            man = tidigare_manuella.get(par, '')
+            plain = frozenset((a, b))          # manuella bedomningar i lagret ar nycklade pa litterat
+            man = tidigare_manuella.get(par, '') or tidigare_manuella.get(plain, '')
             if not man:
                 # Manuell bedomning ifylld i Excel (tv3_analys --manuell) foljer med via JSON-filen
                 m_json = re.match(r'\s*([A-Ea-e])(?![A-Za-z\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6])',
@@ -1307,6 +1326,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 lager0[:100], oid0,
             ] + extra))
             traffade.add(par)
+            traffade.add(plain)
             vagar[par] = ([(x, y) for x, y, z in pts], a, b)
             n_skrivna += 1
             if n_objekt > 1:
@@ -1348,10 +1368,14 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
         if s.get('grenror') in ('start', 'slut'):
             xy = s.get('grenror_xy')
-            if not xy:
+            try:
+                gx, gy = (float(xy[0]), float(xy[1])) if xy else (None, None)
+            except (TypeError, ValueError, IndexError):
+                gx = gy = None
+            if gx is None:
                 diagnos = 'grenror: ingen GIS-ledning med fri ande kopplad i analysen (kor med gis: i listfilen)'
-            elif nat.fri_ande_nara(float(xy[0]), float(xy[1]), nat.tol + 1.0) is None:
-                diagnos = 'grenror: ingen fri ledningsande vid (%.1f, %.1f) inom toleransen' % (xy[0], xy[1])
+            elif nat.fri_ande_nara(gx, gy, nat.tol + GRENROR_RADIE_EXTRA) is None:
+                diagnos = 'grenror: ingen fri ledningsande vid (%.1f, %.1f) inom toleransen' % (gx, gy)
             else:
                 diagnos = 'grenror: ingen vag fran brunnen till den fria anden (hoj max hopp?)'
         elif a in brunns_id and b in brunns_id:
