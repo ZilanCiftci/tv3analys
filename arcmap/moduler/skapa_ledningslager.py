@@ -69,6 +69,8 @@ MAX_HOPP = 2       # brunnar en filmad stracka far passera, inkl. slutbrunnen (2
 MAX_DELAR = 50     # hogsta antal ledningsbitar en stracka far besta av (bitar mellan skarvar och brunnar som
                    # inte ar inspekterade raknas har, inte i max hopp) - bara ett skydd mot irrande sokning
 VAG_LANGD_ANDEL = 2.0   # kartvagen langre an sa ganger filmens langd + 20 m flaggas i GIS_AVVIK (inte avbrutna)
+BRUNN_AVSTAND_MAX_M = 1000   # brunnar langre isar an sa i kartan matchas inte - troligen fel littera
+BRUNN_AVSTAND_ANDEL = 3.0    # ... eller langre isar an andelen x filmens langd + 50 m (inte avbrutna filmer)
 GRENROR_RADIE_EXTRA = 1.0   # m utover toleransen: sa langt fran kartunderlagets koordinat far den fria anden ligga
 # Littera som betyder grenror/pastick (AG, AAG1, DAG4, SAG …) eller ledningsande utan brunn (AND35, ANDE1) - anvands
 # nar kartunderlaget inte sjalv markerat anden (aldre JSON). Samma monster som i tv3_analys.py.
@@ -1045,6 +1047,19 @@ def _grenrorsida(post, kanda=None):
     return None
 
 
+def _langt_isar(post, xy_a, xy_b):
+    """Avstandet mellan brunnarna om de ligger orimligt langt isar for en filmad stracka (troligen fel
+    littera), annars None."""
+    if not xy_a or not xy_b:
+        return None
+    d = _avst(xy_a, xy_b)
+    L = _tal(post.get('langd_m')) or 0.0
+    avbr = post.get('avbruten') or post.get('ofullstandig')
+    if d > BRUNN_AVSTAND_MAX_M or (not avbr and L >= 1 and d > BRUNN_AVSTAND_ANDEL * L + 50):
+        return d
+    return None
+
+
 def par_for(post):
     """Nyckeln for en post: brunnsparet, dar en grenrorsande (ingen brunn) gors unik med den fria
     andens koordinat - samma platshallarlittera (AG) kan sta for flera pastick fran samma brunn."""
@@ -1485,7 +1500,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
-    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = n_grenror_langd = 0
+    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = n_grenror_langd = n_isar = 0
     ej_filmade = []            # rader for lagret over ofilmade delar (skrivs efter huvudlagret)
     lang_lista = []
     avvik_lista = []
@@ -1497,6 +1512,9 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     try:
         for par, s in bedomda.items():
             a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
+            if _langt_isar(s, sokta.get(a), sokta.get(b)):
+                n_isar += 1
+                continue                           # diagnos i CSV:n over omatchade
             poang = None
             if attr_per_oid:
                 def poang(lager, oid, s=s):
@@ -1664,6 +1682,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     if n_grenror:
         logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror
              + (' (%d hittade pa filmens langd, utan koordinat)' % n_grenror_langd if n_grenror_langd else ''))
+    if n_isar:
+        logg('  OBS: %d strackor har brunnar som ligger orimligt langt isar i kartan (> %d m, eller > %g x filmens'
+             ' langd + 50 m) - troligen fel littera, inte matchade (se CSV:n over omatchade)'
+             % (n_isar, BRUNN_AVSTAND_MAX_M, BRUNN_AVSTAND_ANDEL))
     if n_lang:
         logg('  OBS: %d strackor fick en kartvag mycket langre an filmen (falt GIS_AVVIK) - kontrollera:' % n_lang)
         for rad in lang_lista[:30]:
@@ -1726,6 +1748,9 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                            % (gx, gy))
             else:
                 diagnos = 'grenror: ingen vag fran brunnen till den fria anden'
+        elif a in brunns_id and b in brunns_id and _langt_isar(s, sokta.get(a), sokta.get(b)):
+            diagnos = ('brunnarna ligger %.0f m isar i kartan, filmen %s m - troligen fel littera pa en av dem'
+                       ' (ratta i brunnslittera.csv)' % (_avst(sokta[a], sokta[b]), txt(s.get('langd_m'))))
         elif a in brunns_id and b in brunns_id:
             via = [v for v in (s.get('gis_via') or []) if v]
             diagnos = nat.diagnos(a, b, max(max_hopp, len(via) + 1), max(max_delar, 4 * (len(via) + 1)))
@@ -1764,7 +1789,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # Varfor? Bada brunnarna pa en ledning men ingen vag = ledningen ligger i ett annat
     # lager, ar bruten, eller passerar fler brunnar an max_hopp. En brunn en bit fran
     # ledningen = hoj toleransen.
-    bada_brunnar = [r for r in omatchade if r[2] == 'JA' and r[3] == 'JA']
+    bada_brunnar = [r for r in omatchade if r[2] == 'JA' and r[3] == 'JA'
+                    and not txt(r[9]).startswith('brunnarna ligger')]   # langt isar raknas for sig
     pa_ledning = [r for r in bada_brunnar
                   if _tal(r[5]) is not None and _tal(r[5]) <= tolerans
                   and _tal(r[6]) is not None and _tal(r[6]) <= tolerans]
