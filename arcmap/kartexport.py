@@ -179,11 +179,12 @@ KOPIANAMN = 'Aktuell stracka (export)'   # tillfalligt lager som visar den aktue
 MARKERING_LYR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'markering.lyr')
 MARKERING_TRANSPARENS = 50               # procent genomskinlighet pa det tillfalliga lagret
 MARKERING_TIPS = (
-    'Ingen markeringssymbol (.lyr) - den aktuella strackan visas med strackslagrets egen symbologi '
-    '(klassfarger). Skapa symbolen en gang i ArcMap: hogerklicka strackslagret > Properties > '
+    'Ingen markeringssymbol (.lyr) - den aktuella strackan visas med ArcMaps urvalsfarg (och med '
+    'strackslagrets egen symbologi, klassfargerna, nar lagret slacks). Skapa symbolen en gang i '
+    'ArcMap: hogerklicka strackslagret > Properties > '
     'Symbology > Features > Single symbol, valj en gul linje med bredd ca 8 pt > OK; hogerklicka '
     'lagret igen > Save As Layer File... och spara som %s. Filen ar forvald i dialogen nar den finns; '
-    'genomskinligheten satts av verktyget.' % MARKERING_LYR)
+    'genomskinligheten satts av verktyget.' % txt(MARKERING_LYR))
 
 
 class Layout(object):
@@ -235,8 +236,8 @@ class Layout(object):
         if markeringsnamn and self.mark_lyr is None and kop_mark is not None:
             self.mark_lyr = self._lagg_in(kop_mark, markeringsnamn)
         if markeringsnamn and self.mark_lyr is None:
-            logg('  mallen %s saknar markeringslagret "%s" - urval anvands i stallet'
-                 % (namn, txt(markeringsnamn)))
+            logg('  mallen %s saknar markeringslagret "%s" - %s anvands i stallet'
+                 % (namn, txt(markeringsnamn), 'markeringssymbolen' if markering_lyr else 'urval'))
         if self.mark_lyr is not None and self.mark_lyr is self.lyr:
             logg('  markeringslagret ar samma lager som strackorna i %s - en definitionsfraga skulle dolja '
                  'alla andra strackor; urval anvands i stallet' % namn)
@@ -249,13 +250,10 @@ class Layout(object):
         except Exception:
             pass
         if self.mark_lyr is None and markering_lyr:
-            if os.path.isfile(txt(markering_lyr)):
-                self.mark_lyr = self._skapa_kopia(lagernamn, txt(markering_lyr))
-                if self.mark_lyr is not None:
-                    logg('  %s: den aktuella strackan visas med symbolen i %s (tillfalligt lager "%s")'
-                         % (self.namn, os.path.basename(txt(markering_lyr)), KOPIANAMN))
-            else:
-                logg('  markeringssymbolen finns inte: %s' % txt(markering_lyr))
+            self.mark_lyr = self._skapa_kopia(lagernamn, txt(markering_lyr))
+            if self.mark_lyr is not None:
+                logg('  %s: den aktuella strackan visas med symbolen i %s (tillfalligt lager "%s")'
+                     % (self.namn, os.path.basename(txt(markering_lyr)), KOPIANAMN))
         try:
             synligt = bool(self.lyr.visible)
         except Exception:
@@ -267,47 +265,59 @@ class Layout(object):
         """Lagger ett tillfalligt lager overst i dataramen som visar den aktuella strackan
         (definitionsfraga satts i markera) och returnerar det, eller None. Med lyr_fil skapas
         lagret fran strackslagrets datakalla och far symbologin ur filen; annars en kopia av
-        strackslagret (med dess symbologi). Genomskinligheten satts fran self._transparens."""
-        kopia = None
+        strackslagret (med dess symbologi). Genomskinligheten (self._transparens) satts bara
+        pa symbolen ur filen - en genomskinlig klassfargad linje syns daligt."""
         try:
             if lyr_fil:
                 src = kalla(self.lyr)[0]
                 ny = arcpy.mapping.Layer(src)
                 ny.name = KOPIANAMN
-                # Symbologin satts innan lagret laggs i kartan (AddLayer lagger in en kopia)
+                # Symbologin satts innan lagret laggs i kartan (AddLayer lagger in en kopia) ...
                 arcpy.ApplySymbologyFromLayer_management(ny, lyr_fil)
                 arcpy.mapping.AddLayer(self.df, ny, 'TOP')
-                sokt = KOPIANAMN.lower()
+                vantat = KOPIANAMN
             else:
                 arcpy.mapping.AddLayer(self.df, self.lyr, 'TOP')
-                sokt = txt(getattr(self.lyr, 'name', lagernamn)).strip().lower()
-            # Det nya lagret ligger overst, dvs. forst bland lagren med det namnet
-            for l in arcpy.mapping.ListLayers(self.mxd, '', self.df):
-                try:
-                    if txt(l.name).strip().lower() == sokt and not getattr(l, 'isGroupLayer', False):
-                        kopia = l
-                        break
-                except Exception:
-                    continue
+                vantat = txt(getattr(self.lyr, 'name', lagernamn))
         except Exception as e:
             logg('  kunde inte lagga in ett tillfalligt lager for den aktuella strackan i %s: %s'
                  % (self.namn, txt(e)))
+            return None
+        # Det nya lagret ligger overst i dataramen, dvs. forst i listan
+        kopia = None
+        try:
+            lager = arcpy.mapping.ListLayers(self.mxd, '', self.df)
+            if lager and txt(lager[0].name).strip().lower() == vantat.strip().lower():
+                kopia = lager[0]
+            else:
+                for l in lager:
+                    if txt(l.name).strip().lower() == vantat.strip().lower() \
+                            and not getattr(l, 'isGroupLayer', False):
+                        kopia = l
+                        break
+        except Exception as e:
+            logg('  kunde inte lasa lagren i %s: %s' % (self.namn, txt(e)))
         if kopia is None:
+            logg('  OBS: det tillfalliga lagret "%s" hittades inte i %s efter att det lagts in - '
+                 'tas det inte bort automatiskt, ta bort det for hand' % (vantat, self.namn))
             return None
         try:
             kopia.name = KOPIANAMN
-        except Exception:
-            pass
-        try:
             kopia.definitionQuery = ''
             kopia.visible = True
         except Exception:
             pass
-        if self._transparens is not None:
+        if lyr_fil:
+            # ... och for sakerhets skull aven pa lagret i kartan (symbology_only)
             try:
-                kopia.transparency = int(self._transparens)
-            except Exception as e:
-                logg('  kunde inte satta genomskinlighet pa "%s": %s' % (KOPIANAMN, txt(e)))
+                arcpy.mapping.UpdateLayer(self.df, kopia, arcpy.mapping.Layer(lyr_fil), True)
+            except Exception:
+                pass
+            if self._transparens is not None:
+                try:
+                    kopia.transparency = int(self._transparens)
+                except Exception as e:
+                    logg('  kunde inte satta genomskinlighet pa "%s": %s' % (KOPIANAMN, txt(e)))
         self._kopia = kopia
         self._gammal_dq = ''
         return kopia
@@ -431,24 +441,10 @@ class Layout(object):
         except Exception:
             arcpy.SelectLayerByAttribute_management(self.lyr, 'NEW_SELECTION', where)
 
-    def aterstall(self):
-        """Aterstaller definitionsfragan respektive anvandarens ursprungliga urval, tander
-        strackslagret igen och tar bort den tillfalliga kopian."""
+    def avmarkera(self):
+        """Tar bort markeringen av den aktuella strackan (definitionsfragan respektive urvalet)
+        men behaller det tillfalliga lagret och slackningen - anropas mellan strackorna."""
         if self.lyr is None:
-            return
-        if self._gammal_synlig is not None:
-            try:
-                self.lyr.visible = self._gammal_synlig
-            except Exception:
-                pass
-        if self._kopia is not None:
-            try:
-                arcpy.mapping.RemoveLayer(self.df, self._kopia)
-            except Exception as e:
-                logg('  kunde inte ta bort den tillfalliga kopian "%s" ur %s: %s - ta bort den for hand'
-                     % (KOPIANAMN, self.namn, txt(e)))
-            self._kopia = None
-            self.mark_lyr = None
             return
         try:
             if self.mark_lyr is not None:
@@ -465,6 +461,27 @@ class Layout(object):
                     arcpy.SelectLayerByAttribute_management(self.lyr, 'CLEAR_SELECTION')
         except Exception:
             pass
+
+    def aterstall(self):
+        """Slutstadning: avmarkerar, tander strackslagret igen och tar bort det tillfalliga
+        lagret."""
+        if self.lyr is None:
+            return
+        self.avmarkera()
+        if self._gammal_synlig is not None:
+            try:
+                self.lyr.visible = self._gammal_synlig
+            except Exception:
+                pass
+            self._gammal_synlig = None
+        if self._kopia is not None:
+            try:
+                arcpy.mapping.RemoveLayer(self.df, self._kopia)
+            except Exception as e:
+                logg('  kunde inte ta bort det tillfalliga lagret "%s" ur %s: %s - ta bort det for hand'
+                     % (KOPIANAMN, self.namn, txt(e)))
+            self._kopia = None
+            self.mark_lyr = None
 
 
 def valj_layout(layouter, utb, skalor, marginal):
@@ -527,9 +544,11 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
             mark_namn = txt(getattr(hitta_lager(markeringslager), 'longName', markeringslager))
         except Exception as e:
             logg('  markeringslagret hittades inte (%s) - urval anvands i stallet' % txt(e))
-    if not mark_namn and not (markering_lyr and os.path.isfile(txt(markering_lyr))):
-        logg(MARKERING_TIPS if not markering_lyr else
-             'Markeringssymbolen finns inte (%s). %s' % (txt(markering_lyr), MARKERING_TIPS))
+    if markering_lyr and not os.path.isfile(txt(markering_lyr)):
+        logg('Markeringssymbolen finns inte: %s' % txt(markering_lyr))
+        markering_lyr = None
+    if not mark_namn and not markering_lyr:
+        logg(MARKERING_TIPS)
     layouter = []
     mallar = [(m, n) for m, n in ((mall_liggande, 'liggande'), (mall_staende, 'staende')) if m]
     if mallar:
@@ -631,7 +650,7 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
             _centrera(lo.df, utb, skala, lo.ram)
             for annan in layouter:
                 if annan is not lo:
-                    annan.aterstall()
+                    annan.avmarkera()
             lo.markera([p['OID@'] for p in grupp], src, oidfalt)
             p0 = grupp[0]
             langd = sum(_tal(p.get('LANGD_M')) or 0 for p in grupp) if per_etapp else None

@@ -150,12 +150,13 @@ def _minne_fyll(verktyg, params):
         if v in (None, '') or p.direction != 'Input':
             continue
         try:
-            if p.value not in (None, '') and not p.multiValue:
-                continue
+            # Forvalda varden (t.ex. dpi 200, kryssrutor) skrivs over av senaste korningens val
             if p.multiValue:
                 if p.valueAsText:
                     continue
                 _satt_varden(p, [x for x in v.split(';') if x])
+            elif p.datatype == 'GPBoolean' or v.strip().lower() in ('true', 'false'):
+                p.value = v.strip().lower() == 'true'
             else:
                 p.value = v
         except Exception:
