@@ -591,7 +591,14 @@ lyrfilen rätt, än fast jag har skapat en lyrfil" – Skapa ledningslager satte
 vilket ArcMap ignorerar för utdataparametrar (bara getParameterInfo/updateParameters räknas). Nu `_satt_symbologi(param,
 lyr)` i getParameterInfo (STANDARD_LYR, LYR_SVACKOR/LYR_BAKFALL = arcmap/svackor.lyr/bakfall.lyr i .pyt) och i
 updateParameters (vald .lyr i param 6 och svack/bakfall-filerna), kvar i execute (ofarligt); updateMessages varnar när den
-valda .lyr-filen saknas. Test: scratchpad/pytkoll3_test.py. Scratchpad-testerna importerar från arcmap/moduler
+valda .lyr-filen saknas. Test: scratchpad/pytkoll3_test.py. Samma dag: "KTB1002097 → KNB1000818 … vag finns men via
+12 bitar (max 8) – ledningen är uppbruten i bitar i GIS:en" – `MAX_DELAR` 8 (inte i dialogen) → 50, alla standardvärden
+använder konstanten; `VAG_LANGD_ANDEL` 2,0: kartväg > 2 × film + 20 m (ej avbruten/ofullständig) skrivs i GIS_AVVIK
+("kartvagen 110 m, filmen 10 m") och loggas (`n_lang`); diagnosen säger "hoj MAX_DELAR i skapa_ledningslager.py".
+`Natverk._basta` är nu Dijkstra över (nod, mellanbrunnar, bitar) med kostnad (avvikelsepoäng per ledningsobjekt i följd,
+bitar, längd) – DFS-uppräkningen (tak 2000 vägar) hann inte fram när S- och D-ledningens skarvar låg inom toleransen
+(2^12 vägar); returnerar `forsta` om ingen hittas. Test: scratchpad/test_bitar.py (12 objekt mellan två brunnar, omväg
+110 m mot film 10 m, max_delar 8 → diagnos, parallell D i 12 bitar med delade skarvnoder → rätt typ båda hållen). Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
