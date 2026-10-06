@@ -22,13 +22,59 @@ import os
 import sys
 import arcpy
 
-HAR = os.path.dirname(os.path.abspath(__file__))
 # Python-modulerna ligger i undermappen moduler; verktygsladan, .lyr-filerna och senaste_val.json
-# ligger kvar i arcmap-mappen. moduler forst i sokvagen, sa att gamla kopior i arcmap-mappen inte anvands.
-MODULMAPP = os.path.join(HAR, 'moduler')
-if MODULMAPP in sys.path:
-    sys.path.remove(MODULMAPP)
-sys.path.insert(0, MODULMAPP)
+# ligger kvar i arcmap-mappen. moduler laggs forst i sokvagen, sa att gamla kopior i arcmap-mappen
+# inte anvands. __file__ pekar inte alltid pa .pyt-filen nar ArcMap kor ett verktyg (koden kors
+# som en strang), sa mappen soks aven i sys.path - dit lagger ArcMap verktygsladans mapp - och i
+# arbetskatalogen.
+
+
+def _kandidater():
+    ut = []
+    try:
+        f = __file__
+        if f:
+            ut.append(os.path.dirname(os.path.abspath(f)))
+    except NameError:
+        pass
+    ut += [p for p in sys.path if p and not os.path.basename(p.rstrip('\\/')).lower() == 'moduler']
+    try:
+        ut.append(os.getcwd())
+    except Exception:
+        pass
+    sedda, unika = set(), []
+    for p in ut:
+        try:
+            n = os.path.normcase(os.path.abspath(p))
+        except Exception:
+            continue
+        if n not in sedda:
+            sedda.add(n)
+            unika.append(p)
+    return unika
+
+
+def _hitta_modulmapp():
+    """(arcmap-mappen, moduler-mappen) - forsta kandidat dar moduler/skapa_ledningslager.py finns,
+    annars (forsta kandidaten, None)."""
+    kand = _kandidater()
+    for p in kand:
+        m = os.path.join(p, 'moduler')
+        if os.path.isfile(os.path.join(m, 'skapa_ledningslager.py')):
+            return p, m
+    return (kand[0] if kand else ''), None
+
+
+def _anvand_modulmapp():
+    har, mod = _hitta_modulmapp()
+    if mod:
+        if mod in sys.path:
+            sys.path.remove(mod)
+        sys.path.insert(0, mod)
+    return har, mod
+
+
+HAR, MODULMAPP = _anvand_modulmapp()
 
 # .lyr-fil med symbologi som anvands om ingen annan anges (sparas fran ArcMap, se handledningen 7.2)
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
@@ -61,7 +107,18 @@ STANDARD_VG_TILL = ['LevelTo', 'VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
 def _ladda_modul(namn='skapa_ledningslager'):
     """Importerar (och laddar om) en modul i arcmap/moduler sa att andringar slar igenom."""
-    modul = __import__(namn)
+    _anvand_modulmapp()                    # sys.path kan ha aterstallts sedan verktygsladan lastes
+    try:
+        modul = __import__(namn)
+    except ImportError as e:
+        try:
+            fil = __file__
+        except NameError:
+            fil = '(okant)'
+        raise ImportError(
+            'Hittar inte modulen %s (%s).\nMappen "moduler" med Python-filerna ska ligga bredvid '
+            'tv3_verktyg.pyt. Verktygsladan letade i:\n  %s\n__file__ = %s'
+            % (namn, e, '\n  '.join(os.path.join(p, 'moduler') for p in _kandidater()), fil))
     try:
         reload(modul)                 # Python 2
     except NameError:
