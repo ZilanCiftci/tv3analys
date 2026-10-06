@@ -66,7 +66,9 @@ LYR_FIL = os.path.join(ARCMAP_MAPP, 'bedomda_ledningar.lyr')
 TOLERANS = 2.0     # meter mellan ledningens vertex och brunnen
 MARGINAL = 100.0   # meter utanfor omradet dar brunnar anda las in (om OMRADESLAGER anges)
 MAX_HOPP = 2       # brunnar en filmad stracka far passera, inkl. slutbrunnen (2 = en mellanbrunn)
-MAX_DELAR = 8      # hogsta antal ledningsbitar en stracka far besta av
+MAX_DELAR = 50     # hogsta antal ledningsbitar en stracka far besta av (bitar mellan skarvar och brunnar som
+                   # inte ar inspekterade raknas har, inte i max hopp) - bara ett skydd mot irrande sokning
+VAG_LANGD_ANDEL = 2.0   # kartvagen langre an sa ganger filmens langd + 20 m flaggas i GIS_AVVIK (inte avbrutna)
 GRENROR_RADIE_EXTRA = 1.0   # m utover toleransen: sa langt fran kartunderlagets koordinat far den fria anden ligga
 # Parallella ledningar (spill och dag i samma schakt, braddbrunnar med tva kammare): nar flera vagar
 # ar lika korta valjs den vars ledningstyp (forsta bokstaven S/D/K) och dimension stammer med filmen.
@@ -374,7 +376,7 @@ class Natverk(object):
             n_bitar += 1
         return n_bitar
 
-    def vag(self, a, b, max_hopp, max_delar=8, poang=None):
+    def vag(self, a, b, max_hopp, max_delar=MAX_DELAR, poang=None):
         """Vagen med farst bitar fran brunn a till brunn b, eller None. Hogst
         max_hopp - 1 andra sokta brunnar far passeras, och hogst max_delar bitar.
         poang: se _vag - val mellan parallella ledningar efter typ och dimension."""
@@ -394,7 +396,7 @@ class Natverk(object):
                         basta = (d2, nyckel)
         return basta[1] if basta else None
 
-    def vag_till_punkt(self, a, x, y, max_hopp, max_delar=8, radie=None, poang=None):
+    def vag_till_punkt(self, a, x, y, max_hopp, max_delar=MAX_DELAR, radie=None, poang=None):
         """Vagen fran brunn a till den fria ledningsande som ligger vid (x, y) - en ledning som
         slutar i ett grenror/pastick pa en annan ledning i stallet for i en brunn. Returnerar
         None om ingen fri ande finns inom radie (standard tolerans + GRENROR_RADIE_EXTRA) eller ingen vag."""
@@ -403,7 +405,7 @@ class Natverk(object):
             return None
         return self._vag(('B', a), mal, max_hopp, max_delar, poang)
 
-    def _vag(self, start, mal, max_hopp, max_delar=8, poang=None):
+    def _vag(self, start, mal, max_hopp, max_delar=MAX_DELAR, poang=None):
         """Vagen med farst bitar. Med poang (funktion (lager, oid) -> avvikelsepoang mot filmen,
         t.ex. annan ledningstyp eller dimension) jamfors alla vagar med hogst EXTRA_DELAR fler
         bitar an den kortaste, och den med lagst poang tas - sa att en spillvattenfilm hamnar
@@ -419,37 +421,42 @@ class Natverk(object):
     def _poang(vagen, poang):
         return sum(poang(lager, oid) for lager, oid in set((l, o) for n, p, l, o in vagen))
 
-    def _basta(self, start, mal, max_hopp, max_delar, poang, forsta, tak=2000):
-        """Alla enkla vagar start -> mal med hogst max_delar bitar och max_hopp - 1 mellanbrunnar
-        (djupet forst, hogst tak vagar), rankade pa (poang, antal bitar, langd)."""
-        basta = (self._poang(forsta, poang), len(forsta), _langd(sla_ihop(forsta)), forsta)
-        n = [0]
-
-        def gren(nod, vagen, hopp, sedda):
-            if n[0] >= tak or len(vagen) >= max_delar:
-                return
+    def _basta(self, start, mal, max_hopp, max_delar, poang, forsta):
+        """Basta vagen start -> mal med hogst max_delar bitar och max_hopp - 1 mellanbrunnar, rankad
+        pa (avvikelsepoang, antal bitar, langd). Kortaste-vag-sokning (Dijkstra) over tillstand
+        (nod, mellanbrunnar, bitar) - en uppraknning av alla vagar hann inte fram nar spill- och
+        dagledningen ar delade i manga bitar vars skarvar ligger inom toleransen fran varandra
+        (2^12 kombinationer for 12 bitar). Poangen raknas en gang per ledningsobjekt i foljd."""
+        import heapq
+        from itertools import count
+        lopnr = count()
+        ko = [((0, 0, 0.0), next(lopnr), start, 0, [])]
+        klara = set()
+        while ko:
+            kost, _, nod, hopp, vagen = heapq.heappop(ko)
+            if nod == mal:
+                return vagen
+            nyckel = (nod, hopp, len(vagen))
+            if nyckel in klara:
+                continue
+            klara.add(nyckel)
+            if len(vagen) >= max_delar:
+                continue
+            forra = (vagen[-1][2], vagen[-1][3]) if vagen else None
             for annan, pts, lager, oid in self.kanter.get(nod, ()):
-                if annan == mal:
-                    n[0] += 1
-                    v = vagen + [(annan, pts, lager, oid)]
-                    nyckel = (self._poang(v, poang), len(v), _langd(sla_ihop(v)), v)
-                    if nyckel[:3] < tuple(basta[:3]):
-                        basta[:] = nyckel
+                h = hopp
+                if annan != mal and annan[0] == 'B':
+                    h += 1
+                    if h > max_hopp - 1:
+                        continue
+                if (annan, h, len(vagen) + 1) in klara:
                     continue
-                if annan in sedda:
-                    continue
-                h = hopp + (1 if annan[0] == 'B' else 0)
-                if h > max_hopp - 1:
-                    continue
-                sedda.add(annan)
-                gren(annan, vagen + [(annan, pts, lager, oid)], h, sedda)
-                sedda.discard(annan)
+                extra = 0 if (lager, oid) == forra else poang(lager, oid)
+                ny = (kost[0] + extra, kost[1] + 1, kost[2] + _langd(pts))
+                heapq.heappush(ko, (ny, next(lopnr), annan, h, vagen + [(annan, pts, lager, oid)]))
+        return forsta
 
-        basta = list(basta)
-        gren(start, [], 0, set([start]))
-        return basta[3]
-
-    def _kortaste(self, start, mal, max_hopp, max_delar=8):
+    def _kortaste(self, start, mal, max_hopp, max_delar=MAX_DELAR):
         from collections import deque
         if start not in self.kanter or mal not in self.kanter:
             return None
@@ -489,7 +496,7 @@ class Natverk(object):
                     ko.append(annan)
         return sedda
 
-    def diagnos(self, a, b, max_hopp, max_delar=8):
+    def diagnos(self, a, b, max_hopp, max_delar=MAX_DELAR):
         """Varfor hittades ingen vag mellan a och b? Returnerar en forklaring."""
         start, mal = ('B', a), ('B', b)
         if start not in self.kanter or mal not in self.kanter:
@@ -500,7 +507,7 @@ class Natverk(object):
             if n_br + 1 > max_hopp:
                 return ('vag finns via %d bitar och %d andra brunnar - hoj max hopp till %d'
                         % (len(v), n_br, n_br + 1))
-            return ('vag finns men via %d bitar (max %d) - hoj max delar'
+            return ('vag finns men via %d ledningsbitar (max %d) - hoj MAX_DELAR i skapa_ledningslager.py'
                     % (len(v), max_delar))
         ka = self.komponent(start)
         kb = self.komponent(mal)
@@ -1068,7 +1075,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
           omradeslager=None, csv_ut=None, lyr_fil=None,
           tolerans=2.0, marginal=100.0, max_hopp=2, urval='INTERSECT',
           kopiera_falt=None, lagg_till_i_kartan=True,
-          rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=8,
+          rapportmapp=None, filmmapp=None, geojson_ut=None, max_delar=MAX_DELAR,
           svackor_ut=None, bakfall_ut=None, svacka_min_cm=SVACKA_MIN_CM,
           typ_falt=None, dim_falt=None, klipp_avbrutna=KLIPP_AVBRUTNA):
     """Bygger ledningslagret. Returnerar sokvagen till den skrivna featureklassen.
@@ -1387,7 +1394,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
-    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = 0
+    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = 0
+    lang_lista = []
     avvik_lista = []
     if attr_per_oid:
         logg('  ledningstyp/dimension ur %s jamfors med filmen vid val mellan parallella ledningar'
@@ -1464,6 +1472,15 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                     klippt = '%.1f av %.1f m fran %s' % (langd_film, l_karta, b if fran_b else a)
                     n_klippta += 1
 
+            # Kartvagen orimligt lang mot filmen (fel vag genom natet, eller fel littera)?
+            if langd_film and langd_film >= 1 and not (s.get('avbruten') or s.get('ofullstandig')):
+                l_vag = _langd(hela_pts)
+                if l_vag > VAG_LANGD_ANDEL * langd_film + 20:
+                    txt_l = 'kartvagen %.0f m, filmen %.0f m' % (l_vag, langd_film)
+                    avvik = (avvik + '; ' + txt_l) if avvik else txt_l
+                    n_lang += 1
+                    lang_lista.append('%s -> %s (%s nr %s): %s' % (a, b, txt(s.get('fil')), s.get('nr'), txt_l))
+
             arr = arcpy.Array()
             for x, y, z in pts:
                 arr.add(arcpy.Point(x, y, z if har_z else None))
@@ -1515,6 +1532,10 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
     if n_grenror:
         logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror)
+    if n_lang:
+        logg('  OBS: %d strackor fick en kartvag mycket langre an filmen (falt GIS_AVVIK) - kontrollera:' % n_lang)
+        for rad in lang_lista[:30]:
+            logg('    ' + rad)
     if n_via:
         logg('  %d strackor passerar fler brunnar an max hopp - tillatet eftersom GIS-kopplingen i'
              ' tv3_analys gick via dem (gis_via)' % n_via)
