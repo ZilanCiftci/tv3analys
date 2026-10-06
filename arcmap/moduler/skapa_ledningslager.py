@@ -70,6 +70,11 @@ MAX_DELAR = 50     # hogsta antal ledningsbitar en stracka far besta av (bitar m
                    # inte ar inspekterade raknas har, inte i max hopp) - bara ett skydd mot irrande sokning
 VAG_LANGD_ANDEL = 2.0   # kartvagen langre an sa ganger filmens langd + 20 m flaggas i GIS_AVVIK (inte avbrutna)
 GRENROR_RADIE_EXTRA = 1.0   # m utover toleransen: sa langt fran kartunderlagets koordinat far den fria anden ligga
+# Littera som betyder grenror/pastick (AG, AAG1, DAG4, SAG …) eller ledningsande utan brunn (AND35, ANDE1) - anvands
+# nar kartunderlaget inte sjalv markerat anden (aldre JSON). Samma monster som i tv3_analys.py.
+GRENROR_LITTERA = r'^[DSK]?A{1,2}G\d*$'
+ANDE_LITTERA = '^[\u00c4A]NDE?\\d*$'
+GRENROR_LANGD_TOL = 0.3     # grenror utan koordinat: fri ande vars vag fran brunnen ar filmens langd +- 30 % + 3 m
 # Parallella ledningar (spill och dag i samma schakt, braddbrunnar med tva kammare): nar flera vagar
 # ar lika korta valjs den vars ledningstyp (forsta bokstaven S/D/K) och dimension stammer med filmen.
 TYP_FALT = None            # falt i ledningslagret med ledningstyp, t.ex. 'PipeType' (DSL/SSL/KSL)
@@ -279,7 +284,11 @@ class Natverk(object):
     strackor som ar uppdelade i flera ledningsobjekt (t.ex. vid materialbyte) och
     strackor dar brunnen ligger pa linjen utan egen vertex."""
 
-    def __init__(self, sokta, tol, sokradie=25.0):
+    def __init__(self, sokta, tol, sokradie=25.0, passera=None):
+        """passera: ovriga brunnar {id: (x, y)} (inte i JSON-filen). Ledningsandar inom toleransen fran en
+        sadan brunn blir samma nod ('V', id), sa att en ledning som ar uppdelad vid en brunn som inte
+        inspekterats hanger ihop aven nar andarna ligger mer an toleransen isar (stora brunnar,
+        braddbrunnar). De raknas inte som hopp och delar inte ledningar som bara passerar forbi."""
         self.tol = float(tol)
         if not self.tol > 0:
             raise RuntimeError('Toleransen maste vara storre an 0 m')
@@ -293,6 +302,11 @@ class Natverk(object):
         self.andar = {}        # rutnat over fria andar: cell -> [(nyckel, x, y)]
         self.n_andar = 0
         self.koord = dict((('B', bid), (x, y)) for bid, (x, y) in sokta.items())
+        self.passera = {}      # rutnat over passerbara brunnar: cell -> [(nyckel, x, y)]
+        for bid, (x, y) in (passera or {}).items():
+            if bid in sokta:
+                continue
+            self.passera.setdefault((int(x // self.tol), int(y // self.tol)), []).append((('V', bid), x, y))
         if sokta:
             xs = [p[0] for p in sokta.values()]
             ys = [p[1] for p in sokta.values()]
@@ -326,6 +340,20 @@ class Natverk(object):
                 for nyckel, ex, ey in self.andar.get((cx + dx, cy + dy), ()):
                     if (ex - x) ** 2 + (ey - y) ** 2 <= c * c:
                         return nyckel
+        # anden ligger vid en brunn som inte inspekterats: brunnens nod (andar pa var sin sida om en
+        # stor brunn hanger da ihop aven nar de ar mer an toleransen isar)
+        basta = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for nyckel, bx, by in self.passera.get((cx + dx, cy + dy), ()):
+                    d2 = (bx - x) ** 2 + (by - y) ** 2
+                    if d2 <= c * c and (basta is None or d2 < basta[0]):
+                        basta = (d2, nyckel, bx, by)
+        if basta:
+            nyckel = basta[1]
+            self.andar.setdefault((cx, cy), []).append((nyckel, x, y))
+            self.koord.setdefault(nyckel, (basta[2], basta[3]))
+            return nyckel
         self.n_andar += 1
         nyckel = ('P', self.n_andar)
         self.andar.setdefault((cx, cy), []).append((nyckel, x, y))
@@ -404,6 +432,40 @@ class Natverk(object):
         if mal is None:
             return None
         return self._vag(('B', a), mal, max_hopp, max_delar, poang)
+
+    def vag_till_fri_ande(self, a, langd, tol_langd, max_delar=MAX_DELAR, poang=None):
+        """Grenror/ande utan koordinat: vagen fran brunn a (utan andra inspekterade brunnar emellan) till den
+        fria ledningsande ('P'-nod som ar en atervandsande eller en knutpunkt, inte en skarv mitt i en
+        ledning) vars avstand langs natet ligger narmast filmens langd, inom tol_langd. Returnerar
+        (vagen, avstand) eller (None, None)."""
+        import heapq
+        from itertools import count
+        start = ('B', a)
+        if start not in self.kanter or not langd:
+            return None, None
+        tak = langd + tol_langd
+        lopnr = count()
+        ko = [(0.0, next(lopnr), start, [])]
+        klar = {}
+        basta = None
+        while ko:
+            d, _, nod, vagen = heapq.heappop(ko)
+            if nod in klar or len(vagen) > max_delar:
+                continue
+            klar[nod] = d
+            if nod[0] == 'P' and len(self.kanter.get(nod, ())) != 2:
+                avv = abs(d - langd)
+                if avv <= tol_langd:
+                    p = self._poang(vagen, poang) if poang else 0
+                    if basta is None or (p, avv) < (basta[0], basta[1]):
+                        basta = (p, avv, vagen, d)
+            for annan, pts, lager, oid in self.kanter.get(nod, ()):
+                if annan[0] == 'B' or annan in klar:
+                    continue
+                d2 = d + _langd(pts)
+                if d2 <= tak:
+                    heapq.heappush(ko, (d2, next(lopnr), annan, vagen + [(annan, pts, lager, oid)]))
+        return (basta[2], basta[3]) if basta else (None, None)
 
     def _vag(self, start, mal, max_hopp, max_delar=MAX_DELAR, poang=None):
         """Vagen med farst bitar. Med poang (funktion (lager, oid) -> avvikelsepoang mot filmen,
@@ -502,6 +564,8 @@ class Natverk(object):
         if start not in self.kanter or mal not in self.kanter:
             return 'brunnen ligger inte pa nagon ledning'
         v = self.vag(a, b, 999, 200)
+        if v and _langd(sla_ihop(v)) < 0.05:
+            return 'brunnarna ligger pa samma plats i kartan (ledning med langd 0)'
         if v:
             n_br = sum(1 for nod, pts, lager, oid in v[:-1] if nod[0] == 'B')
             if n_br + 1 > max_hopp:
@@ -960,6 +1024,24 @@ def rakna_om_bedomning(fc):
     return n, manuella
 
 
+def _grenrorsida(post, kanda=None):
+    """'start'/'slut' om den anden ar ett grenror/pastick, en servis eller en ande utan brunn: enligt
+    kartunderlaget (tv3_analys), annars enligt litteramonstren GRENROR_LITTERA/ANDE_LITTERA nar den andra
+    brunnen ar kand (kanda = brunnarna i kartan). Annars None."""
+    g = post.get('grenror')
+    if g in ('start', 'slut'):
+        return g
+    a, b = normalisera(post.get('startbrunn')) or '', normalisera(post.get('slutbrunn')) or ''
+
+    def ar_grenror(n):
+        return bool(n) and bool(re.match(GRENROR_LITTERA, n) or re.match(ANDE_LITTERA, n))
+    if ar_grenror(a) and not ar_grenror(b) and (kanda is None or b in kanda):
+        return 'start'
+    if ar_grenror(b) and not ar_grenror(a) and (kanda is None or a in kanda):
+        return 'slut'
+    return None
+
+
 def par_for(post):
     """Nyckeln for en post: brunnsparet, dar en grenrorsande (ingen brunn) gors unik med den fria
     andens koordinat - samma platshallarlittera (AG) kan sta for flera pastick fran samma brunn."""
@@ -1161,9 +1243,9 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     grenror_namn = set()           # littera som ar pastick pa en annan ledning (grenror), inte brunnar
     for par, post in bedomda.items():
         json_brunnar.update(n for n in par if '@' not in n)    # '@' = grenrorsande med koordinat
-        if post.get('grenror'):
-            grenror_namn.add(normalisera(post.get('startbrunn') if post['grenror'] == 'start'
-                                         else post.get('slutbrunn')))
+        sida = _grenrorsida(post, brunns_id)
+        if sida:
+            grenror_namn.add(normalisera(post.get('startbrunn') if sida == 'start' else post.get('slutbrunn')))
     json_brunnar -= grenror_namn
     saknade = sorted(json_brunnar - brunns_id)
     if grenror_namn:
@@ -1310,7 +1392,11 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         logg('  tomma tal (t.ex. lutning utan profil) skrivs som 0 i shapefil')
 
     # ---------------------------------------------------- 5. Bygg natverk av ledningsbitar
-    nat = Natverk(sokta, tolerans)
+    passera = {}               # ovriga brunnar: ledningsandar vid dem hanger ihop (se Natverk)
+    for bid, x, y in brunnar:
+        if bid not in sokta and bid not in passera:
+            passera[bid] = (x, y)
+    nat = Natverk(sokta, tolerans, passera=passera)
     extra_per_oid = {}
     attr_per_oid = {}          # (lager, oid) -> (ledningstyp, dimension) nar typ_falt/dim_falt angetts
     n_lednkoll = n_nara = n_bitar = 0
@@ -1394,7 +1480,7 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
-    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = 0
+    n_skrivna = n_flerdelade = n_grenror = n_avvik = n_klippta = n_via = n_lang = n_grenror_langd = 0
     lang_lista = []
     avvik_lista = []
     if attr_per_oid:
@@ -1413,12 +1499,12 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
             # Passerar filmen flera brunnar enligt tv3_analys GIS-koppling (ingen direkt ledning, t.ex.
             # en avbruten film som gick forbi brunnar utan att stanna) far vagen passera just sa manga
             via = [v for v in (s.get('gis_via') or []) if v]
-            hopp_s = max(max_hopp, len(via) + 1)
+            hopp_s = max(max_hopp, 2 * len(via) + 2)     # inspekterade brunnar nara vagen raknas ocksa i kartan
             delar_s = max(max_delar, 4 * (len(via) + 1))
             vagen = nat.vag(a, b, hopp_s, delar_s, poang)
             if vagen and hopp_s > max_hopp:
                 n_via += 1
-            grenror = s.get('grenror') if s.get('grenror') in ('start', 'slut') else None
+            grenror = _grenrorsida(s, brunns_id)
             vand = False
             if not vagen and grenror and s.get('grenror_xy'):
                 # anslutning till grenror: vag fran den kanda brunnen till den fria anden som
@@ -1432,6 +1518,16 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
                 if vagen:
                     n_grenror += 1
                     vand = grenror == 'start'      # vagen soktes fran slutbrunnen
+            if not vagen and grenror:
+                # ingen koordinat (eller ingen vag dit): fri ledningsande pa filmens avstand fran brunnen
+                langd_g = _tal(s.get('langd_m'))
+                if langd_g and langd_g >= 1:
+                    vagen, d_g = nat.vag_till_fri_ande(b if grenror == 'start' else a, langd_g,
+                                                       GRENROR_LANGD_TOL * langd_g + 3.0, delar_s, poang)
+                    if vagen:
+                        n_grenror += 1
+                        n_grenror_langd += 1
+                        vand = grenror == 'start'
             if not vagen:
                 continue
             pts = sla_ihop(vagen)
@@ -1531,7 +1627,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
     if n_grenror:
-        logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror)
+        logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror
+             + (' (%d hittade pa filmens langd, utan koordinat)' % n_grenror_langd if n_grenror_langd else ''))
     if n_lang:
         logg('  OBS: %d strackor fick en kartvag mycket langre an filmen (falt GIS_AVVIK) - kontrollera:' % n_lang)
         for rad in lang_lista[:30]:
@@ -1580,18 +1677,20 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         if par in traffade:
             continue
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
-        if s.get('grenror') in ('start', 'slut'):
+        if _grenrorsida(s, brunns_id):
             xy = s.get('grenror_xy')
             try:
                 gx, gy = (float(xy[0]), float(xy[1])) if xy else (None, None)
             except (TypeError, ValueError, IndexError):
                 gx = gy = None
             if gx is None:
-                diagnos = 'grenror: ingen GIS-ledning med fri ande kopplad i analysen (kor med gis: i listfilen)'
+                diagnos = ('grenror: ingen fri ledningsande pa filmens langd (%s m +- %.0f m) fran brunnen'
+                           % (txt(s.get('langd_m')), GRENROR_LANGD_TOL * (_tal(s.get('langd_m')) or 0) + 3))
             elif nat.fri_ande_nara(gx, gy, nat.tol + GRENROR_RADIE_EXTRA) is None:
-                diagnos = 'grenror: ingen fri ledningsande vid (%.1f, %.1f) inom toleransen' % (gx, gy)
+                diagnos = ('grenror: ingen fri ledningsande vid (%.1f, %.1f) och ingen pa filmens langd fran brunnen'
+                           % (gx, gy))
             else:
-                diagnos = 'grenror: ingen vag fran brunnen till den fria anden (hoj max hopp?)'
+                diagnos = 'grenror: ingen vag fran brunnen till den fria anden'
         elif a in brunns_id and b in brunns_id:
             via = [v for v in (s.get('gis_via') or []) if v]
             diagnos = nat.diagnos(a, b, max(max_hopp, len(via) + 1), max(max_delar, 4 * (len(via) + 1)))

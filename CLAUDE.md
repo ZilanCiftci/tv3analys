@@ -598,7 +598,24 @@ använder konstanten; `VAG_LANGD_ANDEL` 2,0: kartväg > 2 × film + 20 m (ej avb
 `Natverk._basta` är nu Dijkstra över (nod, mellanbrunnar, bitar) med kostnad (avvikelsepoäng per ledningsobjekt i följd,
 bitar, längd) – DFS-uppräkningen (tak 2000 vägar) hann inte fram när S- och D-ledningens skarvar låg inom toleransen
 (2^12 vägar); returnerar `forsta` om ingen hittas. Test: scratchpad/test_bitar.py (12 objekt mellan två brunnar, omväg
-110 m mot film 10 m, max_delar 8 → diagnos, parallell D i 12 bitar med delade skarvnoder → rätt typ båda hållen). Scratchpad-testerna importerar från arcmap/moduler
+110 m mot film 10 m, max_delar 8 → diagnos, parallell D i 12 bitar med delade skarvnoder → rätt typ båda hållen). Samma dag
+användarens omatchade-lista (30 rader): grenrör DAG4/SAG/AAG1/AG/ÄND35/ÄND10 "ingen GIS-ledning med fri ände kopplad"
+(saknad grenror_xy), DAG ej igenkänt, KNB1016065 → KNBL62780 m.fl. "bruten med mer än 25 m glapp", KRB68691 → KNBL62697 (E)
+"via 1 bitar", BDNB1015633 → KNB1016294 "via 8 bitar och 7 andra brunnar" trots gis_via (4 brunnar), samt riktigt saknade
+littera (BNB66928, BNBL69902, BTB61147, KRB1, KRB62766, DNB77280, KNB62719, KRB1016112, STBEXTRA → litterafilen). Rättat:
+`GRENROR_LITTERA` r"^[DSK]?A{1,2}G\d*$" i både tv3_analys och skapa_ledningslager (DAG, DAG4, SAG, KAG2; Peab nr 247
+DNBL70370 → DAG nu grenrör; facit oförändrat); skapa_ledningslager `_grenrorsida(post, kanda)` = JSON:s grenror annars
+mönstren GRENROR_LITTERA/ANDE_LITTERA när motbrunnen finns (äldre JSON); `Natverk.vag_till_fri_ande(a, langd, tol)`:
+Dijkstra på längd från brunnen utan att passera B-noder till P-nod med grad ≠ 2 (återvändsände eller knutpunkt, inte skarv)
+närmast filmens längd inom `GRENROR_LANGD_TOL` 0,3 × L + 3 m, poäng (typ/dim) först – används när grenror_xy saknas eller
+inte gav väg (loggas "hittade på filmens längd"); `Natverk(..., passera)`: alla övriga brunnar ur brunnslagren som
+'V'-noder bara för ledningsändar inom toleransen (`_andnod`: först befintliga ändar, sedan närmaste V-brunn; ledningar som
+passerar förbi delas inte, V räknas inte som hopp) – broar glapp vid stora icke inspekterade brunnar; via-poster får
+max hopp 2·len(via)+2; diagnosen "brunnarna ligger på samma plats i kartan (ledning med langd 0)" när vägen har längd 0
+(rensbrunn i nedstigningsbrunn – E-raden); grenrörsdiagnoserna säger "ingen fri ledningsände på filmens längd (L m ± T m)".
+Kvar som användarens sak: SRB64259 2,0 m från ledningen (tolerans 2 → höj till 2,5), saknade littera. Test:
+scratchpad/test_gren2.py (påstick mitt på huvudledning utan koordinat, ÄND35 markerad utan koordinat, glapp 3 m vid
+icke inspekterad brunn, två brunnar på samma punkt) och test_grenror.py (ny diagnostext). Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
