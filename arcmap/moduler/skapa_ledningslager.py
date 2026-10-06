@@ -390,6 +390,21 @@ class Natverk(object):
                         z = a[2] + t * (b[2] - a[2])
                     traffar[bid] = (matt[i] + t * seglen, d, (q[0], q[1], z))
 
+        # Tva brunnar som hamnar narmare varandra langs ledningen an halva deras verkliga avstand kan inte
+        # bada ligga pa den: den ena ligger bara inom toleransen fran linjen (t.ex. en ledning som gar ut
+        # fran brunn A och passerar 3 m fran brunn B). Bara brunnen narmast linjen behalls - annars blev
+        # det en bit med langd 0 mellan A och B som vagsokningen tog i stallet for den riktiga ledningen.
+        if len(traffar) > 1:
+            behall = {}
+            for bid, (m, d, q) in sorted(traffar.items(), key=lambda kv: kv[1][1]):
+                xy = self.koord.get(('B', bid))
+                if xy is not None and any(
+                        abs(m - m2) < 0.5 * _avst(xy, self.koord.get(('B', b2), xy))
+                        for b2, (m2, d2, q2) in behall.items()):
+                    continue
+                behall[bid] = (m, d, q)
+            traffar = behall
+
         noder = [(0.0, self._andnod(punkter[0][0], punkter[0][1]), punkter[0])]
         for bid, (m, d, q) in traffar.items():
             noder.append((m, ('B', bid), q))
