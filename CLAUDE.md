@@ -615,7 +615,18 @@ max hopp 2·len(via)+2; diagnosen "brunnarna ligger på samma plats i kartan (le
 (rensbrunn i nedstigningsbrunn – E-raden); grenrörsdiagnoserna säger "ingen fri ledningsände på filmens längd (L m ± T m)".
 Kvar som användarens sak: SRB64259 2,0 m från ledningen (tolerans 2 → höj till 2,5), saknade littera. Test:
 scratchpad/test_gren2.py (påstick mitt på huvudledning utan koordinat, ÄND35 markerad utan koordinat, glapp 3 m vid
-icke inspekterad brunn, två brunnar på samma punkt) och test_grenror.py (ny diagnostext). Scratchpad-testerna importerar från arcmap/moduler
+icke inspekterad brunn, två brunnar på samma punkt) och test_grenror.py (ny diagnostext). Samma dag (användaren: "markera
+ut den sträckan som är avbruten med en egen färg … hänvisning till samma filmfil och data"): `skapa(..., ej_filmad_ut)`
+(KONFIG `EJ_FILMAD_UT` None) – vid klippning av avbruten/ofullständig film tas resten (`_klipp_pts` över `hela_pts`, motsatt
+del mot den filmade) som `ej_filmad_rest`; raden är en kopia av huvudradens värden (`rad`) med egen geometri och KLIPPT
+"ej filmad: X av Y m (kameran kom Z m fran BRUNN)", buffras i `ej_filmade` och skrivs efter huvudlagret till en featureklass
+skapad med huvudlagret som mall (`CreateFeatureclass_management(..., ut_fil, ...)` → samma fält inkl. kopierade);
+GeoJSON `<stam>_ej_filmad.geojson`; i kartan som `LAGERNAMN_EJ_FILMAD` med `arcmap/ej_filmad.lyr` (`LYR_EJ_FILMAD`) om den
+finns. Eget lager i stället för samma lager så att Uppdatera bedömning/Etapplager/Exportera kartor/Markprofil (ett
+objekt per sträcka) inte påverkas. .pyt: param 20 `ej_filmad_ut` (kategori Avbrutna inspektioner, förslag
+`<ut_fc>_ej_filmad[.shp]` när klipp_avbrutna är ikryssad, `_satt_symbologi` med ej_filmad.lyr), skickas bara när
+klippningen är på. Test: scratchpad/test_ejfilmad.py (medströms 60/100, motströms 30/100, hel film utan rest, samma
+RAPPORT/VIDEO/MASK_BED, utan lagret oförändrat) och namnförslaget i pytkoll3. Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
