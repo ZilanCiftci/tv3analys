@@ -626,7 +626,18 @@ finns. Eget lager i stället för samma lager så att Uppdatera bedömning/Etapp
 objekt per sträcka) inte påverkas. .pyt: param 20 `ej_filmad_ut` (kategori Avbrutna inspektioner, förslag
 `<ut_fc>_ej_filmad[.shp]` när klipp_avbrutna är ikryssad, `_satt_symbologi` med ej_filmad.lyr), skickas bara när
 klippningen är på. Test: scratchpad/test_ejfilmad.py (medströms 60/100, motströms 30/100, hel film utan rest, samma
-RAPPORT/VIDEO/MASK_BED, utan lagret oförändrat) och namnförslaget i pytkoll3. Scratchpad-testerna importerar från arcmap/moduler
+RAPPORT/VIDEO/MASK_BED, utan lagret oförändrat) och namnförslaget i pytkoll3. Samma dag (användaren: "Bruten med mer än 25 m
+glapp … troligen fellittrerade brunnar, ligger flera km bort … kolla att brunn A och B inte ligger orimligt långt från
+varandra (mer än 1000 m)"): tv3_analys KONFIG `GIS_BRUNN_AVSTAND_MAX_M` 1000, `GIS_BRUNN_AVSTAND_ANDEL` 3,0; i `koppla_gis`
+utan direkt ledning: fågelvägen d > 1000 eller (ej avbruten, film ≥ 1 m) d > 3 × film + 50 → `s.gis["langt_isar"] = d`, ingen
+via-väg/fågelväg (kartlängden hade gjort filmen "ofullständig"), båda brunnarna läggs i `okanda` med `orsak` (motbrunn =
+den andra; förslag ur grannar med passande längd eller liknande namn, aldrig förifyllt `ratt`); förslagen utesluter nu
+litterat självt; gisflagga "brunnarna ligger X m isär i GIS, filmen Y m – fel littera?"; konsol-OBS med antal.
+skapa_ledningslager `BRUNN_AVSTAND_MAX_M`/`BRUNN_AVSTAND_ANDEL`, `_langt_isar(post, xy_a, xy_b)`: sådana poster matchas inte
+(hindrar km-långa vägar via V-noderna), loggas, diagnos "brunnarna ligger X m isar i kartan, filmen Y m – troligen fel
+littera … (ratta i brunnslittera.csv)", räknas inte bland "båda brunnarna på en ledning". Test: scratchpad/test_isar.py
+(rimligt 190/200, 20 m film 200 m isär, avbruten 20/200 matchas, 1 800 m > 1 000) och isar/ (DUF 701 nr 2 med brunnarna 3 km
+isär); facit, littera_forslag.csv för gisvag, gren och gisdata_omr oförändrade. Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.

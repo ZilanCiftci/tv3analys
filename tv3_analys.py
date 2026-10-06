@@ -221,6 +221,8 @@ GIS_VAG_MAX_HOPP = 8        # saknas direkt ledning i GIS mellan brunnarna söks
                             # avstånd fågelvägen som kartlängd ("kartlängd fågelvägen")
 GIS_VAG_MAX_ANDEL = 2.0
 GIS_DIM_TOL = 0.1           # dimensioner inom 10 % räknas som samma vid val mellan parallella GIS-ledningar
+GIS_BRUNN_AVSTAND_MAX_M = 1000   # m – brunnar längre isär än så i GIS (utan direkt ledning) är troligen fel littera
+GIS_BRUNN_AVSTAND_ANDEL = 3.0    # … eller längre isär än andelen × filmens längd + 50 m (gäller inte avbrutna filmer)
 GIS_SKARV_TOL_M = None      # m – två ledningars fria ändar (ingen brunn) närmare varandra än så är en skarv (t.ex.
                             # materialbyte mitt på sträckan): delarna fogas ihop till en ledning mellan brunnarna.
                             # None = exportens tolerans (tolerans_m i gisdata.json), annars talet.
@@ -1135,7 +1137,10 @@ class Stracka:
                 fl.append(f"{typ}: ingen ledning med fri ände från {kand} i GIS")
                 return fl
         if not g:
-            if not saknas:
+            if self.gis.get("langt_isar"):
+                fl.append(dk(f"brunnarna ligger {self.gis['langt_isar']:.0f} m isär i GIS, filmen {self.langd:.1f} m "
+                             f"– fel littera?"))
+            elif not saknas:
                 fl.append("ingen ledning i GIS mellan brunnarna")
             return fl
         if g.get("_syntetisk") == "fagelvag":
@@ -1952,6 +1957,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                     abs((l.get("langd_m") or 0) - s.langd))
         led = min(kand, key=_parallell) if kand else None
         grenror = None
+        langt_isar = None
         if led is None and s.grenror("start") != s.grenror("slut"):
             # anslutning till grenrör: ingen brunn i den änden – ta GIS-ledningen från den kända
             # brunnen som slutar i en fri ände, den vars längd ligger närmast filmens
@@ -1977,15 +1983,25 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                 d = math.hypot(b0["x"] - b1["x"], b0["y"] - b1["y"])
                 if d < 1.0:                          # brunnar utan koordinater (0, 0) ger ingen kartlängd
                     d = None
-            # en avbruten film är kortare än ledningen – taket för vägens längd räknas då från avståndet
-            # mellan brunnarna (filmen kan ha passerat flera brunnar innan kameran stannade)
-            bas = max(s.langd, d or 0.0) if s.avbruten else s.langd
-            led = _gis_vag(ns, ne, grannar, bas, typ)
-            if led is None and d is not None:
-                led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
+            if d is not None and (d > GIS_BRUNN_AVSTAND_MAX_M or (
+                    not s.avbruten and s.langd >= 1 and d > GIS_BRUNN_AVSTAND_ANDEL * s.langd + 50)):
+                # orimligt långt isär för en filmad sträcka – troligen fel littera på en av brunnarna;
+                # ingen kartlängd (den skulle göra filmen "ofullständig") och förslag på båda brunnarna
+                langt_isar = d
+                for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
+                    okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd, "motbrunn": annan,
+                                   "n_mot": n_annan, "orsak": dk(f"brunnarna ligger {d:.0f} m isär i GIS – "
+                                                                 f"en av dem har troligen fel littera")})
+            else:
+                # en avbruten film är kortare än ledningen – taket för vägens längd räknas då från avståndet
+                # mellan brunnarna (filmen kan ha passerat flera brunnar innan kameran stannade)
+                bas = max(s.langd, d or 0.0) if s.avbruten else s.langd
+                led = _gis_vag(ns, ne, grannar, bas, typ)
+                if led is None and d is not None:
+                    led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"],
-                 "grenror": grenror}
+                 "grenror": grenror, "langt_isar": langt_isar}
         for b, n, annan, n_annan, sida in ((s.startbrunn, ns, s.slutbrunn, ne, "start"),
                                            (s.slutbrunn, ne, s.startbrunn, ns, "slut")):
             if n and n not in brunnar and n not in GIS_PLATSHALLARE and not s.grenror(sida):
@@ -2010,7 +2026,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         if o["motbrunn"] and o["langd"] >= 1:
             for n_granne, led in grannar.get(o["n_mot"], []):
                 L = led.get("langd_m")
-                if not L:
+                if not L or n_granne == nn:
                     continue
                 diff = abs(L - o["langd"]) / max(o["langd"], 1.0)
                 likhet = difflib.SequenceMatcher(None, nn, n_granne).ratio()
@@ -2020,7 +2036,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                                     + (f", namnlikhet {likhet:.2f}" if likhet >= GIS_LITTERA_LIKHET else ""))))
             o["metod"] = "längd från " + o["motbrunn"]
         if not kand:
-            for n_lik in difflib.get_close_matches(nn, list(alla), n=3, cutoff=GIS_LITTERA_LIKHET):
+            for n_lik in difflib.get_close_matches(nn, [n for n in alla if n != nn], n=3, cutoff=GIS_LITTERA_LIKHET):
                 likhet = difflib.SequenceMatcher(None, nn, n_lik).ratio()
                 kand.append((1 - likhet, alla.get(n_lik, n_lik), dk(f"liknande namn ({likhet:.2f})")))
             o["metod"] = "liknande namn" if kand else "inget förslag"
@@ -2029,7 +2045,8 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         o["forslag"] = [(lit, txt) for _, lit, txt in kand if not (lit in sedda or sedda.add(lit))][:3]
         # 'ratt' förifylls bara när längden pekar ut en tydlig kandidat (ensam, eller klart bättre än nästa)
         o["sakert"] = bool(kand) and o["metod"].startswith("längd") and (
-            len(kand) == 1 or kand[1][0] - kand[0][0] >= 0.05)
+            len(kand) == 1 or kand[1][0] - kand[0][0] >= 0.05) and not o.get("orsak")
+        # (brunnar långt isär: det är okänt vilken av de två som är fel – inget förifyllt)
     okanda.sort(key=lambda o: (o["littera"], os.path.basename(o["fil"]), o["nr"]))
     return {"ledningar": n_led, "vg": n_vg, "okanda": okanda, "brunnar_i_gis": len(brunnar),
             "flaggade": sum(1 for s in strackor if s.gisflagga)}
@@ -2451,6 +2468,8 @@ def skriv_litteraforslag(forslag: list[dict], path: str) -> int:
         komm = (f"förslag ({o['metod']}): " + " | ".join(f"{lit} – {txt}" for lit, txt in o["forslag"])
                 + ("" if o.get("sakert") else " | osäkert – välj själv i kolumnen ratt")
                 if o["forslag"] else "inget förslag: ingen ledning med passande längd och inget liknande littera i GIS")
+        if o.get("orsak"):
+            komm = o["orsak"] + " | " + komm
         komm = komm.replace(";", "/").replace(",", ".")    # kommentaren får inte innehålla CSV-avgränsare
         rader.append(f"{o['littera']};{ratt};{os.path.basename(o['fil'])};{o['nr']};{o['motbrunn']};{komm}")
     with open(path, "w", encoding="utf-8-sig", newline="") as fh:
@@ -4697,6 +4716,11 @@ def main(argv=None):
         gisfiler.append(las_gis(gf))
     if gisfiler:
         g = koppla_gis(strackor, gisfiler)
+        n_isar = sum(1 for s in strackor if s.gis and s.gis.get("langt_isar"))
+        if n_isar:
+            print(f"  OBS     {n_isar} sträckor har brunnar som ligger orimligt långt isär i GIS "
+                  f"(> {GIS_BRUNN_AVSTAND_MAX_M} m eller > {GIS_BRUNN_AVSTAND_ANDEL:g} × filmens längd + 50 m) – "
+                  f"troligen fel littera, se GIS-flagga och littera_forslag.csv")
         print(f"GIS-data: {g['ledningar']} av {len(strackor)} sträckor har ledning i GIS, "
               f"{g['vg']} fick vattengång ur GIS, {g['flaggade']} flaggade, "
               f"{len(set(o['littera'] for o in g['okanda']))} okända brunnar")
