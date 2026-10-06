@@ -208,6 +208,10 @@ GIS_RIKTNING_MIN_M = 0.05   # m – stiger GIS-vattengången mer än så från s
 GIS_SAKNAS_UNDER = -999     # vattengång/locknivå i GIS under så här räknas som saknad (SVOA: −9999)
 GIS_FALL_ORIMLIGT_M = 50    # m – större fall mellan brunnarna i GIS flaggas som orimligt i stället för riktning/fall
 GIS_PLATSHALLARE = {"AG", "STBEXTRA"}   # littera i TV3-filen som inte är riktiga brunnar – kontrolleras inte mot GIS
+GRENROR_LITTERA = r"^A{1,2}G\d*$"   # littera som betyder anslutning till grenrör/påstick på en annan ledning (AG, AAG1 …):
+                                    # ingen brunn finns – sträckan kopplas till GIS-ledningen från den kända brunnen som
+                                    # slutar i en fri ände. Andra littera markeras med ratt = grenrör i brunnslittera.csv
+GIS_GRENROR_LANGD_TOL = 0.3         # andel – GIS-ledningen med fri ände får avvika så mycket (+ 3 m) från filmens längd
 GIS_LITTERA_LIKHET = 0.75   # 0–1 – så lika måste ett GIS-littera vara för att föreslås för ett okänt (0,75 fångar två omkastade siffror)
 GIS_LANGD_TOL = 0.15        # andel – en GIS-ledning vars längd ligger inom så många % av filmens föreslås som rätt
 GIS_VAG_MAX_HOPP = 4        # saknas direkt ledning i GIS mellan brunnarna söks en väg via andra brunnar (högst så
@@ -510,6 +514,16 @@ class Stracka:
     filmstatus: str = ""            # "", "ersatt av nr X (…)", "ingår i sammanslagen nr Y", "sammanslagen av nr 72 + 73 …"
     sammanslagen_av: list = field(default_factory=list)   # [nr, nr] för en sammanslagen sträcka
     sammanslagning: dict | None = None   # {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L, overlapp} för ritningen
+    grenror_markerat: set = field(default_factory=set)   # "start"/"slut" markerade som grenrör i brunnslittera.csv
+
+    def grenror(self, sida: str) -> bool:
+        """True när brunnen i den änden (sida "start"/"slut") inte är en brunn utan en anslutning
+        till grenrör/påstick på en annan ledning: littera enligt GRENROR_LITTERA eller markerad
+        med ratt = grenrör i litterafilen."""
+        if sida in self.grenror_markerat:
+            return True
+        lit = self.startbrunn if sida == "start" else self.slutbrunn
+        return bool(GRENROR_LITTERA and re.match(GRENROR_LITTERA, _normlittera(lit), re.I))
     tidigare: dict | None = None    # närmast föregående inspektion av brunnsparet i en annan TV3-fil (OMFILMNING_OVER_FILER):
                                     # {fil, nr, datum, klass, index, langd, antal_skador, utveckling, antal} – antal = alla äldre filmer
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
@@ -1020,7 +1034,8 @@ class Stracka:
         g = self.gis and self.gis.get("ledning")
         if not g:
             return None, None
-        if _normlittera(g.get("fran")) == _normlittera(self.startbrunn):
+        fran, till = _normlittera(g.get("fran")), _normlittera(g.get("till"))
+        if fran == _normlittera(self.startbrunn) or (not fran and till == _normlittera(self.slutbrunn)):
             return g.get("vg_fran"), g.get("vg_till")
         return g.get("vg_till"), g.get("vg_fran")
 
@@ -1085,11 +1100,20 @@ class Stracka:
         if not self.gis:
             return []
         fl = []
-        saknas = [b for b, k in ((self.startbrunn, "brunn_start"), (self.slutbrunn, "brunn_slut"))
-                  if not self.gis.get(k) and _normlittera(b) not in GIS_PLATSHALLARE]
+        saknas = [b for b, k, sida in ((self.startbrunn, "brunn_start", "start"), (self.slutbrunn, "brunn_slut", "slut"))
+                  if not self.gis.get(k) and _normlittera(b) not in GIS_PLATSHALLARE and not self.grenror(sida)]
         if saknas:
             fl.append("brunn saknas i GIS: " + ", ".join(saknas))
         g = self.gis.get("ledning")
+        gren = self.gis.get("grenror")
+        if gren:
+            kand = self.slutbrunn if gren["sida"] == "start" else self.startbrunn
+            if g:
+                fl.append(dk(f"grenrör: GIS-ledningen från {kand} med fri ände ({g.get('langd_m') or 0:.1f} m) antagen"
+                             + (f" – längden avviker från filmens {self.langd:.1f} m" if gren.get("langd_avviker") else "")))
+            else:
+                fl.append(f"grenrör: ingen ledning med fri ände från {kand} i GIS")
+                return fl
         if not g:
             if not saknas:
                 fl.append("ingen ledning i GIS mellan brunnarna")
@@ -1297,7 +1321,13 @@ def ratta_littera(strackor: list[Stracka], regler: list[dict]) -> int:
                     continue
                 if r["motbrunn"] and (r["motbrunn"] not in par or r["motbrunn"] == nv):
                     continue
-                if r["ratt"] != v:
+                if re.fullmatch(r"GRENR[ÖO]R", _normlittera(r["ratt"])):
+                    # ingen brunn utan ett påstick på en annan ledning – litterat behålls, änden
+                    # kopplas i GIS till ledningen från den kända brunnen (se koppla_gis)
+                    if falt in ("startbrunn", "slutbrunn"):
+                        s.grenror_markerat.add(falt[:-5] if falt == "startbrunn" else "slut")
+                        andringar.append(f"{v} = grenrör")
+                elif r["ratt"] != v:
                     andringar.append(f"{v}→{r['ratt']}")
                     setattr(s, falt, r["ratt"])
                 break                                       # första (mest specifika) träffen gäller
@@ -1744,6 +1774,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
     import difflib
     brunnar: dict[str, dict] = {}
     pa_par: dict[frozenset, list[dict]] = {}
+    fria: dict[str, list[dict]] = {}
     vg_min: dict[str, float] = {}
     system = "RH2000"
     sedda_led: set = set()
@@ -1762,6 +1793,8 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
             sedda_led.add(nyckel)
             if a and b:
                 pa_par.setdefault(frozenset((a, b)), []).append(led)
+            elif a or b:
+                fria.setdefault(a or b, []).append(led)       # brunn -> ledningar som slutar i en fri ände
             for n, vg in ((a, led.get("vg_fran")), (b, led.get("vg_till"))):
                 if n and vg is not None and (n not in vg_min or vg < vg_min[n]):
                     vg_min[n] = vg
@@ -1781,6 +1814,21 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         typ = (s.ledningstyp or "")[:1].upper()
         led = min(kand, key=lambda l: ((l.get("ledningstyp") or "")[:1].upper() != typ if typ else False,
                                        abs((l.get("langd_m") or 0) - s.langd))) if kand else None
+        grenror = None
+        if led is None and s.grenror("start") != s.grenror("slut"):
+            # anslutning till grenrör: ingen brunn i den änden – ta GIS-ledningen från den kända
+            # brunnen som slutar i en fri ände, den vars längd ligger närmast filmens
+            sida = "start" if s.grenror("start") else "slut"
+            kand_n = ne if sida == "start" else ns
+            grenror = {"sida": sida}
+            if kand_n in brunnar:
+                kand = sorted(fria.get(kand_n, []), key=lambda l: abs((l.get("langd_m") or 0) - s.langd))
+                tol = GIS_GRENROR_LANGD_TOL * s.langd + 3.0
+                if kand and abs((kand[0].get("langd_m") or 0) - s.langd) <= tol:
+                    led = kand[0]
+                elif len(kand) == 1:
+                    led = kand[0]
+                    grenror["langd_avviker"] = True
         if led is None and ns in brunnar and ne in brunnar and ns != ne:
             # ingen direkt ledning: väg via andra brunnar, annars brunnarnas avstånd fågelvägen
             led = _gis_vag(ns, ne, grannar, s.langd)
@@ -1791,9 +1839,11 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                     if d >= 1.0:                     # brunnar utan koordinater (0, 0) ger ingen kartlängd
                         led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
-                 "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"]}
-        for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
-            if n and n not in brunnar and n not in GIS_PLATSHALLARE:
+                 "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"],
+                 "grenror": grenror}
+        for b, n, annan, n_annan, sida in ((s.startbrunn, ns, s.slutbrunn, ne, "start"),
+                                           (s.slutbrunn, ne, s.startbrunn, ns, "slut")):
+            if n and n not in brunnar and n not in GIS_PLATSHALLARE and not s.grenror(sida):
                 okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd,
                                "motbrunn": annan if n_annan in brunnar else "", "n_mot": n_annan})
         if led:
@@ -3087,6 +3137,23 @@ def etapper_for_karta(etapper: list[dict] | None) -> list[dict] | None:
     return ut
 
 
+def _fri_ande_xy(s: Stracka) -> list | None:
+    """Koordinaten för GIS-ledningens fria ände (grenrörsänden) när sträckan kopplats så, annars None."""
+    g = s.gis and s.gis.get("ledning")
+    if not g or not (s.gis.get("grenror") or {}):
+        return None
+    xy = g.get("till_xy") if not g.get("till") else g.get("fran_xy")
+    return [round(float(xy[0]), 3), round(float(xy[1]), 3)] if isinstance(xy, (list, tuple)) and len(xy) == 2 else None
+
+
+def _gis_ledning_id(s: Stracka) -> dict | None:
+    """{lager, oid, del} för den kopplade GIS-ledningen (inte syntetiska vägar), annars None."""
+    g = s.gis and s.gis.get("ledning")
+    if not g or g.get("_syntetisk") or g.get("oid") is None:
+        return None
+    return {"lager": g.get("lager"), "oid": g.get("oid"), "del": g.get("del")}
+
+
 def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None = None,
                        etapper: list[dict] | None = None) -> int:
     """Skriver en JSON-fil med en post per sträcka, avsedd för kartframställning.
@@ -3174,6 +3241,9 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
             "hojdflagga": s.hojdflagga,
             "hojdfel": s.hojdfel or None,
             "gis_flagga": s.gisflagga or None,
+            "grenror": (s.gis or {}).get("grenror", {}).get("sida") if s.gis and s.gis.get("grenror") else None,
+            "grenror_xy": _fri_ande_xy(s),
+            "gis_ledning": _gis_ledning_id(s),
             "gis_lutning_promille": round(s.gis_lutning_promille, 1) if s.gis_lutning_promille is not None else None,
             "djup_start_m": round(s.djup_start, 2) if s.djup_start is not None else None,
             "djup_slut_m": round(s.djup_slut, 2) if s.djup_slut is not None else None,
