@@ -176,7 +176,8 @@ def _huvudram(mxd):
 
 
 KOPIANAMN = 'Aktuell stracka (export)'   # tillfalligt lager som visar den aktuella strackan
-MARKERING_LYR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'markering.lyr')
+ARCMAP_MAPP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # .lyr-filerna ligger i arcmap-mappen
+MARKERING_LYR = os.path.join(ARCMAP_MAPP, 'markering.lyr')
 MARKERING_TRANSPARENS = 50               # procent genomskinlighet pa det tillfalliga lagret
 MARKERING_TIPS = (
     'Ingen markeringssymbol (.lyr) - den aktuella strackan visas med ArcMaps urvalsfarg (och med '

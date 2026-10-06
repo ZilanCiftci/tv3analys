@@ -8,7 +8,7 @@ unicode-koder: u00e5, u00e4 och u00f6 efter ett omvant snedstreck. Tack vare
 unicode_literals blir de riktiga tecken i dialogen.
 
 Lagg till i ArcToolbox: hogerklicka > Add Toolbox > valj denna .pyt-fil.
-Logiken ligger i skapa_ledningslager.py i samma mapp; den har filen ar bara
+Logiken ligger i undermappen moduler (skapa_ledningslager.py m.fl.); den har filen ar bara
 dialogerna. Modulen laddas om vid varje korning.
 
 Lagervalen ar rullistor med kartans lagernamn (inte lagerparametrar): ArcMap
@@ -23,8 +23,12 @@ import sys
 import arcpy
 
 HAR = os.path.dirname(os.path.abspath(__file__))
-if HAR not in sys.path:
-    sys.path.insert(0, HAR)
+# Python-modulerna ligger i undermappen moduler; verktygsladan, .lyr-filerna och senaste_val.json
+# ligger kvar i arcmap-mappen. moduler forst i sokvagen, sa att gamla kopior i arcmap-mappen inte anvands.
+MODULMAPP = os.path.join(HAR, 'moduler')
+if MODULMAPP in sys.path:
+    sys.path.remove(MODULMAPP)
+sys.path.insert(0, MODULMAPP)
 
 # .lyr-fil med symbologi som anvands om ingen annan anges (sparas fran ArcMap, se handledningen 7.2)
 STANDARD_LYR = os.path.join(HAR, 'bedomda_ledningar.lyr')
@@ -56,7 +60,7 @@ STANDARD_VG_TILL = ['LevelTo', 'VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 
 
 def _ladda_modul(namn='skapa_ledningslager'):
-    """Importerar (och laddar om) en modul i arcmap-mappen sa att andringar slar igenom."""
+    """Importerar (och laddar om) en modul i arcmap/moduler sa att andringar slar igenom."""
     modul = __import__(namn)
     try:
         reload(modul)                 # Python 2
