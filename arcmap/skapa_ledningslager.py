@@ -366,8 +366,33 @@ class Natverk(object):
     def vag(self, a, b, max_hopp, max_delar=8):
         """Vagen med farst bitar fran brunn a till brunn b, eller None. Hogst
         max_hopp - 1 andra sokta brunnar far passeras, och hogst max_delar bitar."""
+        return self._vag(('B', a), ('B', b), max_hopp, max_delar)
+
+    def fri_ande_nara(self, x, y, radie):
+        """Noden for den fria ledningsande som ligger narmast (x, y) inom radie, annars None."""
+        c = self.tol
+        n = int(radie // c) + 1
+        cx, cy = int(x // c), int(y // c)
+        basta = None
+        for dx in range(-n, n + 1):
+            for dy in range(-n, n + 1):
+                for nyckel, ex, ey in self.andar.get((cx + dx, cy + dy), ()):
+                    d2 = (ex - x) ** 2 + (ey - y) ** 2
+                    if d2 <= radie * radie and (basta is None or d2 < basta[0]):
+                        basta = (d2, nyckel)
+        return basta[1] if basta else None
+
+    def vag_till_punkt(self, a, x, y, max_hopp, max_delar=8, radie=None):
+        """Vagen fran brunn a till den fria ledningsande som ligger vid (x, y) - en ledning som
+        slutar i ett grenror/pastick pa en annan ledning i stallet for i en brunn. Returnerar
+        None om ingen fri ande finns inom radie (standard tolerans + 1 m) eller ingen vag."""
+        mal = self.fri_ande_nara(x, y, radie if radie is not None else self.tol + 1.0)
+        if mal is None:
+            return None
+        return self._vag(('B', a), mal, max_hopp, max_delar)
+
+    def _vag(self, start, mal, max_hopp, max_delar=8):
         from collections import deque
-        start, mal = ('B', a), ('B', b)
         if start not in self.kanter or mal not in self.kanter:
             return None
         ko = deque([(start, [], 0)])
@@ -990,9 +1015,17 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
     # Tackning: hur manga av JSON-filens brunnar finns i brunnslagren? Saknas hela
     # brunnstyper (t.ex. alla KRB/KTB) ligger de troligen i ett annat lager.
     json_brunnar = set()
-    for par in bedomda:
+    grenror_namn = set()           # littera som ar pastick pa en annan ledning (grenror), inte brunnar
+    for par, post in bedomda.items():
         json_brunnar.update(par)
+        if post.get('grenror'):
+            grenror_namn.add(normalisera(post.get('startbrunn') if post['grenror'] == 'start'
+                                         else post.get('slutbrunn')))
+    json_brunnar -= grenror_namn
     saknade = sorted(json_brunnar - brunns_id)
+    if grenror_namn:
+        logg('  %d grenrorsanslutningar (ingen brunn) soks som ledning med fri ande fran den kanda brunnen'
+             % len(grenror_namn))
     logg('  %d av %d brunnar i JSON-filen finns i brunnslagren'
          % (len(json_brunnar) - len(saknade), len(json_brunnar)))
     if saknade:
@@ -1207,16 +1240,31 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
 
     traffade = set()
     vagar = {}                 # par -> (punkter a->b, a, b) for svack- och bakfallslagren
-    n_skrivna = n_flerdelade = 0
+    n_skrivna = n_flerdelade = n_grenror = 0
 
     insert = arcpy.da.InsertCursor(ut_fil, ut_falt)
     try:
         for par, s in bedomda.items():
             a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
             vagen = nat.vag(a, b, max_hopp, max_delar)
+            grenror = s.get('grenror') if s.get('grenror') in ('start', 'slut') else None
+            vand = False
+            if not vagen and grenror and s.get('grenror_xy'):
+                # anslutning till grenror: vag fran den kanda brunnen till den fria anden som
+                # tv3_analys hittade i GIS-exporten (koordinat i kartunderlaget)
+                try:
+                    gx, gy = float(s['grenror_xy'][0]), float(s['grenror_xy'][1])
+                    vagen = nat.vag_till_punkt(b if grenror == 'start' else a, gx, gy, max_hopp, max_delar)
+                except (TypeError, ValueError, IndexError):
+                    vagen = None
+                if vagen:
+                    n_grenror += 1
+                    vand = grenror == 'start'      # vagen soktes fran slutbrunnen
             if not vagen:
                 continue
             pts = sla_ihop(vagen)
+            if vand:
+                pts = pts[::-1]                    # orientera start -> slut
             if len(pts) < 2:
                 continue
             n_objekt = len(set((lager, oid) for nod, p, lager, oid in vagen))
@@ -1267,6 +1315,8 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         del insert
 
     logg('  %d objekt skrivna till %s' % (n_skrivna, ut_fil))
+    if n_grenror:
+        logg('  %d grenrorsanslutningar klippta ut fran brunnen till den fria anden' % n_grenror)
     logg('  %d av %d brunnspar matchade (%d sammansatta av flera ledningsobjekt)'
          % (len(traffade), len(bedomda), n_flerdelade))
     n_hoppade = len(data.get('strackor', [])) - sum(antal_per_par.values())
@@ -1296,7 +1346,15 @@ def skapa(json_in, ledningslager, brunnslager, brunn_id, ut_fc,
         if par in traffade:
             continue
         a, b = normalisera(s.get('startbrunn')), normalisera(s.get('slutbrunn'))
-        if a in brunns_id and b in brunns_id:
+        if s.get('grenror') in ('start', 'slut'):
+            xy = s.get('grenror_xy')
+            if not xy:
+                diagnos = 'grenror: ingen GIS-ledning med fri ande kopplad i analysen (kor med gis: i listfilen)'
+            elif nat.fri_ande_nara(float(xy[0]), float(xy[1]), nat.tol + 1.0) is None:
+                diagnos = 'grenror: ingen fri ledningsande vid (%.1f, %.1f) inom toleransen' % (xy[0], xy[1])
+            else:
+                diagnos = 'grenror: ingen vag fran brunnen till den fria anden (hoj max hopp?)'
+        elif a in brunns_id and b in brunns_id:
             diagnos = nat.diagnos(a, b, max_hopp, max_delar)
         elif a in brunns_id or b in brunns_id:
             diagnos = 'brunnen %s finns inte i brunnslagren' % (b if a in brunns_id else a)
