@@ -540,6 +540,8 @@ class Stracka:
     tidigare: dict | None = None    # närmast föregående inspektion av brunnsparet i en annan TV3-fil (OMFILMNING_OVER_FILER):
                                     # {fil, nr, datum, klass, index, langd, antal_skador, utveckling, antal} – antal = alla äldre filmer
     littera_rattat: str = ""       # t.ex. "BDNB1005633→BDNB1015633" om brunnslittera ersatts från CSV
+    nr_fil: str = ""               # sträcknumret som det står i filen när det inte gick att använda som det
+                                   # var (inte heltal, eller samma nummer två gånger) – nr är då ett nytt nummer
     # Från markprofil.json (ArcMap-verktyget Markprofil): markhöjder längs kartlinjen
     # [(m från startbrunn, höjd)], GIS-vattengång i brunnarna och kartlinjens längd
     mark: list[tuple[float, float]] = field(default_factory=list)
@@ -1388,15 +1390,44 @@ def kontrollera_hojder(s: Stracka) -> str:
     return ("höjdfel i filen: " + ", ".join(fel)) if fel else ""
 
 
-def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
+def _tv3_rader(text: str) -> list[str]:
+    """Filens rader. Raderna avslutas med CRLF; ett ensamt LF eller CR inne i en rad (radbrytning i ett
+    kommentarsfält) är ingen ny rad – med splitlines() blev resten av raden en egen rad, och började den
+    med # tolkades den som en ny sektion så att alla följande sträckor föll bort."""
+    if "\r\n" in text:
+        return [r.replace("\r", " ").replace("\n", " ") for r in text.split("\r\n")]
+    return [r.rstrip("\r") for r in text.split("\n")]
+
+
+TV3_SEKTION = re.compile(r"#\s*([A-ZÅÄÖ][A-ZÅÄÖ0-9 \-]*?)\s*(=.*)?$")
+
+
+def _nr_nyckel(t: str) -> str:
+    """Sträcknumret som text, normaliserat: '012' och '12' och '12,0' är samma sträcka."""
+    t = t.strip()
+    n = _i(t)
+    if n is None:
+        f = _f(t)
+        if f is not None and f == int(f) and f >= 0:
+            n = int(f)
+    return str(n) if n is not None else t.upper()
+
+
+def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None) -> list[Stracka]:
+    """Läser en TV3-fil. Ingen TVADM-rad med brunnar faller bort tyst: sträcknummer som inte är heltal
+    (12A, 3-1) eller förekommer flera gånger får nya nummer efter filens största (nr_fil = originalet), och
+    TVDAT/PROFIL-raderna följer med – vid dubbletter i den ordning blocken kommer i filen. Det som ändå
+    inte kan läsas räknas upp i varningar (hamnar i fel.txt) och skrivs som OBS i konsolen."""
     text = las_text(path)
     filnamn = os.path.basename(path)
     sektioner: dict[str, list[list[str]]] = defaultdict(list)
     aktuell = None
-    for rad in text.splitlines():
-        if rad.startswith("#"):
-            aktuell = rad[1:].strip().split("=")[0].upper()
-            continue
+    for rad in _tv3_rader(text):
+        if rad.startswith("#") and ";" not in rad:
+            m = TV3_SEKTION.match(rad.upper())
+            if m:
+                aktuell = m.group(1).strip()
+                continue
         if aktuell and rad.strip():
             sektioner[aktuell].append(rad.split(";"))
 
@@ -1406,11 +1437,24 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
     def g(r, i):
         return r[i].strip() if i < len(r) else ""
 
+    obs: list[str] = []
+    # Sträcknummer: heltal används som de är. Övriga (text, dubbletter) får nummer efter det största.
+    adm = [(r, _nr_nyckel(g(r, 0))) for r in sektioner["TVADM"]]
+    tomma = [r for r, k in adm if not k]
+    adm = [(r, k) for r, k in adm if k]
+    hogsta = max([int(k) for r, k in adm if k.isdigit()] + [0])
+    antal = Counter(k for r, k in adm)
+    plats: dict[str, list[int]] = defaultdict(list)      # nyckel -> sträcknummer i filens ordning
     strackor: dict[int, Stracka] = {}
-    for r in sektioner["TVADM"]:
-        nr = _i(g(r, 0))
-        if nr is None:
-            continue
+    for r, k in adm:
+        if k.isdigit() and antal[k] == 1:
+            nr, nr_fil = int(k), ""
+        elif k.isdigit() and not plats[k]:
+            nr, nr_fil = int(k), ""                        # första av flera med samma nummer behåller det
+        else:
+            hogsta += 1
+            nr, nr_fil = hogsta, g(r, 0)
+        plats[k].append(nr)
         strackor[nr] = Stracka(
             fil=filnamn, nr=nr,
             startbrunn=g(r, 2), slutbrunn=g(r, 3), utgangsbrunn=g(r, 4),
@@ -1418,20 +1462,58 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
             datum=g(r, 12), klockslag=g(r, 13), operator=g(r, 14), videofil=g(r, 18),
             form=g(r, 22), dimension=g(r, 23), dimension2=g(r, 24), material=g(r, 25),
             foder=g(r, 26), fodermaterial=g(r, 27), ledningstyp=g(r, 29), vader=g(r, 31),
-            tv3_sokvag=os.path.abspath(path),
+            tv3_sokvag=os.path.abspath(path), nr_fil=nr_fil,
         )
+        if nr_fil:
+            orsak = "förekommer flera gånger" if antal[k] > 1 else "är inget heltal"
+            obs.append(f"{filnamn}: sträcknummer '{nr_fil}' ({g(r, 2)} → {g(r, 3)}) {orsak} – läst som nr {nr}")
+    for r in tomma:
+        if g(r, 2) or g(r, 3):
+            obs.append(f"{filnamn}: TVADM-rad utan sträcknummer ({g(r, 2)} → {g(r, 3)}) kunde inte läsas")
 
-    for r in sektioner.get("TVDAT", []):
-        nr = _i(g(r, 0))
-        if nr is None or nr not in strackor:
-            continue
+    def fordela(rader: list[list[str]], namn: str):
+        """(sträcka, rad) för rader i en sektion som pekar på sträckorna med nummer. Har flera sträckor
+        samma nummer går det k:te blocket av rader till den k:te sträckan; ett nytt block börjar när ett
+        annat nummer kommit emellan, när positionen börjar om (TVDAT växer och PROFILDAT är monoton inom
+        en sträcka) och för PROFILADM vid varje rad."""
+        foreg, block, okanda = None, defaultdict(int), Counter()
+        x0 = riktn = None
+        for r in rader:
+            k = _nr_nyckel(g(r, 0))
+            if k not in plats:
+                if k:
+                    okanda[k] += 1
+                foreg = None
+                continue
+            x = _f(g(r, 1))
+            nytt = k != foreg or namn == "PROFILADM"
+            if not nytt and len(plats[k]) > 1 and x is not None and x0 is not None:
+                steg = x - x0
+                if namn == "TVDAT":
+                    nytt = steg < -0.01
+                elif namn == "PROFILDAT":
+                    nytt = abs(steg) > 3.0 or (riktn is not None and steg * riktn < -0.01)
+                    if not nytt and riktn is None and abs(steg) > 0.001:
+                        riktn = 1 if steg > 0 else -1
+            if nytt:
+                block[k] += 1
+                foreg, riktn = k, None
+            if x is not None:
+                x0 = x
+            nrs = plats[k]
+            yield strackor[nrs[min(block[k], len(nrs)) - 1]], r
+        if okanda:
+            obs.append(f"{filnamn}: {sum(okanda.values())} rader i #{namn} hör till sträcknummer som saknas i "
+                       f"#TVADM ({', '.join(list(okanda)[:6])}" + (" …" if len(okanda) > 6 else "") + ")")
+
+    for s_, r in fordela(sektioner.get("TVDAT", []), "TVDAT"):
         o = Observation(
-            fil=filnamn, nr=nr, lage=_f(g(r, 1)) or 0.0, tid=g(r, 2), lopande=g(r, 3),
+            fil=filnamn, nr=s_.nr, lage=_f(g(r, 1)) or 0.0, tid=g(r, 2), lopande=g(r, 3),
             kod=g(r, 4).upper(), grad=_i(g(r, 5)), infokod=g(r, 6).upper(), attribut=g(r, 7).upper(),
             klocka_fran=g(r, 11), klocka_till=g(r, 12), vattenniva=g(r, 13),
             bild=g(r, 14), bild_b=g(r, 15), kommentar=g(r, 17),
         )
-        strackor[nr].observationer.append(o)
+        s_.observationer.append(o)
 
     # Längd på löpande skador (A1 … B1)
     for s in strackor.values():
@@ -1448,17 +1530,18 @@ def las_tv3(path: str, littera: list[dict] | None = None) -> list[Stracka]:
         z = _f(v)
         return None if z is None or z <= HOJD_SAKNAS_UNDER else z
 
-    for r in sektioner.get("PROFILADM", []):
-        nr = _i(g(r, 0))
-        if nr in strackor:
-            strackor[nr].profil_start_z = _hojd(g(r, 16))
-            strackor[nr].profil_slut_z = _hojd(g(r, 17))
-    for r in sektioner.get("PROFILDAT", []):
-        nr = _i(g(r, 0))
-        if nr in strackor:
-            x, rz, z = _f(g(r, 1)), _f(g(r, 2)), _hojd(g(r, 3))
-            if x is not None and z is not None:
-                strackor[nr].profil.append((x, rz or 0.0, z))
+    for s_, r in fordela(sektioner.get("PROFILADM", []), "PROFILADM"):
+        s_.profil_start_z = _hojd(g(r, 16))
+        s_.profil_slut_z = _hojd(g(r, 17))
+    for s_, r in fordela(sektioner.get("PROFILDAT", []), "PROFILDAT"):
+        x, rz, z = _f(g(r, 1)), _f(g(r, 2)), _hojd(g(r, 3))
+        if x is not None and z is not None:
+            s_.profil.append((x, rz or 0.0, z))
+
+    for t in obs:
+        print(f"  OBS     {t}")
+    if varningar is not None:
+        varningar.extend(obs)
 
     hojdfel = []
     for s in strackor.values():
@@ -2149,10 +2232,44 @@ def tidigare_text(s: Stracka) -> str:
     return txt
 
 
+def _samma_film(strackor: list[Stracka]) -> None:
+    """Samma film i flera TV3-filer (t.ex. en delexport och en större export av samma uppdrag i samma
+    mapp): brunnspar, datum, klockslag, längd, videofil och antal observationer lika. Filmen räknas en
+    gång – i filen med flest sträckor – och kopian markeras 'ersatt av samma film …'. Gäller även tomma
+    filmer och sträckor med samma brunn i båda ändar, som den vanliga jämförelsen hoppar över. Är en hel
+    fil en delmängd av en annan sägs det i konsolen."""
+    storlek = Counter(s.fil for s in strackor)
+    grupper: dict[tuple, list[Stracka]] = defaultdict(list)
+    for s in aktiva(strackor):
+        nyckel = (_normlittera(s.startbrunn), _normlittera(s.slutbrunn), s.datum.strip(), s.klockslag.strip(),
+                  round(s.langd, 1), (s.videofil or "").strip().lower(), len(s.observationer))
+        grupper[nyckel].append(s)
+    kopior: dict[tuple[str, str], int] = Counter()
+    for grupp in grupper.values():
+        if len({s.fil for s in grupp}) < 2:
+            continue
+        behall = max(grupp, key=lambda s: (storlek[s.fil], s.fil))
+        for s in grupp:
+            if s.fil != behall.fil:
+                _ersatt(s, behall, "", f"ersatt av samma film nr {behall.nr} i {os.path.basename(behall.fil)} (dubblett)")
+                kopior[(s.fil, behall.fil)] += 1
+    kvar = Counter(s.fil for s in aktiva(strackor))
+    for (fil, i_fil), n in sorted(kopior.items()):
+        if not kvar[fil]:
+            print(f"  OBS     {os.path.basename(fil)}: alla sträckor ({n} filmer) finns som samma film i "
+                  f"{os.path.basename(i_fil)} – filen är en delmängd och räknas inte (ta bort den ur listan)")
+        else:
+            print(f"  OBS     {os.path.basename(fil)}: {n} filmer finns som samma film i "
+                  f"{os.path.basename(i_fil)} och räknas en gång; {kvar[fil]} är egna")
+
+
 def _over_filer(strackor: list[Stracka]) -> None:
     """Samma brunnspar i olika TV3-filer: den nyaste filmen (senare datum) gäller, äldre filmer i andra
     filer markeras 'ersatt av ny inspektion …' och den gällande får `tidigare` med den närmast
-    föregående inspektionens klass och index. Filmer utan tolkbart datum rörs inte (varning)."""
+    föregående inspektionens klass och index. Filmer utan tolkbart datum rörs inte (varning).
+    Först tas kopior av samma film bort (_samma_film)."""
+    if len({s.fil for s in strackor}) > 1:
+        _samma_film(strackor)
     grupper: dict[frozenset, list[Stracka]] = {}
     for s in aktiva(strackor):
         if s.langd >= 1 and s.startbrunn and s.slutbrunn and _normlittera(s.startbrunn) != _normlittera(s.slutbrunn):
@@ -4521,7 +4638,7 @@ def main(argv=None):
             print(f"  SAKNAS  {p}")
             continue
         try:
-            st = las_tv3(p, littera)
+            st = las_tv3(p, littera, fel)
         except Exception as e:  # trasig fil ska inte stoppa hela körningen
             fel.append(f"{p}: {e}")
             print(f"  FEL     {p}: {e}")
