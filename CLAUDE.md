@@ -58,7 +58,7 @@ annars i filmkatalogerna.
 Utdata i `tv3_resultat/` (eller `-o`):
 - `prioritering.xlsx` – flikar **Sammanfattning** (nyckeltal, klassfördelning, metodparametrar,
   inbäddade diagram), **Prioritering** (en rad per sträcka, rankad; klassceller färgade;
-  hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut `file:///`-länk);
+  hyperlänkar till rapport-PDF (relativ länk) och videofil (absolut sökväg som den är – okt 2026: `file:///`-URL:en procentkodade åäö och gick inte att öppna i Excel; `fil_url` returnerar nu `os.path.abspath`, som rapportlänkarna);
   **dolda kolumner** sep 2026: `DOLDA_KOLUMNER` i KONFIG per flik, varje dold kolumn får
   `hidden=True` + `outlineLevel=1` (kolumngrupp med plustecken, `summaryRight=False`) – synliga i
   Prioritering: Rang, Klass, brunnar, Material, Dim, Längd, Konstruktionsindex, Konstr. maxgrad,

@@ -2525,12 +2525,11 @@ def koppla_uppstroms(strackor: list[Stracka], poster: list[dict]) -> int:
 
 
 def fil_url(sokvag: str) -> str:
-    """Absolut sökväg -> file:///-URL som Excel kan öppna."""
-    from urllib.parse import quote
-    p = os.path.abspath(sokvag).replace("\\", "/")
-    if not p.startswith("/"):
-        p = "/" + p                     # C:/... -> /C:/...
-    return "file://" + quote(p, safe="/:")
+    """Länkmål för en fil i Excel: den absoluta sökvägen som den är (C:\\Filmer\\Öster.mp4 eller
+    \\\\server\\share\\…). En file:///-URL procentkodar å, ä och ö (%C3%96) och den formen avkodar
+    Excel inte för filer i Windows – länken gick inte att öppna. Rapportlänkarna är också vanliga
+    sökvägar och har alltid fungerat med åäö."""
+    return os.path.abspath(sokvag)
 
 
 # ----------------------------------------------------------------------------
