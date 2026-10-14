@@ -223,6 +223,8 @@ GIS_VAG_MAX_ANDEL = 2.0
 GIS_DIM_TOL = 0.1           # dimensioner inom 10 % räknas som samma vid val mellan parallella GIS-ledningar
 GIS_BRUNN_AVSTAND_MAX_M = 1000   # m – brunnar längre isär än så i GIS (utan direkt ledning) är troligen fel littera
 GIS_BRUNN_AVSTAND_ANDEL = 3.0    # … eller längre isär än andelen × filmens längd + 50 m (gäller inte avbrutna filmer)
+GIS_BRUNN_OMRADE_M = 500         # m – en brunn längre än så från närmaste andra brunn i samma TV3-fil ligger utanför
+                                 # filmområdet: när brunnarna ligger långt isär pekas den ut som den felaktiga
 GIS_SKARV_TOL_M = None      # m – två ledningars fria ändar (ingen brunn) närmare varandra än så är en skarv (t.ex.
                             # materialbyte mitt på sträckan): delarna fogas ihop till en ledning mellan brunnarna.
                             # None = exportens tolerans (tolerans_m i gisdata.json), annars talet.
@@ -1138,8 +1140,9 @@ class Stracka:
                 return fl
         if not g:
             if self.gis.get("langt_isar"):
-                fl.append(dk(f"brunnarna ligger {self.gis['langt_isar']:.0f} m isär i GIS, filmen {self.langd:.1f} m "
-                             f"– fel littera?"))
+                fel = self.gis.get("fel_brunn")
+                fl.append(dk(f"brunnarna ligger {self.gis['langt_isar']:.0f} m isär i GIS, filmen {self.langd:.1f} m – "
+                             + (f"{fel} ligger utanför filens område (fel littera?)" if fel else "fel littera?")))
             elif not saknas:
                 fl.append("ingen ledning i GIS mellan brunnarna")
             return fl
@@ -1939,6 +1942,24 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         for led in leds:
             grannar.setdefault(a, []).append((b, led))
             grannar.setdefault(b, []).append((a, led))
+    # brunnar per TV3-fil med koordinat i GIS – för att se vilken brunn i ett par som ligger utanför området
+    filbrunnar: dict[str, dict[str, tuple[float, float]]] = defaultdict(dict)
+    for s in strackor:
+        for b in (s.startbrunn, s.slutbrunn):
+            n = _normlittera(b)
+            g = brunnar.get(n)
+            if g and isinstance(g.get("x"), (int, float)) and isinstance(g.get("y"), (int, float)) \
+                    and (g["x"], g["y"]) != (0, 0):
+                filbrunnar[s.fil][n] = (g["x"], g["y"])
+
+    def granne_avst(n: str, fil: str, utom: str) -> float | None:
+        """Avstånd från brunn n till närmaste andra brunn i samma fil (utom sträckans andra brunn)."""
+        xy = filbrunnar[fil].get(n)
+        if xy is None:
+            return None
+        d = [math.hypot(xy[0] - x, xy[1] - y) for m, (x, y) in filbrunnar[fil].items() if m not in (n, utom)]
+        return min(d) if d else None
+
     n_led = n_vg = 0
     okanda: list[dict] = []
     for s in strackor:
@@ -1958,6 +1979,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         led = min(kand, key=_parallell) if kand else None
         grenror = None
         langt_isar = None
+        fel_brunn = None
         if led is None and s.grenror("start") != s.grenror("slut"):
             # anslutning till grenrör: ingen brunn i den änden – ta GIS-ledningen från den kända
             # brunnen som slutar i en fri ände, den vars längd ligger närmast filmens
@@ -1988,10 +2010,24 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                 # orimligt långt isär för en filmad sträcka – troligen fel littera på en av brunnarna;
                 # ingen kartlängd (den skulle göra filmen "ofullständig") och förslag på båda brunnarna
                 langt_isar = d
-                for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
+                # vilken av dem ligger utanför filmområdet? (långt från alla andra brunnar i samma fil)
+                ga, gb = granne_avst(ns, s.fil, ne), granne_avst(ne, s.fil, ns)
+                utanfor = [(b, n, annan, n_annan, g) for b, n, annan, n_annan, g, g_annan in (
+                    (s.startbrunn, ns, s.slutbrunn, ne, ga, gb), (s.slutbrunn, ne, s.startbrunn, ns, gb, ga))
+                    if g is not None and g > GIS_BRUNN_OMRADE_M and g_annan is not None
+                    and g_annan <= GIS_BRUNN_OMRADE_M]
+                if len(utanfor) == 1:
+                    b, n, annan, n_annan, g = utanfor[0]
+                    fel_brunn = b
                     okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd, "motbrunn": annan,
-                                   "n_mot": n_annan, "orsak": dk(f"brunnarna ligger {d:.0f} m isär i GIS – "
-                                                                 f"en av dem har troligen fel littera")})
+                                   "n_mot": n_annan, "utpekad": True,
+                                   "orsak": dk(f"{b} ligger {g:.0f} m från närmaste andra brunn i filen – troligen "
+                                               f"fel littera ({annan} ligger i området)")})
+                else:
+                    for b, n, annan, n_annan in ((s.startbrunn, ns, s.slutbrunn, ne), (s.slutbrunn, ne, s.startbrunn, ns)):
+                        okanda.append({"littera": b, "fil": s.fil, "nr": s.nr, "langd": s.langd, "motbrunn": annan,
+                                       "n_mot": n_annan, "orsak": dk(f"brunnarna ligger {d:.0f} m isär i GIS – "
+                                                                     f"en av dem har troligen fel littera")})
             else:
                 # en avbruten film är kortare än ledningen – taket för vägens längd räknas då från avståndet
                 # mellan brunnarna (filmen kan ha passerat flera brunnar innan kameran stannade)
@@ -2001,7 +2037,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
                     led = {"fran": ns, "till": ne, "langd_m": d, "_syntetisk": "fagelvag"}
         s.gis = {"ledning": led, "brunn_start": brunnar.get(ns), "brunn_slut": brunnar.get(ne),
                  "vg_min_start": vg_min.get(ns), "vg_min_slut": vg_min.get(ne), "fil": filer[0]["fil"],
-                 "grenror": grenror, "langt_isar": langt_isar}
+                 "grenror": grenror, "langt_isar": langt_isar, "fel_brunn": fel_brunn}
         for b, n, annan, n_annan, sida in ((s.startbrunn, ns, s.slutbrunn, ne, "start"),
                                            (s.slutbrunn, ne, s.startbrunn, ns, "slut")):
             if n and n not in brunnar and n not in GIS_PLATSHALLARE and not s.grenror(sida):
@@ -2045,7 +2081,7 @@ def koppla_gis(strackor: list[Stracka], filer: list[dict]) -> dict:
         o["forslag"] = [(lit, txt) for _, lit, txt in kand if not (lit in sedda or sedda.add(lit))][:3]
         # 'ratt' förifylls bara när längden pekar ut en tydlig kandidat (ensam, eller klart bättre än nästa)
         o["sakert"] = bool(kand) and o["metod"].startswith("längd") and (
-            len(kand) == 1 or kand[1][0] - kand[0][0] >= 0.05) and not o.get("orsak")
+            len(kand) == 1 or kand[1][0] - kand[0][0] >= 0.05) and (not o.get("orsak") or o.get("utpekad"))
         # (brunnar långt isär: det är okänt vilken av de två som är fel – inget förifyllt)
     okanda.sort(key=lambda o: (o["littera"], os.path.basename(o["fil"]), o["nr"]))
     return {"ledningar": n_led, "vg": n_vg, "okanda": okanda, "brunnar_i_gis": len(brunnar),

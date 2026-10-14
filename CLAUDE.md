@@ -648,7 +648,16 @@ till den fria anden", fast analysen kopplat "GIS-ledningen från DTB1005879 med 
 kortare än toleransen (3 m), så `_andnod` slog ihop dess två ändar till samma nod och den försvann ur nätet (fri_ande_nara
 hittade noden vid brunnen, vägen dit hade längd 0). `_andnod(x, y, utom)`: lednings slutände får inte samma nod som dess
 startände (utom vid sluten ledning, < 1e-6 m), inte heller samma V-brunn. Test: scratchpad/test_stubbe.py (föll med gamla
-koden); övriga tester och rev_nat2 oförändrade. Scratchpad-testerna importerar från arcmap/moduler
+koden); övriga tester och rev_nat2 oförändrade. Samma dag (användaren om littera_forslag.csv: "ger samma sträcka två gånger med vänd
+riktning när två brunnar är för långt ifrån varandra … baserat på övriga brunnar i samma fil borde du kunna hitta vilken som
+ligger i samma område" – DUF 701 nr 8/9 med STB1016414 9,6 km bort): KONFIG `GIS_BRUNN_OMRADE_M` 500; `koppla_gis` bygger
+`filbrunnar[fil]` (filens brunnar med GIS-koordinat ≠ (0,0)) och `granne_avst(n, fil, utom)`; vid `langt_isar` pekas den
+brunn ut vars närmaste andra brunn i filen ligger > 500 m bort medan motbrunnens ligger ≤ 500 m – bara den läggs i `okanda`
+med `utpekad` (får förifyllt `ratt` när längden ger säker kandidat) och orsak "X ligger N m från närmaste andra brunn i
+filen – troligen fel littera (Y ligger i området)"; annars båda som förut. `s.gis["fel_brunn"]`; gisflagga "… – X ligger
+utanför filens område (fel littera?)". Förslagen utesluter litterat självt även i grann-/längdsökningen. Test:
+scratchpad/omr2/ (DUF 701 med slumpade koordinater i 300 × 300 m, STB1016414 på 10 km, ledningar STB1016514–STB1016515 9,8 m
+och –STB1016506 9,3 m → två rader STB1016414 med ratt STB1016514); gisvag-förslagen och gisdata_omr oförändrade. Scratchpad-testerna importerar från arcmap/moduler
 (samma loggar som före flytten); scratchpad/pytkoll_test.py laddar .pyt:n med låtsas-arcpy och kontrollerar modul- och
 .lyr-sökvägar. Sökvägar till modulerna längre upp i den här filen (arcmap/skapa_ledningslager.py osv.) avser numera
 arcmap/moduler/.
