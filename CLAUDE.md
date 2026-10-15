@@ -37,6 +37,7 @@ Körning:
 ```
 python tv3_analys.py -l filer.txt [-o utdata] [--topp 15] [--rapporter alla|AB|A|inga] [--behall-rapporter] [--diagram] [--media KATALOG] [--bilder KATALOG] [--littera FIL.CSV]
 python tv3_analys.py "testdata/DUF 701.TV3"   # enstaka fil, jokertecken eller katalog fungerar också
+python tv3_analys.py "testdata/WinCan 13-62-245/Project.xml"   # WinCan-export utan TV3-fil
 ```
 
 Listfilens format (relativa sökvägar tolkas relativt listfilen, `#` = kommentar):
@@ -674,6 +675,36 @@ ger "(ur inklinometern)" i PDF:en (10 sträckor i DUF 701 saknar PROFILADM men h
 oförändrade); OBS-texten i profilbilden säger "brunnshöjder saknas eller är orimliga i filen – profilen kan
 inte kontrolleras" när PROFILADM saknas. Test: scratchpad/hojdfel/ (DUF 701 med nr 1 sluthöjd 2444,33, nr 2
 profil ×100, nr 3 −9999). Den riktiga filen (DUF 700 Ålsten Del 5.TV3) har inte setts – användaren ombedd skicka.
+**WinCan-export utan TV3-fil** (okt 2026, användaren: "ibland finns ingen tv3 fil, utan enbart en .xml, en databas och
+.inc filer"; exempel `testdata/WinCan 13-62-245/` – SVOA/Relita 2013, Bromma Asbjörnsensväg, 15 sträckor, 2 av 14 .inc-filer
+medskickade; Viewer.mdb och DataBaseSchema.xsd behövs inte och ligger inte i repot): Project.xml är hela WinCan-databasen som
+ADO.NET-dataset (UTF-8, en rad) med S_T (sträcka: S_StartNode/S_EndNode, S_PipeDia, S_PipeShape, S_PipeMaterial,
+S_SectionType, S_Location/S_StartStreet, S_Counter, S_SectionFlow), SI_T (inspektion: SI_Section_ID, SI_InspectionDir,
+SI_InspDate, SI_InspectionStartTime, SI_Operator, SI_Weather, SI_Norm "SV VATTEN P93", SI_InclinationFileName), SO_T
+(observation: SO_Inspecs_ID, SO_Counter, SO_Position, SO_MPEGPosition, SO_OpCode, SO_Level = grad (SO_ObservCode är
+katalogkod, inte grad – ROT3 har Level 4 "Rötter 4"), SO_Char1 attribut/SO_Other1 klartext, SO_ClockPosition1/2,
+SO_ContinousDefect **B1 = början, S1 = slut** (tyska), SO_WaterLevel, SO_PhotoFilename1/2, SO_ClipFileName1 på första
+raden, SO_Remark (brunnen på raden "Inspektionen börjar"), SO_Value1/SO_Unit1 anslutningsdimension, SO_Shape_Change),
+P_T (P_Name), C_T (Client/Contractor/Manager). `.inc`: huvud "Nyckel:värde" (Start/End ManHole = sträckans start/slut,
+Start/End Altitude tomma) till "Values...", sedan "position;lutning" med decimalpunkt; positionen från kameran, värdet
+**lutning i procent** (integral 0,58 m på 26,7 m resp. 0,87 m på 48,3 m = 1,8–2,2 %), positivt = stiger i kamerans
+riktning – antaget ur två motströms filmer (båda positiva), användaren ombedd skicka en medströms .inc för att bekräfta
+tecknet. Implementation i tv3_analys: `ar_wincan_xml` (`<NewDataSet` + S_T/SI_T/P_T i första 64 kB), `las_tv3` skickar
+dit vidare till `las_wincan` (så tv3_pptx och main fungerar oförändrat); `las_inc`, `inc_profil` (trapets, z0 = Altitude
+vid kamerans brunn annars 0 → relativ profil, hängs upp via GIS/markprofil som "förskjuten till GIS"), KONFIG
+`INC_LUTNING_ENHET` 0,01 och `INC_POSITIV_UPPAT` True. `fil` = P_Name + ".xml" (snedstreck → "-"), nr = S_Counter
+(dubbletter nytt nr + nr_fil), utgångsbrunn ur "Inspektionen börjar"-raden annars riktningen, S_SectionFlow 2 byter
+start/slut, kod i KODER → kod + grad, annars infokod (INFOKODER fick V Vattennivå och C Anmärkning; okända koder får
+SO_Text i kommentaren och räknas i en OBS), klocka "00" → "", okända attribut läggs till i ATTRIBUT från SO_Other1,
+foder ur fält med "Lining/Liner" i namnet. WinCans **kombinerade** inspektion (SO_ReverseInspectionFlag −1 eller C-rad
+"***** Kombinerad", här nr 15 = 13 + 14 med klockor 00-00 på den speglade delen) hoppas över när delfilmerna finns –
+`_sammanslagen` gör samma sak (46,54 m). OBS för saknade .inc och annan norm än P93. Den gemensamma svansen av
+inläsningen (löpande längd, OBS, höjdkontroll, littera, omvända brunnar, flerinspekterad) bröts ut till
+`_avsluta_inlasning`. `hitta_tv3_filer`: kataloger ger även WinCan-xml, men inte när en .TV3 ligger i samma mapp (OBS).
+Exemplet: 14 sträckor + sammanslagen 15, A/B/C = 6/5/2, nr 8 lutning 17,8 ‰ ur .inc. Samtidigt: `planera_atgarder`
+itererade brunnarna i en frozenset → sträckornas ordning inom en etapp i kartunderlaget varierade mellan körningar
+(hashslump) – nu `sorted(q)`. Test: scratchpad/wincan_skript/test_wincan.py (fält, löpande, AS-dimension, KAM, .inc i
+undermapp, sammanslagning, listfil/mapp/TV3 i samma mapp); facit DUF 701 och filer.txt oförändrade. Handledning 3.5.
 **Sammanslagen sträcka i översikten** (okt 2026, användarens begäran "syns i ritningen att den är sammansatt
 av två avbrutna filmningar"): `Stracka.sammanslagning` = {a_nr, b_nr, a_fran, b_fran, a_langd, b_langd, L,
 overlapp} sätts av `_sammanslagen`; `rita_schema` ritar film b:s del [L − b_langd, L] i blågrå ton

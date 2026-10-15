@@ -140,6 +140,7 @@ INFOKODER = {
     "AS": "Anslutning", "RB": "Rensbrunn", "NB": "Nedstigningsbrunn", "TB": "Tillsynsbrunn",
     "RP": "Reparation", "BR": "Böj", "DF": "Dimensionsförändring", "MF": "Materialförändring",
     "ST": "Stalp", "PP": "Pumpstation/övrigt", "AG": "Anslutning, annan",
+    "V": "Vattennivå", "C": "Anmärkning",          # WinCan-export (Project.xml)
 }
 
 KLASS_TEXT = {
@@ -180,6 +181,14 @@ TACKNING_MIN_M = 1.0    # m – mindre täckning (mark − hjässa) än så flag
 HOJD_SAKNAS_UNDER = -999
 HOJD_ORIMLIG_M = 50
 OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartlängden nådde kameran inte
+# WinCan-export utan TV3-fil (Project.xml + .inc-filer, ev. Viewer.mdb): Project.xml läses som en TV3-fil
+# (S_T = sträckor, SI_T = inspektioner, SO_T = observationer) och inklinometern ur .inc-filerna. .inc-
+# värdena är lutning längs kamerans väg; INC_LUTNING_ENHET räknar om dem till m/m (0,01 = procent) och
+# INC_POSITIV_UPPAT anger tecknet (True = positivt värde när ledningen stiger i kamerans riktning).
+# Profilen blir relativ (0 vid kamerans startbrunn) om .inc-filen saknar Start/End Altitude – med
+# GIS-data (gis:/markprofil:) hängs den upp på vattengången som en TV3-profil med lokalt nollplan.
+INC_LUTNING_ENHET = 0.01
+INC_POSITIV_UPPAT = True
 # GIS-data (gisdata.json från ArcMap-verktyget "Exportera GIS-data"): brunnar med locknivå och
 # ledningssträckor mellan brunnar med vattengång, dimension, material och år. Analysen kontrollerar
 # filmen mot GIS och sätter en GIS-flagga per sträcka (kolumn i Prioritering, fält i JSON).
@@ -1425,7 +1434,10 @@ def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] |
     """Läser en TV3-fil. Ingen TVADM-rad med brunnar faller bort tyst: sträcknummer som inte är heltal
     (12A, 3-1) eller förekommer flera gånger får nya nummer efter filens största (nr_fil = originalet), och
     TVDAT/PROFIL-raderna följer med – vid dubbletter i den ordning blocken kommer i filen. Det som ändå
-    inte kan läsas räknas upp i varningar (hamnar i fel.txt) och skrivs som OBS i konsolen."""
+    inte kan läsas räknas upp i varningar (hamnar i fel.txt) och skrivs som OBS i konsolen.
+    En WinCan-projektexport (Project.xml) läses med las_wincan."""
+    if ar_wincan_xml(path):
+        return las_wincan(path, littera, varningar)
     text = las_text(path)
     filnamn = os.path.basename(path)
     sektioner: dict[str, list[list[str]]] = defaultdict(list)
@@ -1523,17 +1535,6 @@ def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] |
         )
         s_.observationer.append(o)
 
-    # Längd på löpande skador (A1 … B1)
-    for s in strackor.values():
-        start: dict[str, Observation] = {}
-        for o in s.observationer:
-            if o.lopande.startswith("A"):
-                start[o.lopande[1:]] = o
-            elif o.lopande.startswith("B"):
-                a = start.pop(o.lopande[1:], None)
-                if a:
-                    a.lopande_langd = round(o.lage - a.lage, 2)
-
     def _hojd(v):
         z = _f(v)
         return None if z is None or z <= HOJD_SAKNAS_UNDER else z
@@ -1545,6 +1546,23 @@ def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] |
         x, rz, z = _f(g(r, 1)), _f(g(r, 2)), _hojd(g(r, 3))
         if x is not None and z is not None:
             s_.profil.append((x, rz or 0.0, z))
+    return _avsluta_inlasning(strackor, filnamn, obs, littera, varningar)
+
+
+def _avsluta_inlasning(strackor: dict[int, Stracka], filnamn: str, obs: list[str],
+                       littera: list[dict] | None, varningar: list[str] | None) -> list[Stracka]:
+    """Det som är gemensamt för TV3- och WinCan-inläsningen: löpande skadors längd, OBS-texter,
+    höjdkontroll, ersättningslittera, start/slut i flödesriktningen och flerinspekterade brunnspar."""
+    # Längd på löpande skador (A1 … B1)
+    for s in strackor.values():
+        start: dict[str, Observation] = {}
+        for o in s.observationer:
+            if o.lopande.startswith("A"):
+                start[o.lopande[1:]] = o
+            elif o.lopande.startswith("B"):
+                a = start.pop(o.lopande[1:], None)
+                if a:
+                    a.lopande_langd = round(o.lage - a.lage, 2)
 
     for t in obs:
         print(f"  OBS     {t}")
@@ -1580,6 +1598,248 @@ def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] |
         s.flerinspekterad = par[frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn)))] > 1
 
     return [strackor[k] for k in sorted(strackor)]
+
+
+# ----------------------------------------------------------------------------
+# WinCan-export (Project.xml + .inc-filer) i stället för TV3-fil
+# ----------------------------------------------------------------------------
+# Vissa uppdrag levereras utan TV3-fil, med WinCans projektexport: Project.xml (hela projektdatabasen
+# som ett ADO.NET-dataset, samma innehåll som Viewer.mdb), DataBaseSchema.xsd och en .inc-fil per
+# inspektion med inklinometern. Tabellerna motsvarar TV3-filens sektioner:
+#   S_T  sträcka   (S_StartNode/S_EndNode, S_PipeDia, S_PipeMaterial, S_SectionType …)     ≈ TVADM
+#   SI_T inspektion (SI_InspectionDir, SI_InspDate, SI_Operator, SI_InclinationFileName …)  ≈ TVADM
+#   SO_T observation (SO_Position, SO_OpCode, SO_Level = grad, SO_Char1 = attribut,
+#        SO_ClockPosition1/2, SO_ContinousDefect B1/S1 = löpande början/slut, SO_PhotoFilename1/2,
+#        SO_ClipFileName1 = videofil, SO_MPEGPosition = tid i filmen)                        ≈ TVDAT
+#   .inc position;lutning längs kamerans väg                                                ≈ PROFILDAT
+
+def ar_wincan_xml(path: str) -> bool:
+    """True om filen är en WinCan-projektexport (Project.xml med tabellerna S_T/SI_T/SO_T)."""
+    if not path.lower().endswith(".xml") or not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "rb") as f:
+            huvud = f.read(65536)
+    except OSError:
+        return False
+    if huvud[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        huvud = huvud.decode("utf-16", "ignore").encode("utf-8")
+    return b"<NewDataSet" in huvud and (b"<S_T>" in huvud or b"<SectionCatalogSettings" in huvud
+                                        or b"<P_T>" in huvud or b"<SI_T>" in huvud)
+
+
+def _wincan_tabeller(path: str) -> dict[str, list[dict[str, str]]]:
+    """Project.xml som {tabell: [rad: {fält: text}]}."""
+    import xml.etree.ElementTree as ET
+    rot = ET.parse(path).getroot()
+    tab: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for e in rot:
+        tab[e.tag.rsplit("}", 1)[-1]].append({c.tag.rsplit("}", 1)[-1]: (c.text or "").strip() for c in e})
+    return tab
+
+
+def las_inc(path: str) -> tuple[dict[str, str], list[tuple[float, float]]]:
+    """WinCans inklinometerfil (.inc): huvud med 'Nyckel:värde' (Start ManHole, End ManHole, Start
+    Altitude, End Altitude …) fram till raden 'Values...', sedan 'position;lutning' per rad. Huvudets
+    nycklar returneras med gemener; punkterna sorteras på position."""
+    huvud: dict[str, str] = {}
+    punkter: list[tuple[float, float]] = []
+    i_data = False
+    for rad in las_text(path).splitlines():
+        rad = rad.strip()
+        if not rad:
+            continue
+        if not i_data:
+            if rad.lower().startswith("values"):
+                i_data = True
+            elif ":" in rad:
+                k, v = rad.split(":", 1)
+                huvud[k.strip().lower()] = v.strip()
+            continue
+        delar = rad.split(";")
+        if len(delar) >= 2:
+            x, v = _f(delar[0]), _f(delar[1])
+            if x is not None and v is not None:
+                punkter.append((x, v))
+    punkter.sort(key=lambda p: p[0])
+    return huvud, punkter
+
+
+def inc_profil(punkter: list[tuple[float, float]], z0: float = 0.0) -> list[tuple[float, float, float]]:
+    """Inklinometerns lutning längs kamerans väg integrerad (trapetsregeln) till en höjdprofil
+    [(kamerans position, relativ höjd, höjd)] med höjden z0 vid första punkten."""
+    tecken = 1.0 if INC_POSITIV_UPPAT else -1.0
+    ut: list[tuple[float, float, float]] = []
+    z = 0.0
+    for i, (x, v) in enumerate(punkter):
+        if i:
+            x0, v0 = punkter[i - 1]
+            z += (x - x0) * (v0 + v) / 2 * INC_LUTNING_ENHET * tecken
+        ut.append((x, round(z, 4), round(z0 + z, 4)))
+    return ut
+
+
+def _wincan_klocka(v: str) -> str:
+    v = (v or "").strip()
+    return "" if v in ("", "0", "00") else v
+
+
+def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None) -> list[Stracka]:
+    """Läser en WinCan-projektexport (Project.xml) till sträckor som en TV3-fil. Inklinometern läses
+    ur .inc-filerna (SI_InclinationFileName) som söks i Project.xml:s mapp med undermappar. Filen
+    (Stracka.fil) heter som projektet (P_Name) + '.xml'; sträcknumret är S_Counter. En inspektion som
+    WinCan själv slagit ihop av två delfilmer (omvända observationer, 'Kombinerad') hoppas över när
+    delfilmerna finns – analysen slår ihop dem (SAMMANSLAGNING) med rätt speglade klockslag."""
+    tab = _wincan_tabeller(path)
+    if not tab.get("S_T") or not tab.get("SI_T"):
+        raise ValueError(f"{os.path.basename(path)}: inga sträckor/inspektioner (S_T/SI_T) i WinCan-filen")
+    katalog = os.path.dirname(os.path.abspath(path))
+    projekt = (tab.get("P_T") or [{}])[0]
+    pnamn = projekt.get("P_Name") or os.path.basename(katalog) or "WinCan"
+    filnamn = re.sub(r"[\\/]+", "-", pnamn).strip() + ".xml"
+    bestallare = next((c.get("C_Name", "") for c in tab.get("C_T", [])
+                       if c.get("C_Type", "").lower() == "client"), "")
+    sektioner = {s.get("S_ID"): s for s in tab["S_T"]}
+    obs_per: dict[str, list[dict]] = defaultdict(list)
+    for o in tab.get("SO_T", []):
+        obs_per[o.get("SO_Inspecs_ID", "")].append(o)
+
+    obs: list[str] = []
+    insp = []
+    for si in tab["SI_T"]:
+        s = sektioner.get(si.get("SI_Section_ID"))
+        if s is None:
+            obs.append(f"{filnamn}: inspektion {si.get('SI_AutoNumber', '?')} hör till en sträcka som saknas i S_T")
+            continue
+        insp.append((s, si))
+    insp.sort(key=lambda p: (_i(p[0].get("S_Counter", "")) or 10 ** 9, _i(p[1].get("SI_AutoNumber", "")) or 0))
+
+    def kombinerad(si: dict) -> bool:
+        return any(o.get("SO_ReverseInspectionFlag") == "-1"
+                   or (o.get("SO_OpCode", "").upper() == "C" and "kombinerad" in o.get("SO_Text", "").lower())
+                   for o in obs_per[si.get("SI_ID", "")])
+
+    def par(s: dict) -> frozenset:
+        return frozenset((_normlittera(s.get("S_StartNode", "")), _normlittera(s.get("S_EndNode", ""))))
+
+    delfilmer = Counter(par(s) for s, si in insp if not kombinerad(si))
+    hogsta = max([_i(s.get("S_Counter", "")) or 0 for s, _ in insp] + [0])
+    anvanda: set[int] = set()
+    inc_index: dict[str, str] | None = None
+    saknade_inc: list[str] = []
+    okanda_koder: Counter = Counter()
+    strackor: dict[int, Stracka] = {}
+
+    for s, si in insp:
+        a, b = s.get("S_StartNode", ""), s.get("S_EndNode", "")
+        if kombinerad(si) and delfilmer[par(s)]:
+            obs.append(f"{filnamn}: nr {s.get('S_Counter', '?')} ({a} → {b}) är WinCans hopslagning av två delfilmer "
+                       f"– hoppas över, analysen slår själv ihop delfilmerna")
+            continue
+        k = _i(s.get("S_Counter", ""))
+        if k and k not in anvanda:
+            nr, nr_fil = k, ""
+        else:
+            hogsta += 1
+            nr, nr_fil = hogsta, s.get("S_Counter", "") or "?"
+            obs.append(f"{filnamn}: sträcknummer '{nr_fil}' ({a} → {b}) förekommer flera gånger – läst som nr {nr}")
+        anvanda.add(nr)
+        if s.get("S_SectionFlow") == "2":        # flödet går från slutnoden till startnoden
+            a, b = b, a
+        rader = sorted(obs_per[si.get("SI_ID", "")], key=lambda o: _i(o.get("SO_Counter", "")) or 0)
+        riktning = si.get("SI_InspectionDir", "")
+        # "Inspektionen börjar" har brunnen kameran startade i som anmärkning
+        utg = next((o.get("SO_Remark", "") for o in rader if not o.get("SO_OpCode")
+                    and (_f(o.get("SO_Position", "")) or 0.0) <= 0.01 and o.get("SO_Remark", "") in (a, b)
+                    and o.get("SO_Remark")), "")
+        if not utg:
+            utg = b if riktning.strip().lower().startswith("mot") else a
+        dim = s.get("S_PipeDia", "")
+        if not dim:
+            m = re.search(r"\d+", s.get("S_Profile", ""))
+            dim = m.group(0) if m else ""
+        hojd2 = s.get("S_PipeHeight", "")
+        foder = next((v for f_, v in s.items() if ("lining" in f_.lower() or "liner" in f_.lower()) and v
+                      and v.lower() not in ("0", "-1", "nej", "ingen")), "")
+        omrade = ", ".join(v for v in (s.get("S_Location", ""), s.get("S_StartStreet", "")) if v)
+        st = Stracka(
+            fil=filnamn, nr=nr, startbrunn=a, slutbrunn=b, utgangsbrunn=utg,
+            agare=bestallare, omrade=omrade, projekt=pnamn, riktning=riktning,
+            datum=si.get("SI_InspDate", "")[:10], klockslag=si.get("SI_InspectionStartTime", "")[:5],
+            operator=si.get("SI_Operator", ""),
+            videofil=next((o.get("SO_ClipFileName1", "") for o in rader if o.get("SO_ClipFileName1")), ""),
+            form=s.get("S_PipeShape", ""), dimension=dim, dimension2=hojd2 if hojd2 != dim else "",
+            material=s.get("S_PipeMaterial", ""), foder=foder, fodermaterial="",
+            ledningstyp=s.get("S_SectionType", ""), vader=si.get("SI_Weather", ""),
+            tv3_sokvag=os.path.abspath(path), nr_fil=nr_fil,
+        )
+        for o in rader:
+            kod = o.get("SO_OpCode", "").strip().upper()
+            kom = []
+            if kod and kod not in KODER and kod not in INFOKODER:
+                okanda_koder[kod] += 1
+                if o.get("SO_Text"):
+                    kom.append(o["SO_Text"])
+            if o.get("SO_Shape_Change"):
+                kom.append(f"till {o['SO_Shape_Change']}")
+            elif o.get("SO_Value1"):
+                kom.append(f"{o['SO_Value1']} {o.get('SO_Unit1', '')}".strip())
+            attr = o.get("SO_Char1", "").upper()
+            if attr and attr not in ATTRIBUT and o.get("SO_Other1"):
+                ATTRIBUT[attr] = o["SO_Other1"].lower()      # WinCans klartext för okända attribut
+            if o.get("SO_Remark"):
+                kom.append(o["SO_Remark"])
+            m = re.match(r"([BS])(\d+)$", o.get("SO_ContinousDefect", "").strip().upper())
+            lopande = (("A" if m.group(1) == "B" else "B") + m.group(2)) if m else o.get("SO_ContinousDefect", "")
+            st.observationer.append(Observation(
+                fil=filnamn, nr=nr, lage=_f(o.get("SO_Position", "")) or 0.0, tid=o.get("SO_MPEGPosition", ""),
+                lopande=lopande, kod=kod if kod in KODER else "",
+                grad=_i(o.get("SO_Level", "")) if kod in KODER else None,
+                infokod="" if kod in KODER else kod, attribut=attr,
+                klocka_fran=_wincan_klocka(o.get("SO_ClockPosition1", "")),
+                klocka_till=_wincan_klocka(o.get("SO_ClockPosition2", "")),
+                vattenniva=o.get("SO_WaterLevel", ""), bild=o.get("SO_PhotoFilename1", ""),
+                bild_b=o.get("SO_PhotoFilename2", ""), kommentar="; ".join(kom),
+            ))
+        # Inklinometern
+        incnamn = si.get("SI_InclinationFileName", "")
+        if incnamn:
+            if inc_index is None:
+                inc_index = {}
+                for rot_, mappar, namn in os.walk(katalog):
+                    mappar.sort()
+                    for n in sorted(namn):
+                        if n.lower().endswith(".inc"):
+                            inc_index.setdefault(n.lower(), os.path.join(rot_, n))
+            ip = inc_index.get(os.path.basename(incnamn.replace("\\", "/")).lower())
+            if not ip:
+                saknade_inc.append(incnamn)
+            else:
+                huvud, punkter = las_inc(ip)
+
+                def hojd(v):
+                    z = _f(v or "")
+                    return None if z is None or z <= HOJD_SAKNAS_UNDER else z
+                za, zb = hojd(huvud.get("start altitude")), hojd(huvud.get("end altitude"))
+                if _normlittera(huvud.get("start manhole", "")) == _normlittera(b):
+                    za, zb = zb, za
+                st.profil_start_z, st.profil_slut_z = za, zb
+                if len(punkter) >= 2:
+                    z0 = za if st.fran_brunn == a else zb
+                    st.profil = inc_profil(punkter, z0 if z0 is not None else 0.0)
+        strackor[nr] = st
+
+    normer = Counter(si.get("SI_Norm", "") for _, si in insp if si.get("SI_Norm"))
+    for norm in normer:
+        if "P93" not in norm.upper().replace(" ", ""):
+            obs.append(f"{filnamn}: inspektionsnorm '{norm}' ({normer[norm]} inspektioner) – koderna tolkas som P93")
+    if okanda_koder:
+        obs.append(f"{filnamn}: okända observationskoder (räknas inte som skador): "
+                   + ", ".join(f"{k} ({n})" for k, n in okanda_koder.most_common(10)))
+    if saknade_inc:
+        obs.append(f"{filnamn}: {len(saknade_inc)} inklinometerfiler (.inc) hittades inte i {katalog} – "
+                   f"profil saknas för dem ({', '.join(saknade_inc[:4])}" + (" …" if len(saknade_inc) > 4 else "") + ")")
+    return _avsluta_inlasning(strackor, filnamn, obs, littera, varningar)
 
 
 # ----------------------------------------------------------------------------
@@ -2793,7 +3053,7 @@ def planera_atgarder(strackor: list[Stracka], kostnader: list[dict],
         while ko:
             q = ko.pop()
             grupp.append(atgard[q])
-            for b in q:
+            for b in sorted(q):                  # sorterat – mängdens ordning varierar mellan körningar
                 for granne in brunn_metod.get((b, metod), []):
                     gp = par_av(granne)
                     if gp not in sedda:
@@ -4588,8 +4848,18 @@ def hitta_tv3_filer(argument: list[str], listfiler: list[str]) -> tuple[list[Lis
     filer: list[Listpost] = []
     for k, media, bild in kandidater:
         if os.path.isdir(k):
-            for rot, _, namn in os.walk(k):
-                filer += [(os.path.join(rot, n), media, bild) for n in sorted(namn) if n.lower().endswith(".tv3")]
+            for rot, mappar, namn in os.walk(k):
+                mappar.sort()
+                tv3 = [n for n in sorted(namn) if n.lower().endswith(".tv3")]
+                filer += [(os.path.join(rot, n), media, bild) for n in tv3]
+                # WinCan-export (Project.xml + .inc) utan TV3-fil – finns en TV3-fil i samma mapp är
+                # den samma inspektioner och används i stället
+                wincan = [n for n in sorted(namn) if n.lower().endswith(".xml")
+                          and ar_wincan_xml(os.path.join(rot, n))]
+                if wincan and tv3:
+                    print(f"  OBS     {rot}: {', '.join(wincan)} (WinCan) läses inte – TV3-filen i samma mapp används")
+                elif wincan:
+                    filer += [(os.path.join(rot, n), media, bild) for n in wincan]
         else:
             filer.append((k, media, bild))
 
@@ -4611,7 +4881,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Analys av TV3-filer (Svenskt Vatten TV-fil v3.0)",
         epilog="Exempel: python tv3_analys.py -l filer.txt -o resultat_2024 --topp 20")
-    ap.add_argument("filer", nargs="*", help=".TV3-filer, kataloger, jokertecken (*.TV3) eller .txt-listfiler")
+    ap.add_argument("filer", nargs="*", help=".TV3-filer, WinCan-export (Project.xml), kataloger, jokertecken (*.TV3) "
+                                             "eller .txt-listfiler")
     ap.add_argument("-l", "--lista", action="append", default=[], metavar="FIL.TXT",
                     help="textfil med en TV3-sökväg per rad (kan anges flera gånger)")
     ap.add_argument("-o", "--utdata", default="tv3_resultat", help="utdatakatalog (standard: tv3_resultat)")
@@ -4700,7 +4971,7 @@ def main(argv=None):
         for st_ in st:
             st_.media_kataloger = list(media)
             st_.bild_kataloger = list(bild)
-        print(f"  OK      {os.path.basename(p)}: {len(st)} sträckor, {sum(s.langd for s in st):.0f} m, "
+        print(f"  OK      {st[0].fil if st else os.path.basename(p)}: {len(st)} sträckor, {sum(s.langd for s in st):.0f} m, "
               f"{sum(len(s.skador()) for s in st)} skadeobservationer"
               + (f", {sum(1 for s in st if s.littera_rattat)} sträckor med rättat littera"
                  if any(s.littera_rattat for s in st) else ""))
