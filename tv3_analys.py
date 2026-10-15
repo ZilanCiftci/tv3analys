@@ -183,12 +183,15 @@ HOJD_ORIMLIG_M = 50
 OFULLSTANDIG_ANDEL = 0.85  # är filmad längd kortare än så gånger kartlängden nådde kameran inte
 # WinCan-export utan TV3-fil (Project.xml + .inc-filer, ev. Viewer.mdb): Project.xml läses som en TV3-fil
 # (S_T = sträckor, SI_T = inspektioner, SO_T = observationer) och inklinometern ur .inc-filerna. .inc-
-# värdena är lutning längs kamerans väg; INC_LUTNING_ENHET räknar om dem till m/m (0,01 = procent) och
-# INC_POSITIV_UPPAT anger tecknet (True = positivt värde när ledningen stiger i kamerans riktning).
+# värdena är ledningens lutning längs kamerans väg; INC_LUTNING_ENHET räknar om dem till m/m (0,01 = procent)
+# och INC_POSITIV_FALL anger tecknet: True = positivt värde är fall i flödesriktningen oavsett åt vilket håll
+# kameran körde (kontrollerat okt 2026 på sju .inc-filer från 13-62-245: alla fyra medströms och alla tre
+# motströms filmade sträckor har positivt medelvärde, 0,1–2,9 %), False = positivt är stigning i kamerans
+# riktning.
 # Profilen blir relativ (0 vid kamerans startbrunn) om .inc-filen saknar Start/End Altitude – med
 # GIS-data (gis:/markprofil:) hängs den upp på vattengången som en TV3-profil med lokalt nollplan.
 INC_LUTNING_ENHET = 0.01
-INC_POSITIV_UPPAT = True
+INC_POSITIV_FALL = True
 # GIS-data (gisdata.json från ArcMap-verktyget "Exportera GIS-data"): brunnar med locknivå och
 # ledningssträckor mellan brunnar med vattengång, dimension, material och år. Analysen kontrollerar
 # filmen mot GIS och sätter en GIS-flagga per sträcka (kolumn i Prioritering, fält i JSON).
@@ -1668,10 +1671,16 @@ def las_inc(path: str) -> tuple[dict[str, str], list[tuple[float, float]]]:
     return huvud, punkter
 
 
-def inc_profil(punkter: list[tuple[float, float]], z0: float = 0.0) -> list[tuple[float, float, float]]:
+def inc_profil(punkter: list[tuple[float, float]], z0: float = 0.0,
+               medstroms: bool = True) -> list[tuple[float, float, float]]:
     """Inklinometerns lutning längs kamerans väg integrerad (trapetsregeln) till en höjdprofil
-    [(kamerans position, relativ höjd, höjd)] med höjden z0 vid första punkten."""
-    tecken = 1.0 if INC_POSITIV_UPPAT else -1.0
+    [(kamerans position, relativ höjd, höjd)] med höjden z0 vid första punkten. Med INC_POSITIV_FALL är
+    värdet fallet i flödesriktningen: höjden sjunker längs kameran vid medströms filmning och stiger vid
+    motströms."""
+    if INC_POSITIV_FALL:
+        tecken = -1.0 if medstroms else 1.0
+    else:
+        tecken = 1.0
     ut: list[tuple[float, float, float]] = []
     z = 0.0
     for i, (x, v) in enumerate(punkter):
@@ -1870,7 +1879,9 @@ def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str
                 st.profil_start_z, st.profil_slut_z = za, zb
                 if len(punkter) >= 2:
                     z0 = za if st.fran_brunn == a else zb
-                    st.profil = inc_profil(punkter, z0 if z0 is not None else 0.0)
+                    r = riktning.strip().lower()
+                    medstroms = r.startswith("med") if r[:3] in ("med", "mot") else st.fran_brunn == a
+                    st.profil = inc_profil(punkter, z0 if z0 is not None else 0.0, medstroms)
         strackor[nr] = st
 
     normer = Counter(si.get("SI_Norm", "") for _, si in insp if si.get("SI_Norm"))

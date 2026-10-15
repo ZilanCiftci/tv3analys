@@ -677,7 +677,7 @@ oförändrade); OBS-texten i profilbilden säger "brunnshöjder saknas eller är
 inte kontrolleras" när PROFILADM saknas. Test: scratchpad/hojdfel/ (DUF 701 med nr 1 sluthöjd 2444,33, nr 2
 profil ×100, nr 3 −9999). Den riktiga filen (DUF 700 Ålsten Del 5.TV3) har inte setts – användaren ombedd skicka.
 **WinCan-export utan TV3-fil** (okt 2026, användaren: "ibland finns ingen tv3 fil, utan enbart en .xml, en databas och
-.inc filer"; exempel `testdata/WinCan 13-62-245/` – SVOA/Relita 2013, Bromma Asbjörnsensväg, 15 sträckor, 2 av 14 .inc-filer
+.inc filer"; exempel `testdata/WinCan 13-62-245/` – SVOA/Relita 2013, Bromma Asbjörnsensväg, 15 sträckor, 7 av 14 .inc-filer
 medskickade; Viewer.mdb och DataBaseSchema.xsd behövs inte och ligger inte i repot): Project.xml är hela WinCan-databasen som
 ADO.NET-dataset (UTF-8, en rad) med S_T (sträcka: S_StartNode/S_EndNode, S_PipeDia, S_PipeShape, S_PipeMaterial,
 S_SectionType, S_Location/S_StartStreet, S_Counter, S_SectionFlow), SI_T (inspektion: SI_Section_ID, SI_InspectionDir,
@@ -688,12 +688,15 @@ SO_ContinousDefect **B1 = början, S1 = slut** (tyska), SO_WaterLevel, SO_PhotoF
 raden, SO_Remark (brunnen på raden "Inspektionen börjar"), SO_Value1/SO_Unit1 anslutningsdimension, SO_Shape_Change),
 P_T (P_Name), C_T (Client/Contractor/Manager). `.inc`: huvud "Nyckel:värde" (Start/End ManHole = sträckans start/slut,
 Start/End Altitude tomma) till "Values...", sedan "position;lutning" med decimalpunkt; positionen från kameran, värdet
-**lutning i procent** (integral 0,58 m på 26,7 m resp. 0,87 m på 48,3 m = 1,8–2,2 %), positivt = stiger i kamerans
-riktning – antaget ur två motströms filmer (båda positiva), användaren ombedd skicka en medströms .inc för att bekräfta
-tecknet. Implementation i tv3_analys: `ar_wincan_xml` (`<NewDataSet` + S_T/SI_T/P_T i första 64 kB), `las_tv3` skickar
+**lutning i procent**, **positivt = fall i flödesriktningen oavsett kamerans riktning** (först antaget "stiger i
+kamerans riktning" ur två motströms filmer; användarens fem .inc till (okt 2026, nr 10–14, fyra medströms) gav positivt
+medelvärde även medströms – integral 0,02/0,79/0,43/0,18 m medströms, 0,67/0,58/0,87 m motströms – så den gamla tolkningen
+gav bakfall på alla medströms; nu `INC_POSITIV_FALL` True och `inc_profil(punkter, z0, medstroms)` (riktning ur SI_InspectionDir,
+annars fran_brunn), lutning nr 7/8/10/11/12/13/14 = 21,5/17,8/0,8/11,0/9,7/8,0/27,2 ‰, nr 10 svacka 8 cm). Utan brunnshöjder
+blir varje .inc-profil "profil osäker" (som TV3 utan PROFILADM) tills GIS-nivåer finns. Sju .inc i testdata. Implementation i tv3_analys: `ar_wincan_xml` (`<NewDataSet` + S_T/SI_T/P_T i första 64 kB), `las_tv3` skickar
 dit vidare till `las_wincan` (så tv3_pptx och main fungerar oförändrat); `las_inc`, `inc_profil` (trapets, z0 = Altitude
 vid kamerans brunn annars 0 → relativ profil, hängs upp via GIS/markprofil som "förskjuten till GIS"), KONFIG
-`INC_LUTNING_ENHET` 0,01 och `INC_POSITIV_UPPAT` True. `fil` = P_Name + ".xml" (snedstreck → "-"), nr = S_Counter
+`INC_LUTNING_ENHET` 0,01 och `INC_POSITIV_FALL` True. `fil` = P_Name + ".xml" (snedstreck → "-"), nr = S_Counter
 (dubbletter nytt nr + nr_fil), utgångsbrunn ur "Inspektionen börjar"-raden annars riktningen, S_SectionFlow 2 byter
 start/slut, kod i KODER → kod + grad, annars infokod (INFOKODER fick V Vattennivå och C Anmärkning; okända koder får
 SO_Text i kommentaren och räknas i en OBS), klocka "00" → "", okända attribut läggs till i ATTRIBUT från SO_Other1,
