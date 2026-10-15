@@ -211,6 +211,10 @@ OMFILMNING = True
 OMFILMNING_MIN_ANDEL = 0.85
 SAMMANSLAGNING = True
 OMFILMNING_OVER_FILER = True
+# Två avbrutna delfilmer av samma brunnspar från var sin brunn i OLIKA TV3-filer (t.ex. DUF 700 Del 4 och
+# Del 5) slås ihop som i samma fil när de är filmade inom så många dagar från varandra; ligger de längre isär
+# är den nyare en ny inspektion (OMFILMNING_OVER_FILER). None = aldrig över filgränser.
+SAMMANSLAGNING_MAX_DAGAR = 365
 DELFILMER_SEPARAT = False     # True: delfilmerna i en sammanslagning listas även var för sig i Prioritering/
                               # Observationer och får egna protokoll; False: bara den sammanslagna sträckan
 TIDIGARE_INDEX_ANDEL = 0.2    # konstruktionsindex ändrat mer än så (och minst 5 p/100 m) inom samma klass = förvärrad/förbättrad
@@ -354,6 +358,7 @@ class Observation:
     bild_sokvag: str | None = None       # hittad sökväg till bildfilen
     bild_b_sokvag: str | None = None
     film_nr: int | None = None           # ursprunglig delfilm (nr) när sträckan är sammanslagen
+    film_b: bool = False                 # observationen kommer från den andra delfilmen (Videofil 2)
 
     @property
     def bilder(self) -> list[tuple[str, str | None]]:
@@ -2454,6 +2459,29 @@ def _tidsnyckel(s: Stracka) -> tuple:
     return (1, dag.strftime("%Y-%m-%d"), tid)
 
 
+def _dagar_isar(a: Stracka, b: Stracka) -> int | None:
+    """Antal dagar mellan två filmers datum, None om något datum inte går att tolka."""
+    from datetime import date
+    ta, tb = _tidsnyckel(a), _tidsnyckel(b)
+    if not (ta[0] and tb[0]):
+        return None
+    return abs((date.fromisoformat(ta[1]) - date.fromisoformat(tb[1])).days)
+
+
+def _delfilmspar(grupp: list[Stracka]) -> tuple[Stracka, Stracka, list[Stracka]] | None:
+    """Ur ofullständiga filmer av ett brunnspar: längsta filmen från startbrunnen (a) och från slutbrunnen
+    (b) plus övriga från samma brunnar (som då ersätts). None om det inte finns en från vardera brunnen."""
+    per_sida: dict[str, list[Stracka]] = {}
+    for s in grupp:
+        per_sida.setdefault(_normlittera(s.fran_brunn), []).append(s)
+    basta = {sida: max(lista, key=lambda s: (round(s.langd, 1), _tidsnyckel(s))) for sida, lista in per_sida.items()}
+    a = next((s for s in basta.values() if _normlittera(s.fran_brunn) == _normlittera(s.startbrunn)), None)
+    b = next((s for s in basta.values() if _normlittera(s.fran_brunn) == _normlittera(s.slutbrunn)), None)
+    if a is None or b is None or len(basta) != 2:
+        return None
+    return a, b, [s for s in grupp if s is not a and s is not b]
+
+
 def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     """Slår ihop film a (från startbrunnen) och film b (från slutbrunnen) till en sträcka med
     positioner från startbrunnen. Kartlängden ger totallängd och överlapp; i överlappet behålls den
@@ -2472,9 +2500,16 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
     nyare_b = _tidsnyckel(b) >= _tidsnyckel(a)
     nyare, aldre = (b, a) if nyare_b else (a, b)
 
+    olika_filer = a.fil != b.fil
+
+    def filmnamn(film):
+        return f"nr {film.nr}" + (f" i {os.path.basename(film.fil)}" if olika_filer else "")
+
     def marka(o, film):
         o.film_nr = film.nr
-        o.kommentar = f"film nr {film.nr}" + (f" – {o.kommentar}" if o.kommentar else "")
+        o.film_b = film is b
+        o.fil = a.fil
+        o.kommentar = f"film {filmnamn(film)}" + (f" – {o.kommentar}" if o.kommentar else "")
 
     # Snitt i respektive films egen axel: den äldre filmens observationer bortom snittet tas bort
     # och dess löpande skador kapas där (den nyare filmen gäller i överlappet)
@@ -2565,8 +2600,15 @@ def _sammanslagen(a: Stracka, b: Stracka, nr: int) -> Stracka:
         noter.insert(0, "kartlängd okänd – filmerna antas mötas utan överlapp")
     else:
         noter.insert(1, "filmerna antas mötas utan överlapp")
-    ny.filmstatus = f"sammanslagen av nr {a.nr} + {b.nr}" + (" (" + "; ".join(noter) + ")" if noter else "")
+    if olika_filer:
+        dagar = _dagar_isar(a, b)
+        noter.insert(0, f"delfilmerna i två TV3-filer" + (f", {dagar} {'dag' if dagar == 1 else 'dagar'} isär" if dagar is not None else ""))
+    ny.filmstatus = ((f"sammanslagen av {filmnamn(a)} + {filmnamn(b)}" if olika_filer
+                      else f"sammanslagen av nr {a.nr} + {b.nr}")
+                     + (" (" + "; ".join(noter) + ")" if noter else ""))
     ny.sammanslagning = {"a_nr": a.nr, "b_nr": b.nr, "a_fran": a.fran_brunn, "b_fran": b.fran_brunn,
+                         "a_fil": os.path.basename(a.fil) if olika_filer else "",
+                         "b_fil": os.path.basename(b.fil) if olika_filer else "",
                          "a_langd": a.langd, "b_langd": b.langd, "L": L, "overlapp": overlapp if L_karta else 0.0}
     return ny
 
@@ -2636,11 +2678,15 @@ def _samma_film(strackor: list[Stracka]) -> None:
                   f"{os.path.basename(i_fil)} och räknas en gång; {kvar[fil]} är egna")
 
 
-def _over_filer(strackor: list[Stracka]) -> None:
+def _over_filer(strackor: list[Stracka]) -> list[Stracka]:
     """Samma brunnspar i olika TV3-filer: den nyaste filmen (senare datum) gäller, äldre filmer i andra
     filer markeras 'ersatt av ny inspektion …' och den gällande får `tidigare` med den närmast
     föregående inspektionens klass och index. Filmer utan tolkbart datum rörs inte (varning).
-    Först tas kopior av samma film bort (_samma_film)."""
+    Först tas kopior av samma film bort (_samma_film). Är brunnsparet bara filmat i avbrutna delfilmer,
+    en från vardera brunnen i olika filer och inom SAMMANSLAGNING_MAX_DAGAR, slås de ihop som inom en
+    fil (den sammanslagna sträckan får filen och ett nytt nummer från delfilmen från startbrunnen).
+    Returnerar de sammanslagna sträckorna."""
+    nya: list[Stracka] = []
     if len({s.fil for s in strackor}) > 1:
         _samma_film(strackor)
     grupper: dict[frozenset, list[Stracka]] = {}
@@ -2648,12 +2694,33 @@ def _over_filer(strackor: list[Stracka]) -> None:
         if s.langd >= 1 and s.startbrunn and s.slutbrunn and _normlittera(s.startbrunn) != _normlittera(s.slutbrunn):
             grupper.setdefault(frozenset((_normlittera(s.startbrunn), _normlittera(s.slutbrunn))), []).append(s)
     utan_datum = []
+    max_nr: dict[str, int] = {}
+    for s in strackor:
+        max_nr[s.fil] = max(max_nr.get(s.fil, 0), s.nr)
     for par, grupp in grupper.items():
         if len({s.fil for s in grupp}) < 2:
             continue
         if any(_tidsnyckel(s)[0] == 0 for s in grupp):
             utan_datum.append(grupp)
             continue
+        # bara avbrutna delfilmer, från var sin brunn i olika filer, filmade nära i tid: slå ihop
+        if SAMMANSLAGNING and SAMMANSLAGNING_MAX_DAGAR is not None and all(s.ofullstandig for s in grupp):
+            par_ab = _delfilmspar(grupp)
+            if par_ab and par_ab[0].fil != par_ab[1].fil:
+                a, b, ovriga = par_ab
+                dagar = _dagar_isar(a, b)
+                if dagar is not None and dagar <= SAMMANSLAGNING_MAX_DAGAR:
+                    max_nr[a.fil] += 1
+                    ny = _sammanslagen(a, b, max_nr[a.fil])
+                    for s, andra in ((a, b), (b, a)):
+                        s.filmstatus = (f"ingår i sammanslagen nr {ny.nr} i {os.path.basename(a.fil)} tillsammans med "
+                                        f"nr {andra.nr} i {os.path.basename(andra.fil)} (filmad från {andra.fran_brunn}, "
+                                        f"{andra.langd:.1f} m) – se protokollet för sträcka {ny.nr}")
+                    for s in ovriga:
+                        _ersatt(s, a if _normlittera(s.fran_brunn) == _normlittera(a.fran_brunn) else b,
+                                "längre film från samma brunn")
+                    nya.append(ny)
+                    continue
         nyast = max(grupp, key=lambda s: (_tidsnyckel(s), s.fil, s.nr))
         dag = _tidsnyckel(nyast)[1]
         # gällande = filmerna i den nyaste filen (kvar efter filens egen hantering, normalt en); alla
@@ -2680,6 +2747,10 @@ def _over_filer(strackor: list[Stracka]) -> None:
         s = grupp[0]
         print(f"  OBS     {s.id} finns i {len({x.fil for x in grupp})} filer men datum saknas/kan inte tolkas "
               f"– alla filmerna räknas")
+    if nya:
+        print(f"  OBS     {len(nya)} brunnspar filmade i avbrutna delfilmer i olika TV3-filer slogs ihop: "
+              + ", ".join(f"{s.startbrunn} → {s.slutbrunn}" for s in nya[:5]) + (" …" if len(nya) > 5 else ""))
+    return nya
 
 
 def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
@@ -2690,7 +2761,7 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
     får `tidigare`. Returnerar listan inklusive sammanslagna."""
     if not (OMFILMNING or SAMMANSLAGNING):
         if OMFILMNING_OVER_FILER:
-            _over_filer(strackor)
+            return strackor + _over_filer(strackor)
         return strackor
     grupper: dict[tuple[str, frozenset], list[Stracka]] = {}
     for s in strackor:
@@ -2750,7 +2821,7 @@ def hantera_omfilmningar(strackor: list[Stracka]) -> list[Stracka]:
                     _ersatt(s, ny if ny is not None else kvar[0], "")
     alla = strackor + nya
     if OMFILMNING_OVER_FILER:
-        _over_filer(alla)
+        alla += _over_filer(alla)
     return alla
 
 
@@ -3517,7 +3588,7 @@ def skriv_excel(strackor: list[Stracka], path: str, diagram: dict[str, str], top
                 continue
             bs = o.bild_sokvag or (o.bild_b_sokvag if not o.bild else None)
             bild_urls.append(fil_url(bs) if bs else None)
-            fran_b = s.videofil_b and s.sammanslagning and o.film_nr == s.sammanslagning["b_nr"]
+            fran_b = bool(s.videofil_b and s.sammanslagning and o.film_b)
             vf, vs = (s.videofil_b, s.video_sokvag_b) if fran_b else (s.videofil, s.video_sokvag)
             video_urls.append(fil_url(vs) if vs else None)
             rader.append([s.fil, s.nr, s.startbrunn, s.slutbrunn, KLASS_TEXT[s.klass], o.lage, o.tid,
@@ -4183,9 +4254,9 @@ def rita_schema(s: Stracka, path: str) -> tuple[float, float]:
         b_start = max(0.0, L - sm["b_langd"])
         ax.annotate("", xy=(a_slut, y_pil), xytext=(0, y_pil), arrowprops=dict(arrowstyle="->", color=bla, lw=1.2))
         ax.annotate("", xy=(b_start, y_pil), xytext=(L, y_pil), arrowprops=dict(arrowstyle="->", color="#4a5d7a", lw=1.2))
-        ax.text(a_slut / 2, y_pil - 0.12, dk(f"film nr {sm['a_nr']} från {sm['a_fran']}, 0–{a_slut:.1f} m"),
+        ax.text(a_slut / 2, y_pil - 0.12, dk(f"film nr {sm['a_nr']}" + (f" ({os.path.splitext(sm['a_fil'])[0]})" if sm.get('a_fil') else "") + f" från {sm['a_fran']}, 0–{a_slut:.1f} m"),
                 ha="center", va="top", fontsize=6.5, color=bla)
-        ax.text((b_start + L) / 2, y_pil - 0.12, dk(f"film nr {sm['b_nr']} från {sm['b_fran']}, {b_start:.1f}–{L:.1f} m"),
+        ax.text((b_start + L) / 2, y_pil - 0.12, dk(f"film nr {sm['b_nr']}" + (f" ({os.path.splitext(sm['b_fil'])[0]})" if sm.get('b_fil') else "") + f" från {sm['b_fran']}, {b_start:.1f}–{L:.1f} m"),
                 ha="center", va="top", fontsize=6.5, color="#4a5d7a")
         skarv = (dk(f"överlapp {sm['overlapp']:.1f} m") if sm["overlapp"] > 0.5 else
                  dk(f"lucka {-sm['overlapp']:.1f} m") if sm["overlapp"] < -0.5 else dk(f"skarv vid {a_slut:.1f} m"))
@@ -4479,7 +4550,8 @@ def skriv_rapport(s: Stracka, path: str, tmp: str) -> None:
                      else ("okänd (höjdfel i filen)" if s.hojdfel else "–"))
          + ((f"  ·  bakfall {pa['bakfall']:.1f} m" if pa and pa["bakfall"] > 0.5 else "")
                                                                     + ("  ·  profil osäker" if pa and pa["osaker"] else ""))),
-        ("Videofil", (s.videofil or "–") + (f" + {s.videofil_b}" if s.videofil_b else ""), "TV3-fil", s.fil),
+        ("Videofil", (s.videofil or "–") + (f" + {s.videofil_b}" if s.videofil_b else ""), "TV3-fil",
+         s.fil + (f" + {s.sammanslagning['b_fil']}" if s.sammanslagning and s.sammanslagning.get("b_fil") else "")),
     ]
     h, tk = s.hojdanpassning, s.tackning
     if h:

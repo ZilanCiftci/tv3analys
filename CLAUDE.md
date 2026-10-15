@@ -438,6 +438,20 @@ infotabellrad; PPTX fakta-rad; konsolutskrift. Test: scratchpad/ny/ (syntetisk "
 sju sträckor ur DUF 701: förvärrad RBR4, relinad utan skador → D, oförändrad, avbruten vid 10 m, motströms
 filmad, samma dag = dubblett, 2019 = äldre än DUF 701) – alla fall rätt; facit DUF 701 ensam och filer.txt
 oförändrade (filen har inga par över filgränser).
+**Delfilmer i olika TV3-filer slås ihop** (okt 2026, användaren: "DNBL77277 → DNBL77279 filmad från två håll med
+avbrott i mitten men slås inte ihop – ligger i två olika tv3-filer, DUF 700 Ålsten Del 5 och DUF 700 Del 4"; "inom 1 år
+från varandra är OK att slå ihop"): sammanslagningen gjordes bara per (fil, brunnspar) och `_over_filer` lät den nyare
+delfilmen ersätta den äldre. Nu KONFIG `SAMMANSLAGNING_MAX_DAGAR` 365: i `_over_filer` (som nu returnerar nya sträckor;
+`hantera_omfilmningar` lägger till dem), när alla aktiva filmer av brunnsparet är ofullständiga, `_delfilmspar` ger längsta
+delfilm från startbrunnen (a) och slutbrunnen (b) i olika filer och `_dagar_isar(a, b)` ≤ 365 → `_sammanslagen(a, b, max nr
+i a.fil + 1)`; övriga delfilmer från samma brunn "ersatt … (längre film från samma brunn)"; delfilmerna "ingår i sammanslagen
+nr Y i FIL tillsammans med nr X i FIL"; OBS i konsolen. `_sammanslagen` med olika filer: filmstatus "sammanslagen av nr 72 i
+A.TV3 + nr 73 i B.TV3 (delfilmerna i två TV3-filer, 1 dag isär; …)" (samma fil oförändrat "nr 72 + 73"), observationerna får
+`fil` = a.fil och kommentaren "film nr 73 i B.TV3", `Observation.film_b` (Videofil 2-länken i Observationer använde
+`film_nr == b_nr`, som krockar när båda delfilmerna har samma nr i var sin fil), `sammanslagning` a_fil/b_fil → pilarna i
+översikten "film nr 73 (DUF 701 Del B) från …" och PDF-raden TV3-fil "A.TV3 + B.TV3". Test: scratchpad/delfil/ (DUF 701
+delad, nr 73 i en andra fil → nr 188 med samma klass/index/observationer som 186 i en fil, facit 40/55/20/61/5),
+delfil2/ (nr 73 daterad 2023 → "ersatt av ny inspektion"); ny/ och upp701/ identiska med förra versionen (med kostnader.csv).
 **Kartlängd utan direkt GIS-ledning** (okt 2026, användarens fråga "varför står det att kartlängden är okänd, jag
 har ju GIS-data"): KONFIG `GIS_VAG_MAX_HOPP` 4, `GIS_VAG_MAX_ANDEL` 2,0. I `koppla_gis`, när båda brunnarna finns men
 ingen ledning: `_gis_vag(ns, ne, grannar, langd)` (Dijkstra via `grannar`, tak = andel × filmlängd + 20 m) ger en
