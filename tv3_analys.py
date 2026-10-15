@@ -449,6 +449,7 @@ class Stracka:
     tv3_sokvag: str = ""                 # absolut sökväg till TV3-filen
     rapport_fil: str | None = None       # relativ sökväg (från utdatakatalogen) till PDF-rapporten
     media_kataloger: list[str] = field(default_factory=list)   # film-/mediakataloger för just denna fil
+    profil_fil: str = ""                 # WinCan: sökväg till .inc-filen som profilen lästs ur
     bild_kataloger: list[str] = field(default_factory=list)    # bildkataloger för just denna fil (valfritt)
     video_sokvag: str | None = None      # hittad sökväg till videofilen
     videofil_b: str | None = None        # andra filmen när sträckan är sammanslagen av två delfilmer
@@ -1430,14 +1431,16 @@ def _nr_nyckel(t: str) -> str:
     return str(n) if n is not None else t.upper()
 
 
-def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None) -> list[Stracka]:
+def las_tv3(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None,
+            sokmappar: list[str] | None = None) -> list[Stracka]:
     """Läser en TV3-fil. Ingen TVADM-rad med brunnar faller bort tyst: sträcknummer som inte är heltal
     (12A, 3-1) eller förekommer flera gånger får nya nummer efter filens största (nr_fil = originalet), och
     TVDAT/PROFIL-raderna följer med – vid dubbletter i den ordning blocken kommer i filen. Det som ändå
     inte kan läsas räknas upp i varningar (hamnar i fel.txt) och skrivs som OBS i konsolen.
-    En WinCan-projektexport (Project.xml) läses med las_wincan."""
+    En WinCan-projektexport (Project.xml) läses med las_wincan; sokmappar (filmningens rotmapp/filmmappar
+    ur listfilen) är där dess .inc-filer söks utöver Project.xml:s egen mapp."""
     if ar_wincan_xml(path):
-        return las_wincan(path, littera, varningar)
+        return las_wincan(path, littera, varningar, sokmappar)
     text = las_text(path)
     filnamn = os.path.basename(path)
     sektioner: dict[str, list[list[str]]] = defaultdict(list)
@@ -1679,14 +1682,57 @@ def inc_profil(punkter: list[tuple[float, float]], z0: float = 0.0) -> list[tupl
     return ut
 
 
+_INC_CACHE: dict[str, dict[str, list[str]]] = {}
+
+
+def _inc_index(katalog: str) -> dict[str, list[str]]:
+    """.inc-filnamn (gemener) -> sökvägar under katalogen (rekursivt), en genomsökning per katalog."""
+    katalog = os.path.abspath(katalog)
+    if katalog not in _INC_CACHE:
+        idx: dict[str, list[str]] = defaultdict(list)
+        if os.path.isdir(katalog):
+            for rot_, mappar, namn in os.walk(katalog):
+                mappar.sort()
+                for n in sorted(namn):
+                    if n.lower().endswith(".inc"):
+                        idx[n.lower()].append(os.path.join(rot_, n))
+        _INC_CACHE[katalog] = idx
+    return _INC_CACHE[katalog]
+
+
+def hitta_inc(namn: str, brunnar: tuple[str, str], mappar: list[str]) -> tuple[str | None, dict, list, int]:
+    """Letar upp en .inc-fil i mapparna (i tur och ordning, med undermappar). En fil med rätt namn men
+    andra brunnar i huvudet (Start/End ManHole – samma namn i ett annat projekt under rotmappen) hoppas
+    över. Returnerar (sökväg, huvud, punkter, antal överhoppade); sökväg None om ingen passar."""
+    nyckel = os.path.basename((namn or "").replace("\\", "/")).lower()
+    egna = {_normlittera(b) for b in brunnar}
+    sedda: set[str] = set()
+    fel = 0
+    for m in mappar:
+        for p in _inc_index(m).get(nyckel, []):
+            if p in sedda:
+                continue
+            sedda.add(p)
+            huvud, punkter = las_inc(p)
+            i_filen = {_normlittera(huvud.get("start manhole", "")), _normlittera(huvud.get("end manhole", ""))} - {""}
+            if i_filen and not i_filen <= egna:
+                fel += 1
+                continue
+            return p, huvud, punkter, fel
+    return None, {}, [], fel
+
+
 def _wincan_klocka(v: str) -> str:
     v = (v or "").strip()
     return "" if v in ("", "0", "00") else v
 
 
-def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None) -> list[Stracka]:
+def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str] | None = None,
+               sokmappar: list[str] | None = None) -> list[Stracka]:
     """Läser en WinCan-projektexport (Project.xml) till sträckor som en TV3-fil. Inklinometern läses
-    ur .inc-filerna (SI_InclinationFileName) som söks i Project.xml:s mapp med undermappar. Filen
+    ur .inc-filerna (SI_InclinationFileName) som söks med undermappar i Project.xml:s mapp, sedan i
+    sokmappar (filmningens rotmapp och filmmappar ur listfilen) och sist i mappen ovanför Project.xml
+    (exporten ligger ofta i en undermapp till filmningen och .inc-filerna i en annan). Filen
     (Stracka.fil) heter som projektet (P_Name) + '.xml'; sträcknumret är S_Counter. En inspektion som
     WinCan själv slagit ihop av två delfilmer (omvända observationer, 'Kombinerad') hoppas över när
     delfilmerna finns – analysen slår ihop dem (SAMMANSLAGNING) med rätt speglade klockslag."""
@@ -1725,8 +1771,12 @@ def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str
     delfilmer = Counter(par(s) for s, si in insp if not kombinerad(si))
     hogsta = max([_i(s.get("S_Counter", "")) or 0 for s, _ in insp] + [0])
     anvanda: set[int] = set()
-    inc_index: dict[str, str] | None = None
+    inc_mappar = [katalog] + [m for m in (sokmappar or []) if m]
+    foralder = os.path.dirname(katalog)
+    if foralder and os.path.dirname(foralder) != foralder:          # inte en enhetsrot (D:\ eller /)
+        inc_mappar.append(foralder)
     saknade_inc: list[str] = []
+    andra_brunnar = 0
     okanda_koder: Counter = Counter()
     strackor: dict[int, Stracka] = {}
 
@@ -1804,18 +1854,12 @@ def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str
         # Inklinometern
         incnamn = si.get("SI_InclinationFileName", "")
         if incnamn:
-            if inc_index is None:
-                inc_index = {}
-                for rot_, mappar, namn in os.walk(katalog):
-                    mappar.sort()
-                    for n in sorted(namn):
-                        if n.lower().endswith(".inc"):
-                            inc_index.setdefault(n.lower(), os.path.join(rot_, n))
-            ip = inc_index.get(os.path.basename(incnamn.replace("\\", "/")).lower())
+            ip, huvud, punkter, n_fel = hitta_inc(incnamn, (a, b), inc_mappar)
+            andra_brunnar += n_fel
             if not ip:
                 saknade_inc.append(incnamn)
             else:
-                huvud, punkter = las_inc(ip)
+                st.profil_fil = ip
 
                 def hojd(v):
                     z = _f(v or "")
@@ -1837,8 +1881,13 @@ def las_wincan(path: str, littera: list[dict] | None = None, varningar: list[str
         obs.append(f"{filnamn}: okända observationskoder (räknas inte som skador): "
                    + ", ".join(f"{k} ({n})" for k, n in okanda_koder.most_common(10)))
     if saknade_inc:
-        obs.append(f"{filnamn}: {len(saknade_inc)} inklinometerfiler (.inc) hittades inte i {katalog} – "
-                   f"profil saknas för dem ({', '.join(saknade_inc[:4])}" + (" …" if len(saknade_inc) > 4 else "") + ")")
+        obs.append(f"{filnamn}: {len(saknade_inc)} inklinometerfiler (.inc) hittades inte – profil saknas för dem "
+                   f"({', '.join(saknade_inc[:4])}" + (" …" if len(saknade_inc) > 4 else "") + "). Sökt i "
+                   + ", ".join(inc_mappar) + "." + ("" if sokmappar else " Ange filmningens rotmapp efter filen i "
+                                                    "listfilen: '…\\Project.xml ; rot: D:\\Filmning'"))
+    if andra_brunnar:
+        obs.append(f"{filnamn}: {andra_brunnar} .inc-filer med rätt namn hoppades över – de gäller andra brunnar "
+                   f"(troligen ett annat projekt under samma mapp)")
     return _avsluta_inlasning(strackor, filnamn, obs, littera, varningar)
 
 
@@ -3760,6 +3809,7 @@ def skriv_kartunderlag(strackor: list[Stracka], path: str, gisstat: dict | None 
         # Mappar där film och bilder hittades (tv3_pptx.py använder dem när den körs fristående)
         "mediakataloger": sorted({d for s in strackor for d in s.media_kataloger}
                                  | {os.path.dirname(s.video_sokvag) for s in strackor if s.video_sokvag}),
+        "inc_kataloger": sorted({os.path.dirname(s.profil_fil) for s in strackor if s.profil_fil}),
         "bildkataloger": sorted({d for s in strackor for d in s.bild_kataloger}
                                 | {os.path.dirname(o.bild_sokvag) for s in strackor for o in s.observationer
                                    if o.bild_sokvag}),
@@ -4743,7 +4793,7 @@ def skriv_rapporter(strackor: list[Stracka], katalog: str, urval: str,
 Listpost = tuple[str, list[str], list[str]]      # (tv3-sökväg, filmkataloger, bildkataloger)
 Globala = dict[str, list[str]]                    # {"media": [...], "bild": [...], "littera": [...]}
 _BILD_NYCKLAR = ("bild", "bilder", "foto", "foton")
-_MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor")
+_MEDIA_NYCKLAR = ("media", "film", "filmer", "video", "videor", "rot", "rotmapp")
 _MARK_NYCKLAR = ("markprofil", "mark")
 _UPP_NYCKLAR = ("uppstroms", "uppströms", "uppstrom")
 _GIS_NYCKLAR = ("gis", "gisdata")
@@ -4963,7 +5013,7 @@ def main(argv=None):
             print(f"  SAKNAS  {p}")
             continue
         try:
-            st = las_tv3(p, littera, fel)
+            st = las_tv3(p, littera, fel, media + globala_media + a.media)
         except Exception as e:  # trasig fil ska inte stoppa hela körningen
             fel.append(f"{p}: {e}")
             print(f"  FEL     {p}: {e}")
