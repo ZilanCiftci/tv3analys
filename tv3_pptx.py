@@ -579,7 +579,7 @@ def main(argv=None):
         if not os.path.isfile(p):
             print(f"  SAKNAS  {p}")
             continue
-        strackor += ta.las_tv3(p)
+        strackor += ta.las_tv3(p, sokmappar=data.get("mediakataloger", []) + data.get("inc_kataloger", []))
     if not strackor:
         sys.exit("Inga TV3-filer kunde läsas – sökvägarna i kartunderlag.json pekar på en annan dator?")
     # Ersättningslittera finns inte i JSON-filen: använd de rättade namnen därifrån (sökväg + nr).

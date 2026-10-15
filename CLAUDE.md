@@ -49,6 +49,7 @@ littera: brunnslittera.csv             # ersättningslittera (kan upprepas)
 DUF 701.TV3                            # media söks alltid även i TV3-filens egen mapp (rekursivt)
 DUF 702.TV3 ; D:\Filmer\DUF702 ; bild: E:\Foton   # egen film- och bildmapp för just den filen
 C:\Inspektioner\2022\                  # katalog: alla .TV3 i den
+X\Export\Project.xml ; rot: D:\Filmning\X   # exakt fil (TV3/WinCan) + filmningens rotmapp (film, bild, .inc)
 markprofil: Karta\markprofil.json      # från ArcMap-verktyget Markprofil (sep 2026), alias mark:
 ```
 Internt: `las_listfil` → `(poster, globala)` med poster `(tv3, filmkataloger, bildkataloger)` och
@@ -701,7 +702,16 @@ foder ur fält med "Lining/Liner" i namnet. WinCans **kombinerade** inspektion (
 `_sammanslagen` gör samma sak (46,54 m). OBS för saknade .inc och annan norm än P93. Den gemensamma svansen av
 inläsningen (löpande längd, OBS, höjdkontroll, littera, omvända brunnar, flerinspekterad) bröts ut till
 `_avsluta_inlasning`. `hitta_tv3_filer`: kataloger ger även WinCan-xml, men inte när en .TV3 ligger i samma mapp (OBS).
-Exemplet: 14 sträckor + sammanslagen 15, A/B/C = 6/5/2, nr 8 lutning 17,8 ‰ ur .inc. Samtidigt: `planera_atgarder`
+Exemplet: 14 sträckor + sammanslagen 15, A/B/C = 6/5/2, nr 8 lutning 17,8 ‰ ur .inc. **Rotmapp** (okt 2026, användaren: ".xml ligger ibland i
+en subfolder till filmmappen och .inc i en separat subfolder … definiera root-foldern + exakt adress till .tv3/.xml, ibland
+ligger flera tv3-filer"): exakt fil + egna mappar per rad fanns redan (`fil ; mapp`); nytt är att `rot`/`rotmapp` är alias
+för media (global rad och per rad: `…\Export\Project.xml ; rot: D:\Filmning\X`) och att .inc söks i `hitta_inc(namn,
+(a, b), mappar)`: Project.xml:s mapp → `sokmappar` (main: radens media + `media:` + `--media`; las_tv3/las_wincan fick
+parametern) → mappen ovanför Project.xml (inte enhetsrot); `_inc_index` cachar en os.walk per mapp (`_INC_CACHE`); en
+.inc med rätt namn men andra Start/End ManHole hoppas över (OBS "… hoppades över – de gäller andra brunnar");
+OBS-texten om saknade listar sökta mappar och tipsar om `rot:` när ingen angetts. `Stracka.profil_fil`; kartunderlag
+toppfält `inc_kataloger`, som tv3_pptx skickar med mediakatalogerna till las_tv3. Test: scratchpad/wincan_skript/test_rot.py
+(syskonmapp utan rot, två nivåer ner utan/med rot, fel projekt med samma .inc-namn, listfiler med rot: globalt/per rad). Samtidigt: `planera_atgarder`
 itererade brunnarna i en frozenset → sträckornas ordning inom en etapp i kartunderlaget varierade mellan körningar
 (hashslump) – nu `sorted(q)`. Test: scratchpad/wincan_skript/test_wincan.py (fält, löpande, AS-dimension, KAM, .inc i
 undermapp, sammanslagning, listfil/mapp/TV3 i samma mapp); facit DUF 701 och filer.txt oförändrade. Handledning 3.5.
