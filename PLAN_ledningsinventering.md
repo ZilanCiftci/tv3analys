@@ -1,7 +1,8 @@
 # Plan: ledningsinventering inom ett område – från ArcMap till kostnadsjämförelse strumpa/omläggning
 
-Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119). Besluten F10–F17 står längst ned;
-F10 (vattenlagrens namn) och prislistan i F13 väntar på användaren.
+Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119), steg 2 (Ledningsinventering →
+`ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap.
+Besluten F10–F17 står längst ned; F10 (vattenlagrens namn) och prislistan i F13 väntar på användaren.
 
 ## Målet, som jag förstår det
 

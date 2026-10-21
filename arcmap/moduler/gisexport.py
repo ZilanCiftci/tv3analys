@@ -75,9 +75,46 @@ def _valj_falt(falt, onskat, vad, lagernamn):
     return namn
 
 
-def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, omrade=None):
+SKIPPA_FALTTYP = ('Geometry', 'OID', 'Blob', 'Raster', 'GlobalID', 'Guid')
+
+
+def _ovriga_falt(lyr):
+    """Namnen pa alla vanliga attributfalt i lagret (inte geometri, OID, blob, langd/area)."""
+    ut = []
+    for f in arcpy.ListFields(kalla(lyr)[0]):
+        namn = txt(f.name)
+        if txt(f.type) in SKIPPA_FALTTYP:
+            continue
+        if namn.upper().replace('.', '_') in ('SHAPE_LENGTH', 'SHAPE_AREA', 'SHAPE_LEN', 'SHAPE_STLENGTH()',
+                                              'SHAPE_STAREA()', 'ST_LENGTH(SHAPE)', 'ST_AREA(SHAPE)'):
+            continue
+        ut.append(f.name)
+    return ut
+
+
+def _json_varde(v):
+    """Attributvarde som gar att skriva till JSON (datum som text, tal som tal)."""
+    import numbers
+    if v is None or isinstance(v, (bool, numbers.Number)):
+        return v
+    if isinstance(v, datetime.datetime):
+        return v.strftime('%Y-%m-%d %H:%M:%S') if (v.hour or v.minute or v.second) else v.strftime('%Y-%m-%d')
+    if isinstance(v, datetime.date):
+        return v.strftime('%Y-%m-%d')
+    try:
+        import decimal
+        if isinstance(v, decimal.Decimal):
+            return float(v)
+    except ImportError:
+        pass
+    return txt(v)
+
+
+def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, omrade=None,
+                botten_falt=None, alla_falt=False):
     """[{littera, typ, lockniva, x, y, lager}] ur brunnslagren. Forsta forekomsten av ett littera
-    vinner; dubbletter pa annan plats (> 1 m isar) varnas."""
+    vinner; dubbletter pa annan plats (> 1 m isar) varnas. botten_falt ger 'bottenniva';
+    alla_falt=True lagger alla ovriga falt under 'attribut' (ledningsinventeringen)."""
     brunnar, index = [], {}
     for lyr in brunnslager:
         namn = txt(getattr(lyr, 'name', lyr))
@@ -85,6 +122,8 @@ def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, o
         falt = _faltnamn(lyr)
         lock = _valj_falt(falt, lock_falt, 'locknivafaltet', namn)
         typ = _valj_falt(falt, typ_falt, 'brunnstypfaltet', namn)
+        botten = _valj_falt(falt, botten_falt, 'bottennivafaltet', namn)
+        ovriga = _ovriga_falt(lyr) if alla_falt else []
         src, dq = kalla(lyr)
         sr_namn = txt(getattr(sr, 'name', '') or '') if sr is not None else ''
         projicera = bool(sr_namn) and _sr_namn(arcpy.Describe(src)) not in ('', sr_namn)
@@ -93,9 +132,10 @@ def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, o
         arcpy.MakeFeatureLayer_management(src, 'lyr_gis_br', dq)
         if omrade is not None:
             arcpy.SelectLayerByLocation_management('lyr_gis_br', 'INTERSECT', omrade, '', 'NEW_SELECTION')
-        extra_falt = [f for f in (lock, typ) if f]
-        if lock and typ == lock:
-            extra_falt = [lock]            # samma falt for bada - inte tva ganger i SearchCursor
+        extra_falt = []
+        for f in [lock, typ, botten] + ovriga:
+            if f and f not in extra_falt:   # samma falt tva ganger gar inte i SearchCursor
+                extra_falt.append(f)
         lasfalt = ['SHAPE@' if projicera else 'SHAPE@XY', idfalt] + extra_falt
         n = 0
         with arcpy.da.SearchCursor('lyr_gis_br', lasfalt) as mark:
@@ -114,6 +154,11 @@ def las_brunnar(brunnslager, brunn_id, lock_falt=None, typ_falt=None, sr=None, o
                 post = {'littera': bid, 'typ': _text(extra.get(typ)) if typ else '',
                         'lockniva': _tal(extra.get(lock)) if lock else None,
                         'x': round(x, 3), 'y': round(y, 3), 'lager': namn}
+                if botten:
+                    post['bottenniva'] = _tal(extra.get(botten))
+                if alla_falt:
+                    post['attribut'] = dict((f, _json_varde(extra.get(f))) for f in ovriga)
+                    post['attribut'][idfalt] = _json_varde(rad[1])
                 n += 1
                 if bid in index:
                     q = index[bid]
@@ -231,14 +276,15 @@ class Omraden(object):
         return ''
 
 
-def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ_falt=None,
+def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
-              ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000', skriv_csv=True,
-              duf_lager=None, duf_falt=None, ren_falt=None):
-    """Exporterar brunnar och ledningsstrackor mellan brunnar till json_ut (+ CSV bredvid).
-    duf_lager/duf_falt: polygonlager med driftomraden och namnfalt - varje ledning (mittpunkt) och
-    brunn far 'omrade', som analysen anvander for inspektionsgrad per omrade.
-    Returnerar en sammanfattning (dict)."""
+              ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000',
+              duf_lager=None, duf_falt=None, ren_falt=None, botten_falt=None, alla_falt=False):
+    """Bygger gisdata i minnet: (data, hjalp). data ar JSON-strukturen (brunnar, ledningar ...) dar
+    varje ledningspost dessutom har '_pts' (bitens punkter [(x, y, None)]) - exportera() tar bort dem
+    fore skrivningen, ledningsinventeringen anvander dem. hjalp = {'graf', 'sr', 'led_lager',
+    'brunn_lager', 'omraden'}. alla_falt=True ger 'attribut' (alla ovriga falt) pa ledningar och brunnar,
+    botten_falt ger brunnarnas 'bottenniva'."""
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
     if isinstance(ledningslager, (TEXTTYP, bytes)):
@@ -264,7 +310,7 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         logg('Laser driftomraden')
         omraden = Omraden(hitta_lager(duf_lager), duf_falt, sr)
     logg('Laser brunnar (%s)' % tid())
-    brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade)
+    brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade, botten_falt, alla_falt)
     logg('  %d brunnar totalt (%s)' % (len(brunnar), tid()))
     if omraden is not None:
         for b in brunnar:
@@ -287,7 +333,8 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
         f_typ = _valj_falt(falt, ledntyp_falt, 'ledningstypfaltet', namn)
         f_ar = _valj_falt(falt, ar_falt, 'arfaltet', namn)
         f_ren = _valj_falt(falt, ren_falt, 'renoveringsarsfaltet', namn)
-        extra = [f for f in (f_vg1, f_vg2, f_dim, f_mat, f_typ, f_ar, f_ren) if f]
+        ovriga = _ovriga_falt(lyr) if alla_falt else []
+        extra = [f for f in (f_vg1, f_vg2, f_dim, f_mat, f_typ, f_ar, f_ren) if f] + ovriga
         sedd = set()
         lasfalt = ['OID@', 'SHAPE@'] + [f for f in extra if not (f in sedd or sedd.add(f))]
         src, dq = kalla(lyr)
@@ -311,6 +358,8 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                     'anlaggningsar': _heltal(v.get(f_ar)) if f_ar else None,
                     'renoveringsar': _heltal(v.get(f_ren)) if f_ren else None,
                 }
+                if alla_falt:
+                    attr[(namn, oid)]['attribut'] = dict((f, _json_varde(v.get(f))) for f in ovriga)
                 delar = []
                 for del_ in geom:
                     punkter = [(p.X, p.Y, None) for p in del_ if p is not None]
@@ -374,7 +423,10 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                 'anlaggningsar': at.get('anlaggningsar'),
                 'renoveringsar': at.get('renoveringsar'),
                 'lager': lager, 'oid': oid, '_st': st1 if st1 is not None else 0.0,
+                '_pts': pts,
             }
+            if alla_falt:
+                post['attribut'] = at.get('attribut', {})
             if omraden is not None:
                 mitt = _punkt_vid(pts, _langd(pts) / 2.0)
                 post['omrade'] = omraden.omrade(mitt[0], mitt[1])
@@ -432,13 +484,30 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                   'driftomraden': txt(duf_lager) if duf_lager else None, 'omradesnamn': duf_falt},
         'brunnar': brunnar,
         'ledningar': ledningar,
+        'sammanfattning': {'brunnar': len(brunnar), 'ledningar': len(ledningar), 'fria_andar': fria,
+                           'utan_vg': utan_vg, 'brunnar_utan_ledning': len(utan_ledning),
+                           'utan_lockniva': utan_lock},
     }
-    mapp = os.path.dirname(os.path.abspath(json_ut))
-    if mapp and not os.path.isdir(mapp):
-        os.makedirs(mapp)
-    with io.open(json_ut, 'w', encoding='utf-8') as f:
-        f.write(json.dumps(data, ensure_ascii=False, indent=1))
-    logg('Skrev %s' % json_ut)
+    return data, {'graf': graf, 'sr': sr, 'led_lager': led_lager, 'brunn_lager': brunn_lager,
+                  'omraden': omraden}
+
+
+def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ_falt=None,
+              vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
+              ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000', skriv_csv=True,
+              duf_lager=None, duf_falt=None, ren_falt=None):
+    """Exporterar brunnar och ledningsstrackor mellan brunnar till json_ut (+ CSV bredvid).
+    duf_lager/duf_falt: polygonlager med driftomraden och namnfalt - varje ledning (mittpunkt) och
+    brunn far 'omrade', som analysen anvander for inspektionsgrad per omrade.
+    Returnerar en sammanfattning (dict)."""
+    data, _ = bygg_data(ledningslager, brunnslager, brunn_id, lock_falt, typ_falt, vg_fran, vg_till,
+                        dim_falt, mat_falt, ledntyp_falt, ar_falt, tolerans, omradeslager, hojdsystem,
+                        duf_lager, duf_falt, ren_falt)
+    for post in data['ledningar']:
+        del post['_pts']
+    sammanfattning = data.pop('sammanfattning')
+    brunnar, ledningar = data['brunnar'], data['ledningar']
+    skriv_json(data, json_ut)
     if skriv_csv:
         stam = os.path.splitext(json_ut)[0]
         _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'lockniva', 'omrade', 'x', 'y', 'lager'], brunnar)
@@ -446,8 +515,16 @@ def exportera(ledningslager, brunnslager, brunn_id, json_ut, lock_falt=None, typ
                    ['fran', 'till', 'omrade', 'langd_m', 'vg_fran', 'vg_till', 'dimension', 'material',
                     'ledningstyp', 'anlaggningsar', 'renoveringsar', 'lager', 'oid', 'del', 'antal_delar'], ledningar)
         logg('Skrev %s_brunnar.csv och %s_ledningar.csv' % (stam, stam))
-    return {'brunnar': len(brunnar), 'ledningar': len(ledningar), 'fria_andar': fria,
-            'utan_vg': utan_vg, 'brunnar_utan_ledning': len(utan_ledning), 'utan_lockniva': utan_lock}
+    return sammanfattning
+
+
+def skriv_json(data, json_ut):
+    mapp = os.path.dirname(os.path.abspath(json_ut))
+    if mapp and not os.path.isdir(mapp):
+        os.makedirs(mapp)
+    with io.open(json_ut, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(data, ensure_ascii=False, indent=1))
+    logg('Skrev %s' % json_ut)
 
 
 def _csvvarde(v):

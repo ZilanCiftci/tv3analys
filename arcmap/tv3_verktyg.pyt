@@ -109,6 +109,12 @@ STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\
 STANDARD_DUF_NAMN = ['DUF', 'DUF_NR', 'DUFNR', 'OMRADE', 'OMR\u00c5DE', 'NAMN', 'NAME', 'BETECKNING', 'ID']
 STANDARD_VG_FRAN = ['LevelFrom', 'VG_UPP', 'VG_FRAN', 'VATTENGANG_UPP', 'VGUPP']    # gissningar pa faltnamn
 STANDARD_VG_TILL = ['LevelTo', 'VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
+STANDARD_BOTTENNIVA = ['BottomLevel', 'BOTTENNIVA', 'BOTTEN_NIVA', 'BOTTENHOJD', 'Z_BOTTEN']
+STANDARD_LUTNING = ['Slope', 'LUTNING', 'FALL', 'LUTNING_PROMILLE']
+STANDARD_LEDNING_ID = ['EntityID', 'LEDN_ID', 'LEDNINGSID', 'ID', 'OBJEKTID']
+STANDARD_VATTEN = ['V Ledning', 'Vattenledning', 'V Ledningar']
+STANDARD_LEDNINGSDATA = 'ledningsdata.json'   # Ledningsinventering, foreslas bredvid den lokala gdb:n
+LOKAL_SUFFIX = ' (lokal)'                     # lager som Exportera omrade lagt i kartan
 
 
 def _ladda_modul(namn='skapa_ledningslager'):
@@ -177,6 +183,19 @@ def _va_lager(kartlager):
     ut = [langt for langt, l in kartlager if any(langt.lower().startswith(g) for g in grupper)]
     if not ut:
         ut = _langa_namn(STANDARD_LEDNING + STANDARD_BRUNN + STANDARD_SERVIS, kartlager)
+    return ut
+
+
+def _lokala_lager(kartlager, nyckelord, utan=()):
+    """Langa namn for lager som Exportera omrade skapat (namn med LOKAL_SUFFIX) och som innehaller
+    nagot av nyckelorden men inget av 'utan' - forval i Ledningsinventering."""
+    ut = []
+    for langt, l in kartlager:
+        n = l.name.strip().lower()
+        if not n.endswith(LOKAL_SUFFIX):
+            continue
+        if any(k.lower() in n for k in nyckelord) and not any(k.lower() in n for k in utan):
+            ut.append(langt)
     return ut
 
 
@@ -345,7 +364,7 @@ class Toolbox(object):
         self.alias = 'tv3'
         self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Etapplager, Markprofil, Uppstroms,
                       ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
-                      SkapaProjekteringslager, Projekteringsprofil, ExporteraOmrade]
+                      SkapaProjekteringslager, Projekteringsprofil, ExporteraOmrade, Ledningsinventering]
 
 
 class SkapaLedningslager(object):
@@ -1596,4 +1615,195 @@ class ExporteraOmrade(object):
             bara_valda=bool(parameters[6].value),
             lagg_i_kartan=bool(parameters[7].value),
         )
+        return
+
+
+class Ledningsinventering(object):
+    def __init__(self):
+        self.label = 'Ledningsinventering (ledningsdata.json)'
+        self.description = (
+            'Inventerar ledningsn\u00e4tet (helst de lokala lagren fr\u00e5n Exportera omr\u00e5de): en post per '
+            'ledningsstr\u00e4cka brunn-brunn med alla f\u00e4lt, lutning ur vatteng\u00e5ngarna, djup ur markh\u00f6jd '
+            '(h\u00f6jdmodell eller punktlager) minus vatteng\u00e5ng, serviser (antal och l\u00e4ngd), parallella '
+            'ledningar och samschakt-grupper, korsningar och brunnar. Skriver ledningsdata.json + CSV-filer; '
+            'ledning_analys.py g\u00f6r Excel och kostnadskalkyl av filen. Vattenledningar f\u00e5r schablondjup.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        K_FALT = 'F\u00e4lt'
+        K_MARK = 'Markh\u00f6jd'
+        K_INST = 'Inst\u00e4llningar'
+
+        ledning = _lagerparam('Ledningslager (avlopp: spill, dag, kombinerat)', 'ledningslager', True, kartlager)
+        vatten = _lagerparam('Vattenledningar (tryck, utan vatteng\u00e5ng - schablondjup)', 'vattenlager',
+                             True, kartlager, 'Optional')
+        brunn = _lagerparam('Brunnslager (alla lager d\u00e4r brunnar kan ligga)', 'brunnslager', True, kartlager)
+        servis = _lagerparam('Servislager (valfritt)', 'servislager', True, kartlager, 'Optional')
+        brunn_id = arcpy.Parameter(
+            displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
+            datatype='GPString', parameterType='Required', direction='Input')
+        brunn_id.value = 'EntityID'
+        json_ut = arcpy.Parameter(
+            displayName='Utdata (ledningsdata.json; CSV-filer skrivs bredvid)', name='json_ut',
+            datatype='DEFile', parameterType='Required', direction='Output')
+        _filter(json_ut, ['json'])
+
+        def falt(disp, namn):
+            return arcpy.Parameter(displayName=disp, name=namn, datatype='GPString',
+                                   parameterType='Optional', direction='Input', category=K_FALT)
+        lock = falt('Brunnar: f\u00e4lt med lockniv\u00e5', 'lock_falt')
+        botten = falt('Brunnar: f\u00e4lt med bottenniv\u00e5', 'botten_falt')
+        btyp = falt('Brunnar: f\u00e4lt med brunnstyp', 'typ_falt')
+        vg_fran = falt('Ledningar: vatteng\u00e5ng vid startpunkten (uppstr\u00f6ms)', 'vg_fran')
+        vg_till = falt('Ledningar: vatteng\u00e5ng vid slutpunkten (nedstr\u00f6ms)', 'vg_till')
+        dim = falt('Ledningar: dimension (mm)', 'dim_falt')
+        mat = falt('Ledningar: material', 'mat_falt')
+        ltyp = falt('Ledningar: ledningstyp (S/D/K)', 'ledntyp_falt')
+        ar = falt('Ledningar: anl\u00e4ggnings\u00e5r', 'ar_falt')
+        ren = falt('Ledningar: renoverings\u00e5r', 'ren_falt')
+        lut = falt('Ledningar: lutning enligt GIS (j\u00e4mf\u00f6relse, valfritt)', 'lutning_falt')
+        lid = falt('Ledningar: id-f\u00e4lt (EntityID) - anv\u00e4nds som ledningens namn', 'id_falt')
+
+        mark = arcpy.Parameter(
+            displayName='Markh\u00f6jd: h\u00f6jdmodell (raster) eller punktlager (valfritt - annars lockniv\u00e5erna)',
+            name='markhojd', datatype='GPString', parameterType='Optional', direction='Input', category=K_MARK)
+        _filter(mark, _rasterlager() + [langt for langt, l in kartlager])
+        z_falt = arcpy.Parameter(
+            displayName='Punktlager: f\u00e4lt med h\u00f6jden (tomt = Z i geometrin)', name='z_falt',
+            datatype='GPString', parameterType='Optional', direction='Input', category=K_MARK)
+        sokradie = arcpy.Parameter(
+            displayName='Punktlager: s\u00f6kradie (m)', name='sokradie', datatype='GPDouble',
+            parameterType='Required', direction='Input', category=K_MARK)
+        sokradie.value = 5.0
+
+        def tal(disp, namn, varde, typ='GPDouble'):
+            p = arcpy.Parameter(displayName=disp, name=namn, datatype=typ, parameterType='Required',
+                                direction='Input', category=K_INST)
+            p.value = varde
+            return p
+        tolerans = tal('Tolerans brunn\u2013ledning och servis\u2013ledning (m)', 'tolerans', 1.0)
+        par_avst = tal('Parallella ledningar: st\u00f6rsta avst\u00e5nd c\u2013c (m)', 'parallell_avstand', 3.0)
+        par_andel = tal('Parallella ledningar: minsta andel av str\u00e4ckan f\u00f6r samschakt (%)',
+                        'parallell_andel', 60, 'GPLong')
+        intervall = tal('Provt\u00e4thet l\u00e4ngs ledningen (m)', 'intervall', 1.0)
+        v_djup = tal('Vattenledningar: djup till r\u00f6rets centrum (m)', 'vatten_djup', 1.7)
+        omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
+                             False, kartlager, 'Optional')
+        omrade.category = K_INST
+        hojdsystem = arcpy.Parameter(
+            displayName='H\u00f6jdsystem i kartan (skrivs i filen)', name='hojdsystem',
+            datatype='GPString', parameterType='Required', direction='Input', category=K_INST)
+        hojdsystem.value = 'RH2000'
+
+        params = _minne_fyll(self, [ledning, vatten, brunn, servis, brunn_id, json_ut,
+                                    lock, botten, btyp, vg_fran, vg_till, dim, mat, ltyp, ar, ren, lut, lid,
+                                    mark, z_falt, sokradie,
+                                    tolerans, par_avst, par_andel, intervall, v_djup, omrade, hojdsystem])
+        # forval: de lokala lagren fran Exportera omrade, annars kartans vanliga lager
+        if not ledning.valueAsText:
+            _satt_varden(ledning, _lokala_lager(kartlager, ['ledning'], ['servis', 'v ledning', 'vatten'])
+                         or _langa_namn(STANDARD_LEDNING, kartlager))
+        if not vatten.valueAsText:
+            _satt_varden(vatten, _lokala_lager(kartlager, ['v ledning', 'vatten'], ['servis'])
+                         or _langa_namn(STANDARD_VATTEN, kartlager))
+        if not brunn.valueAsText:
+            _satt_varden(brunn, _lokala_lager(kartlager, ['brunn']) or _langa_namn(STANDARD_BRUNN, kartlager))
+        if not servis.valueAsText:
+            _satt_varden(servis, _lokala_lager(kartlager, ['servis']) or _langa_namn(STANDARD_SERVIS, kartlager))
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = dict((p.name, p) for p in parameters)
+        led = P['ledningslager']
+        if led.altered and led.valueAsText:
+            falt = _faltnamn(led)
+            if falt:
+                for namn, kand in (('vg_fran', STANDARD_VG_FRAN), ('vg_till', STANDARD_VG_TILL),
+                                   ('dim_falt', STANDARD_DIMENSION), ('mat_falt', STANDARD_MATERIAL),
+                                   ('ledntyp_falt', STANDARD_LEDNTYP), ('ar_falt', STANDARD_AR),
+                                   ('ren_falt', STANDARD_RENOVERINGSAR), ('lutning_falt', STANDARD_LUTNING),
+                                   ('id_falt', STANDARD_LEDNING_ID)):
+                    _filter(P[namn], [''] + falt)
+                    if not P[namn].altered and not P[namn].valueAsText:
+                        P[namn].value = _forsta_traff(kand, falt)
+            if not P['json_ut'].altered and not P['json_ut'].valueAsText:
+                l = _lagerobjekt(_lagerlista(led)[0]) if _lagerlista(led) else None
+                try:
+                    mapp = os.path.dirname(l.dataSource) if l else ''
+                    if mapp.lower().endswith('.gdb'):
+                        mapp = os.path.dirname(mapp)
+                    if mapp:
+                        P['json_ut'].value = os.path.join(mapp, STANDARD_LEDNINGSDATA)
+                except Exception:
+                    pass
+        br = P['brunnslager']
+        if br.altered and br.valueAsText:
+            falt = _faltnamn(br)
+            if falt:
+                _filter(P['brunn_id'], falt)
+                for namn, kand in (('lock_falt', STANDARD_LOCKNIVA), ('botten_falt', STANDARD_BOTTENNIVA),
+                                   ('typ_falt', STANDARD_BRUNNSTYP)):
+                    _filter(P[namn], [''] + falt)
+                    if not P[namn].altered and not P[namn].valueAsText:
+                        P[namn].value = _forsta_traff(kand, falt)
+        mark = P['markhojd']
+        if mark.altered and mark.valueAsText:
+            falt = _faltnamn(mark)
+            _filter(P['z_falt'], [''] + falt)
+        return
+
+    def updateMessages(self, parameters):
+        P = dict((p.name, p) for p in parameters)
+        _kolla_geometri(P['ledningslager'], ('Polyline',), 'Ledningslager')
+        _kolla_geometri(P['vattenlager'], ('Polyline',), 'Vattenledningar')
+        _kolla_geometri(P['servislager'], ('Polyline',), 'Servislager')
+        _kolla_geometri(P['brunnslager'], ('Point',), 'Brunnslager')
+        _kolla_geometri(P['omradeslager'], ('Polygon',), 'Omr\u00e5deslagret')
+        for namn in ('tolerans', 'parallell_avstand', 'intervall', 'sokradie'):
+            if P[namn].value is not None and not P[namn].value > 0:
+                P[namn].setErrorMessage('St\u00f6rre \u00e4n 0')
+        if P['parallell_andel'].value is not None and not (1 <= P['parallell_andel'].value <= 100):
+            P['parallell_andel'].setErrorMessage('Andel i procent, 1-100')
+        if P['vatten_djup'].value is not None and P['vatten_djup'].value < 0:
+            P['vatten_djup'].setErrorMessage('Djupet kan inte vara negativt')
+        if P['ledningslager'].valueAsText and not (P['vg_fran'].valueAsText and P['vg_till'].valueAsText):
+            P['vg_fran'].setWarningMessage('Utan vatteng\u00e5ngsf\u00e4lt f\u00e5r ledningarna varken lutning eller djup.')
+        if not P['markhojd'].valueAsText:
+            P['markhojd'].setWarningMessage(
+                'Utan markh\u00f6jd r\u00e4knas djupet ur brunnarnas lockniv\u00e5er som r\u00e4t linje mellan brunnarna.')
+        return
+
+    def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
+        _ladda_modul('skapa_ledningslager')     # beroendena forst, annars binder modulerna gamla versioner
+        _ladda_modul('natverk')
+        _ladda_modul('markprofil')
+        _ladda_modul('gisexport')
+        _ladda_modul('projektering')
+        m = _ladda_modul('inventering')
+        P = dict((p.name, p) for p in parameters)
+
+        def v(namn):
+            t = (P[namn].valueAsText or '').strip().strip("'")
+            return t or None
+        r = m.inventera(
+            _lagerlista(P['ledningslager']), _lagerlista(P['brunnslager']), P['brunn_id'].valueAsText,
+            P['json_ut'].valueAsText,
+            servislager=_lagerlista(P['servislager']), vattenlager=_lagerlista(P['vattenlager']),
+            markhojd=v('markhojd'), z_falt=v('z_falt'),
+            lock_falt=v('lock_falt'), botten_falt=v('botten_falt'), typ_falt=v('typ_falt'),
+            vg_fran=v('vg_fran'), vg_till=v('vg_till'), dim_falt=v('dim_falt'), mat_falt=v('mat_falt'),
+            ledntyp_falt=v('ledntyp_falt'), ar_falt=v('ar_falt'), ren_falt=v('ren_falt'),
+            lutning_falt=v('lutning_falt'), id_falt=v('id_falt'),
+            tolerans=float(P['tolerans'].value), parallell_avstand=float(P['parallell_avstand'].value),
+            parallell_andel=float(P['parallell_andel'].value) / 100.0, intervall=float(P['intervall'].value),
+            vatten_djup=float(P['vatten_djup'].value), sokradie=float(P['sokradie'].value),
+            hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'))
+        arcpy.AddMessage('Klart: %(ledningar)d ledningar, %(brunnar)d brunnar, %(serviser_kopplade)d av %(serviser)d '
+                         'serviser kopplade, %(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
+                         '%(korsningar)d korsningar' % r)
         return
