@@ -1,7 +1,7 @@
 # Plan: ledningsinventering inom ett område – från ArcMap till kostnadsjämförelse strumpa/omläggning
 
-Status: oktober 2026, förslag. Inget är byggt ännu. Frågorna F10–F17 längst ned behöver svar innan
-respektive steg byggs; schablonvärden föreslås där det går.
+Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119). Besluten F10–F17 står längst ned;
+F10 (vattenlagrens namn) och prislistan i F13 väntar på användaren.
 
 ## Målet, som jag förstår det
 
@@ -79,7 +79,7 @@ typ, år, renoveringsår, skarvar):**
   ledningen. Per ledning: antal, summerad längd, lista {EntityID, längd, typ, dimension, djup vid
   anslutningen om vg finns}. Serviser som inte hittar någon huvudledning listas i datakvalitet.
 - **Parallella ledningar**: linjen samplas var 1 m och närmaste andra ledning (annan typ eller samma)
-  söks inom `PARALLELL_AVSTAND` (1,5 m; F12) med `Segmentindex`. Per par: andel av längden med den
+  söks inom `PARALLELL_AVSTAND` (3,0 m c–c; F12) med `Segmentindex`. Per par: andel av längden med den
   andra ledningen inom avståndet, medelavstånd, typ. Andel ≥ 60 % = *samschakt* (grupp-id
   `SCHAKTGRUPP` så att S + D + V i samma gata blir en grupp). Redovisas både per ledning
   (`parallella: [{ledning, typ, andel, avstand}]`) och som egen lista.
@@ -87,8 +87,8 @@ typ, år, renoveringsår, skarvar):**
   omläggning (en vattenledning 0,3 m över spilledningen styr schaktdjupet).
 - **Brunnar**: alla fält, locknivå, bottennivå om ifylld, antal anslutna ledningar, djup (lock − lägsta vg).
 
-**Vatten.** Tryckledningar har ingen vattengång. Djup tas ur ett djup-/täckningsfält om det finns
-(F17), annars antas `VATTEN_TACKNING_M` (1,8 m schablon) och flaggas. Lutning redovisas inte för vatten.
+**Vatten.** Tryckledningar har ingen vattengång. Djup räknas som `VATTEN_DJUP_CENTRUM_M` = 1,7 m till
+rörets centrum (F17) och markeras `djup_kalla` = schablon. Lutning redovisas inte för vatten.
 
 **Dialog.** Lokal gdb (eller lager i kartan), fältval som i Exportera GIS-data (gissas ur SVOA-namnen:
 EntityID, LevelFrom/LevelTo, PipeDimension, PipeMaterial, PipeType, ConstructionYear, CoverLevel …),
@@ -135,6 +135,10 @@ brunn_ny;;;;;st;60000;schablon – ny brunn i omlagd sträcka
 aterstallning_gata;;;;;m;3500;schablon – asfalt/kantsten (F13: ytskikt okänt i GIS)
 samschakt_andel;;;;;faktor;0,4;andra ledningen i samma schakt kostar 40 % av egen schakt
 ```
+
+F13: användaren har en egen prisdatabas i Excel som räknar med 1, 2 eller 3 ledningar i samma grav.
+Kostnadsfilen anpassas till den när priserna kommer – troligen kr/m per (antal ledningar i graven,
+dimension, djupklass) i stället för en samschaktfaktor; schaktgruppen i steg 2 ger antalet ledningar.
 
 Strumpa räknas som i åtgärdspaketet (`kostnader.csv`: kr/m per dimension + hatt per servis +
 etablering). Omläggning = schakt kr/m efter dimension och **medeldjup** (eller djupklass per
@@ -223,22 +227,17 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
 - **Webb-GIS** – GeoJSON av inventeringen med kostnader och rekommendation, som de andra lagren.
 - **PowerPoint** – sidor ur inventeringen i `tv3_pptx.py` (nyckeltal, karta, topplista på kvot).
 
-## Frågor att besvara (F10–F17)
+## Beslut och frågor (F10–F17)
 
-- **F10 Lager.** Vilka lager ska Exportera område ta med? Jag känner avloppslagren (A Ledning, A Servis,
-  tre brunnslager, serviskopplingspunkt, ledningsände). Vattenlagrens namn och fält behöver jag – kör
-  *Lista fält* på dem och skicka textfilen (särskilt djup-/täckningsfält, dimension, material, år).
-- **F11 Markhöjd.** Finns en höjdmodell (raster) i ArcMap-kartan, eller ett punktlager med markhöjder?
-  Utan någon av dem blir djupet bara lock − vg vid brunnarna och rät linje emellan.
-- **F12 Parallellt.** Avstånd 1,5 m och minst 60 % av längden för *samma schakt* – rimligt för SVOA:s
-  nät? (Vatten ligger ofta i egen schakt på andra sidan gatan; då faller det bort automatiskt.)
-- **F13 Kostnader för omläggning.** Schablonerna ovan är påhittade. Vill du ha djupklasser 0–2/2–3/3–4/> 4 m
-  och dimensionsintervall som i `kostnader.csv`? Har du återställningspriser per yttyp och finns
-  yttypen i GIS (F-punkt om ytskikt ovan)?
-- **F14 Sträcka.** Sträcka = GIS-ledning brunn→brunn (skarvar utan brunn hopfogade som i GIS-exporten).
-  Ok, eller vill du räkna på TV3-sträckorna när film finns?
-- **F15 Profil.** Per stråk (kedja mellan förgreningar/valda brunnar), A3 liggande, högst 300 m per sida.
-  Vilka ledningsslag i samma profil – bara stråkets typ, eller alla parallella (som projekteringsprofilen)?
-- **F16 Planritning.** Samma mallar som Exportera kartor (UtskriftA4 liggande/stående), eller finns en A3-mall?
-- **F17 Vatten.** Hur vill du räkna djup på vattenledningar: fält i GIS, schablon 1,8 m täckning, eller
-  lämna tomt?
+- **F10 Lager.** Öppen: vattenlagrens namn och fält kommer när användaren sitter vid ArcMap (kör *Lista
+  fält* på dem). Exportera område förväljer alla featurelager under grupperna *Avlopp* och *Vatten*, så
+  namnen behövs först i steg 2 (fältgissningar för vatten).
+- **F11 Markhöjd.** Ja, det finns en höjdmodell/markhöjder i kartan → djup ur markhöjd − vg.
+- **F12 Parallellt.** c–c < 3 m på minst 60 % av sträckan = samma schakt.
+- **F13 Kostnader.** Djupklasser enligt förslaget. Användaren har en Excel-prisdatabas som tar hänsyn till
+  1, 2 eller 3 ledningar i samma grav; priserna klistras in senare och kostnadsfilen anpassas efter den.
+- **F14 Sträcka.** Brunn→brunn, eller till ledningsände utan brunn (servis, T-rörsanslutning). Fristående
+  från TV3-filmningarna (TV-klassen kopplas bara på när den finns).
+- **F15 Profil.** Per stråk, A3 liggande, högst 300 m per sida, alla parallella ledningsslag i samma profil.
+- **F16 Planritning.** Det finns A3-mallar, både stående och liggande – de används (A4 som reserv).
+- **F17 Vatten.** Djup till rörets centrum = 1,7 m (schablon).

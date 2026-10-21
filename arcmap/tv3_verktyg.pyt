@@ -101,6 +101,9 @@ STANDARD_LEDNTYP = ['PipeType', 'LEDNINGSTYP', 'LEDNTYP', 'TYP', 'FUNKTION', 'SY
 STANDARD_AR = ['ConstructionYear', 'ANLAGGNINGSAR', 'ANL_AR', 'ANLAR', 'BYGGAR', 'AR', 'ANLAGD']
 STANDARD_RENOVERINGSAR = ['RestorationYear', 'RENOVERINGSAR', 'REN_AR', 'RELINAD_AR', 'INFODRAD_AR']
 STANDARD_SERVIS = ['A Servis']
+# Exportera omrade: grupper i kartan vars featurelager forvaljs, och gissningar pa namnfaltet i omradeslagret
+STANDARD_VA_GRUPPER = ['Avlopp', 'Vatten']
+STANDARD_OMRADESNAMN = ['NAMN', 'NAME', 'OMRADE', 'OMR\u00c5DE', 'BETECKNING', 'BENAMNING', 'DRIFTOMR', 'DUF', 'ID']
 LAGERNAMN_BEDOMDA = 'Bedomda ledningar'      # lagernamnet som Skapa ledningslager ger
 STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']
 STANDARD_DUF_NAMN = ['DUF', 'DUF_NR', 'DUFNR', 'OMRADE', 'OMR\u00c5DE', 'NAMN', 'NAME', 'BETECKNING', 'ID']
@@ -164,6 +167,16 @@ def _langa_namn(namnlista, kartlager):
         if l.name.strip().lower() in sokta or langt.strip().lower() in sokta:
             if langt not in ut:
                 ut.append(langt)
+    return ut
+
+
+def _va_lager(kartlager):
+    """Langa namn for featurelagren under VA-grupperna (STANDARD_VA_GRUPPER), annars de
+    kanda lednings-, brunns- och servislagren - forval i Exportera omrade."""
+    grupper = [g.lower() + '\\' for g in STANDARD_VA_GRUPPER]
+    ut = [langt for langt, l in kartlager if any(langt.lower().startswith(g) for g in grupper)]
+    if not ut:
+        ut = _langa_namn(STANDARD_LEDNING + STANDARD_BRUNN + STANDARD_SERVIS, kartlager)
     return ut
 
 
@@ -332,7 +345,7 @@ class Toolbox(object):
         self.alias = 'tv3'
         self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Etapplager, Markprofil, Uppstroms,
                       ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
-                      SkapaProjekteringslager, Projekteringsprofil]
+                      SkapaProjekteringslager, Projekteringsprofil, ExporteraOmrade]
 
 
 class SkapaLedningslager(object):
@@ -1497,4 +1510,90 @@ class Projekteringsprofil(object):
                     os.startfile(f)          # oppna ritningen (Windows)
                 except Exception:
                     pass
+        return
+
+
+class ExporteraOmrade(object):
+    def __init__(self):
+        self.label = 'Exportera omr\u00e5de (lokala lager)'
+        self.description = (
+            'Kopierar alla VA-objekt som ber\u00f6r ett eller flera omr\u00e5den (polygoner i ett lager, '
+            'valda objekt om n\u00e5gra \u00e4r valda) till en lokal filgeodatabas - ett lager per '
+            'k\u00e4llager med alla f\u00e4lt, hela objekt (inte klippta). Objekten f\u00e5r OMRADE, '
+            'KORSAR_GRANS och KALLAGER. D\u00e4refter kan Ledningsinventering, profiler och kartor '
+            'k\u00f6ras mot de lokala lagren utan kontakt med databasen.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        omrade = _lagerparam('Omr\u00e5deslager (polygoner; valda objekt om n\u00e5gra \u00e4r valda)',
+                             'omrade', False, kartlager)
+        namnfalt = arcpy.Parameter(
+            displayName='F\u00e4lt med omr\u00e5dets namn (tomt = Omrade 1, 2 ...)', name='namnfalt',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        lager = _lagerparam('Lager att exportera (f\u00f6rvalt: alla featurelager under %s)'
+                            % ' och '.join(STANDARD_VA_GRUPPER), 'lager', True, kartlager)
+        ut_mapp = arcpy.Parameter(
+            displayName='Utdatamapp', name='ut_mapp', datatype='DEFolder', parameterType='Required',
+            direction='Input')
+        gdb_namn = arcpy.Parameter(
+            displayName='Namn p\u00e5 geodatabasen (skapas i mappen, .gdb l\u00e4ggs till)', name='gdb_namn',
+            datatype='GPString', parameterType='Required', direction='Input')
+        gdb_namn.value = 'omrade_export'
+        buffert = arcpy.Parameter(
+            displayName='Buffert runt omr\u00e5det (m) - tar med objekt strax utanf\u00f6r', name='buffert',
+            datatype='GPDouble', parameterType='Required', direction='Input')
+        buffert.value = 0.0
+        bara_valda = arcpy.Parameter(
+            displayName='Bara valda polygoner n\u00e4r n\u00e5got \u00e4r valt i omr\u00e5deslagret',
+            name='bara_valda', datatype='GPBoolean', parameterType='Optional', direction='Input')
+        bara_valda.value = True
+        lagg = arcpy.Parameter(
+            displayName='L\u00e4gg de lokala lagren i kartan (med k\u00e4llagrens symbologi)', name='lagg',
+            datatype='GPBoolean', parameterType='Optional', direction='Input')
+        lagg.value = True
+        params = _minne_fyll(self, [omrade, namnfalt, lager, ut_mapp, gdb_namn, buffert, bara_valda, lagg])
+        if not lager.valueAsText:
+            _satt_varden(lager, _va_lager(kartlager))
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        p_omr, p_namn = parameters[0], parameters[1]
+        if p_omr.altered or (p_omr.valueAsText and not p_namn.valueAsText):
+            falt = _faltnamn(p_omr)
+            if falt:
+                _filter(p_namn, falt)
+                if not p_namn.altered and not p_namn.valueAsText:
+                    p_namn.value = _forsta_traff(STANDARD_OMRADESNAMN, falt)
+        return
+
+    def updateMessages(self, parameters):
+        import re
+        _kolla_geometri(parameters[0], ['Polygon'], 'Omr\u00e5deslagret')
+        namn = parameters[4].valueAsText or ''
+        if namn.lower().endswith('.gdb'):
+            namn = namn[:-4]
+        if namn and not re.match(r'^[A-Za-z][A-Za-z0-9_\-]*$', namn):
+            parameters[4].setErrorMessage('Bara A-Z, siffror, understreck och bindestreck, b\u00f6rja med en bokstav')
+        if parameters[5].value is not None and parameters[5].value < 0:
+            parameters[5].setErrorMessage('Buffert kan inte vara negativ')
+        return
+
+    def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('omrade_export')
+        m.exportera_omrade(
+            parameters[0].valueAsText.strip("'"),
+            _lagerlista(parameters[2]),
+            parameters[3].valueAsText,
+            gdb_namn=parameters[4].valueAsText or 'omrade_export',
+            namnfalt=(parameters[1].valueAsText or '').strip() or None,
+            buffert=float(parameters[5].value or 0),
+            bara_valda=bool(parameters[6].value),
+            lagg_i_kartan=bool(parameters[7].value),
+        )
         return
