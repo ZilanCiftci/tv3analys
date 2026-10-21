@@ -1029,22 +1029,31 @@ enhet;kr;kommentar, rubrikraden styr ordningen (`las_kostnader_omlaggning`); sch
 601–1200 × djup 0–2/2–3/3–4/>4, `samschakt_faktor` 0,4, aterstallning 3 500, servis_omkoppling 35 000, servis_ledning 4 000,
 brunn_ny 60 000, rorsprackning 5 000 (≤ 200)/6 500 (201–400) kr/m, sprackningsgrop 40 000/st. `_djuprad`: största
 djup_fran ≤ djup; `gravpris(dim, djup, n)`: rader med ledningar = n direkt (prisdatabasen F13), annars 1-ledningsraden ×
-(1 + faktor·(n−1)). `berakna(data, kost_o, kost_s)` med tre metoder (`METODER`): `_omlaggning` (n = `ledningar_i_grav` =
-1 + round(Σ andel för samschakt-partner), max 3; dimension = största i graven; schaktpris medel över profilens provpunkter,
-annars djup_medel; grav/n·L + återställning·(1+f(n−1))/n·L + serviser + brunn_ny × 0,5 per brunnsände, ej vatten),
-`_strumpa` (bara `STRUMPA_SYSTEM` S/D/K – vatten "vattenledning – infodras inte"; `STRUMPA_DIM_MIN/MAX` 100–1200;
-kostnader.csv strumpa × L + hatt/servis + framschaktning + ny_brunn när båda ändbrunnarnas typ matchar `BRUNNSTYP_TILLSYN`),
-`_sprackning` (dimension ≤ `SPRACKNING_DIM_MAX` 400, alla system; rorsprackning × L + servis_omkoppling/servis +
-sprackningsgrop per ände utan brunn, vatten alltid 2); `_billigast`/`_lagst` = billigaste möjliga metod, `_anm` = varför
-metoder inte går; system härleds ur ledningstypen och id ur lager/oid när filen är en gisdata.json. Excel: Sammanfattning
-(källa/parametrar/metodgränser/OBS schablon, **Kostnad per metod** per system: lägg om, strumpa + strumpbar längd,
-rörspräckning + spräckbar längd, billigast per ledning; nätet; material/dimension/decennium/djupklass; datakvalitet),
-Ledningar (Omläggning, Strumpa, Rörspräckning, Billigast, Anmärkning synliga; detaljposter och GIS-attribut dolda via
-`DOLDA_LEDNINGAR`), Kostnad per schaktgrupp (lägg om, strumpa + ej strumpbara, rörspräckning + ej spräckbara, billigast;
-+ utan samschakt, totalt), Serviser, Parallella, Korsningar, Brunnar, Datakvalitet, Kostnadsposter. Testa med /usr/bin/python3
+(1 + faktor·(n−1)). `berakna(data, kost_o, kost_s)`: per ledning tre råkostnader (`METODER`) – `_omlaggning(…, medlagda)` (n =
+`ledningar_i_grav(led, per_id, medlagda)` = 1 + round(Σ andel för samschakt-partner som också läggs om, `_gravpartners`),
+max 3; dimension = största bland ledningen och de medlagda partnerna; schaktpris medel över profilens provpunkter, annars
+djup_medel; grav/n·L + återställning·(1+f(n−1))/n·L + serviser + brunn_ny × 0,5 per brunnsände, ej vatten; returnerar
+(o, brist, n, hur)), `_strumpa` (bara `STRUMPA_SYSTEM` S/D/K, `STRUMPA_DIM_MIN/MAX` 100–1200; kostnader.csv strumpa × L +
+hatt/servis + framschaktning + ny_brunn vid `BRUNNSTYP_TILLSYN` i båda ändar), `_sprackning` (≤ `SPRACKNING_DIM_MAX` 400;
+rorsprackning × L + servis_omkoppling/servis + sprackningsgrop per ände utan brunn, vatten 2). Sedan **två sammanhållna
+alternativ** (användaren okt 2026: "rörspräcka vatten är bara aktuellt om spillen samtidigt strumpas … räkna rätt metod
+ihop"; ersatte "billigaste metod per ledning"): *Alt. lägg om* = `_omlagg` (allt läggs om, delad grav). *Alt. strumpa* =
+`alternativ_strumpa`: avlopp `_alt_metod` strumpa, annars rörspräckning, annars omläggning; vatten omläggning när någon
+avloppspartner i samma grav läggs om (`_alt_motiv` "läggs om i samma grav som X"), annars rörspräckning (≤ 400) annars
+omläggning; de omlagda i alternativet räknas om med `medlagda` = de som läggs om (`_alt_grav`), övriga tar råkostnaden
+(`_alt`). `_jamforbar` = kostnad i båda alternativen – bara de summeras (Sammanfattning, schaktgrupp, konsol), övriga
+"Utan kostnad (st)". System härleds ur ledningstypen och id ur lager/oid när filen är en gisdata.json. Excel:
+Sammanfattning (källa/parametrar/metodgränser/OBS schablon, **Lägga om eller strumpa** per system: alt. lägg om, alt. strumpa,
+strumpas/rörspräcks/läggs om (m), utan kostnad + tre förklaringsrader; nätet; material/dimension/decennium/djupklass;
+datakvalitet), Ledningar (synliga Alt. lägg om, Metod alt. strumpa, Alt. strumpa, Anmärkning (`_anmarkning`); råkostnaderna
+Strumpa/Rörspräckning, Ledningar i graven alt. strumpa, detaljposter och GIS-attribut dolda via `DOLDA_LEDNINGAR`), Kostnad
+per schaktgrupp (alt. lägg om, alt. strumpa, strumpas/rörspräcks/läggs om/utan kostnad (st); + utan samschakt, totalt),
+Serviser, Parallella, Korsningar, Brunnar, Datakvalitet, Kostnadsposter. JSON (version 2): kostnad_omlaggning/_strumpa/
+_rorsprackning (råkostnader), alt_lagg_om_kr, alt_strumpa_metod, alt_strumpa_kr, anmarkning. Testa med /usr/bin/python3
 (3.13 har openpyxl; /usr/local/bin/python3 3.11 saknar paketen): scratchpad/test_ledning_analys.py (nätet ur test_inventering:
-S1 3 i graven, D1 2, K1 ensam, S3 djup saknas, V1 vatten utan strumpa → rörspräckning 1 080 000 billigast, framschaktning vid
-STB, dimension 600/1500, rader för 2 ledningar, flikar utan TV/rekommendation, dolda kolumner, gisdata utan system).
+S1 3 i graven, D1 2, K1 ensam, S3 djup saknas, V1 vatten rörspräcks 1 080 000 när spillen strumpas; S1 utan dimension →
+läggs om i alt. strumpa och V1 läggs om med den i en grav om 2 (D1 strumpas och räknas inte), framschaktning vid STB,
+dimension 600/1500, rader för 2 ledningar, jämförbara summor (S3 utanför), flikar, dolda kolumner, gisdata utan system).
 Handledning 7.15. Kvar i steg 3: ArcMap-verktyget Uppdatera inventeringslager (läser ledningsresultat.json).
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
