@@ -961,8 +961,9 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 inom polygoner till lokal gdb (Exportera område), inventering per ledning med serviser (antal/längd), medeldjup ur
 markhöjd − vg, parallella ledningar (samschakt), korsningar, lutning (`ledningsdata.json`), Excel + kostnad strumpa mot
 omläggning (`ledning_analys.py`, `kostnader_omlaggning.csv` med djupklasser), profiler per stråk (utbyggd
-projektering.rita_profil) och planritningar (kartexport), koppling till TV-klass. Frågor F10–F17 obesvarade (vattenlager,
-höjdmodell, parallellavstånd, kostnader, stråk/A3-mall, vattendjup).
+projektering.rita_profil) och planritningar (kartexport). Steg 5 (koppling till TV-klass, rekommendationer) **utgår** –
+användaren okt 2026: "Jag vill inte ha rekommendationer. Enbart beräkningar. Jag gör bedömningarna själv." Lägg inte in
+rekommendationer, "billigast", kvoter eller TV-uppgifter i inventeringen. Frågor F10–F17 se planen.
 **Exportera område** (okt 2026, steg 1 i PLAN_ledningsinventering.md, oprövat i riktig ArcMap): `arcmap/moduler/omrade_export.py`
 `exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn, namnfalt, buffert, bara_valda, lagg_i_kartan)`: polygoner ur
 `_polygoner` (cursor på lagerobjektet när `Describe(lyr).FIDSet` har urval och bara_valda, annars datakällan + dq), union

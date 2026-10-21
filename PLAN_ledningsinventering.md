@@ -34,7 +34,8 @@ Ordning (varje steg ger något användbart för sig):
 2. **Ledningsinventering** – `ledningsdata.json` med serviser, djup, parallellitet, lutning. Två pass.
 3. **Excel och kostnad** – `ledning_analys.py`: inventeringsbok + strumpa/omläggning. Två pass.
 4. **Profiler och planritningar** per stråk. Två pass.
-5. **Koppling till TV-inspektionen** och scenarier per etapp. Ett pass.
+5. ~~Koppling till TV-inspektionen och scenarier per etapp~~ – utgår (användarens beslut okt 2026: inventeringen
+   ska bara räkna, inga rekommendationer – bedömningarna gör användaren själv).
 
 Sammanlagt sju–åtta arbetspass. Steg 1, 2 och 4 körs i ArcMap (Citrix), steg 3 lokalt i Python 3.
 
@@ -182,15 +183,11 @@ ledningslagret som bedömda-lager (markering av stråkets ledningar, titel = str
 dimension, längd) i SVOA:s liggande/stående mallar; samlad PDF `kartor_strak.pdf` och fältet KARTA på
 ledningarna. Profil-PDF och plan-PDF får samma filnamn med olika suffix så att de ligger parvis.
 
-## 5. Koppling till TV-inspektionen och scenarier
+## 5. Koppling till TV-inspektionen och scenarier – utgår
 
-- `--karta kartunderlag.json` i `ledning_analys.py`: TV-klass, konstruktionsindex, grad 4-koder,
-  relinad och etapp kopplas per brunnspar (som `koppla_gis` fast omvänt). Rekommendationen använder det
-  (RBR/DEF 4 → inte strumpa; klass D/E → ingen åtgärd).
-- **Scenarier per etapp/schaktgrupp**: *strumpa allt*, *lägg om allt*, *rekommenderat per sträcka* –
-  tre kolumner i fliken Etapper, med skillnaden i kronor och antal serviser som berörs.
-- Åtgärdspaketet i `tv3_analys.py` kan sedan läsa omläggningskostnaden från `ledningsresultat.json`
-  i stället för "schakt utan kostnad" (F8 i förra planen) – då blir Etapper-fliken komplett.
+Användarens beslut okt 2026: "Jag vill inte ha rekommendationer. Enbart beräkningar. Jag gör bedömningarna
+själv." Inventeringen kopplas inte till TV-inspektionerna och ger inga rekommendationer eller val av metod per
+ledning; `ledning_analys.py` räknar bara kostnaderna för de två alternativen (lägg om / strumpa, se steg 3).
 
 ---
 
@@ -204,7 +201,7 @@ ledningarna. Profil-PDF och plan-PDF får samma filnamn med olika suffix så att
 | 4 | Uppdatera inventeringslager | `.pyt`, liten | nytt |
 | 5 | Ledningsprofil | utökning av Projekteringsprofil/`projektering.rita_profil` | utökning |
 | 6 | Planritning per stråk | utökning av Exportera kartor (`kartexport`) | utökning |
-| 7 | Omläggningskostnad i åtgärdspaketet | `tv3_analys.py` | liten utökning |
+| 7 | ~~Omläggningskostnad i åtgärdspaketet~~ | `tv3_analys.py` | utgår (steg 5) |
 
 Testas som tidigare med låtsas-arcpy i scratchpad och med en syntetisk `ledningsdata.json`; riktig
 ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinventering*.
