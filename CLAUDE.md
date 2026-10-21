@@ -1017,35 +1017,35 @@ geometri-iteration, firstPoint/projectAs/extent, OID@/SHAPE@XY/SHAPE@Z i cursorn
 vatten V1 + tre serviser + nio brunnar + punktmarkhöjd z = 23 − 0,005x → djup 3,0/2,5, K1 bakfall −7,5 ‰, S3 vg saknas,
 schaktgrupp {S1, S2, D1, V1}, K1 korsar V1/S1/D1 (hojdskillnad 0,6), SERV3 okopplad; utan markhöjd → lockniva; gamla
 `exportera` oförändrad; verktygsdialogen (förval, gissningar, fel, execute, minne). Handledning 7.14 + verktygslistan.
-**Inventeringsbok och kostnad** (okt 2026, steg 3 i PLAN_ledningsinventering.md, användaren: "börja med schablonmall"):
-`ledning_analys.py` (Python 3, repots rot, KONFIG överst) `python ledning_analys.py ledningsdata.json [-o mapp] [--kostnader
-kostnader_omlaggning.csv] [--strumpa kostnader.csv] [--karta kartunderlag.json …]` → `ledningsinventering.xlsx` + 
-`ledningsresultat.json` (standard i JSON-filens mapp). Importerar `las_text`, `las_kostnader`, `pris`, `KLASS_FARG`,
-`_normlittera` ur tv3_analys; egen `tabell()` (rubrik + enhetsrad, format per rubrik, dolda kolumner med outline,
-`rad_start` för block i Sammanfattning). `kostnader_omlaggning.csv` (schabloner): post;dimension_fran;dimension_till;
-djup_fran;djup_till;ledningar;enhet;kr;kommentar, rubrikraden styr ordningen (`las_kostnader_omlaggning`); schakt kr/m grav
-per dimension 0–300/301–600/601–1200 × djup 0–2/2–3/3–4/>4, `samschakt_faktor` 0,4, aterstallning 3 500, servis_omkoppling
-35 000, servis_ledning 4 000, brunn_ny 60 000, strumpa_vatten 6 000/8 000. `_djuprad`: största djup_fran ≤ djup (2,0 → 2–3,
-över sista → sista, negativt → första); `gravpris(dim, djup, n)`: rader med ledningar = n direkt (för prisdatabasen F13),
-annars 1-ledningsraden × (1 + faktor·(n−1)). `berakna`: n = `ledningar_i_grav` = 1 + round(Σ andel för samschakt-partner),
-max `MAX_LEDNINGAR_I_GRAV` 3; dimension = största i graven; schaktpris medel över profilens provpunkter (mark − vg), annars
-djup_medel (vatten 1,7); omläggning = grav/n·L + återställning·(1+f(n−1))/n·L + serviser (omkoppling/st + servis_ledning/m,
-`SERVIS_OMLAGG_MAX_M` None = hela längden) + brunn_ny × 0,5 per brunnsände (ej vatten); strumpa = kostnader.csv strumpa(dim)
-× L + hatt/servis + framschaktning + ny_brunn när båda ändbrunnarnas typ matchar `BRUNNSTYP_TILLSYN` TB|RB; vatten
-strumpa_vatten + servis_omkoppling; ej strumpbar utanför `STRUMPA_DIM_MIN/MAX` 100–1200 eller utan dimension.
-`rekommendation`: relinad (TV) → bedöm; ej strumpbar → omläggning; grad 4 i TV-atgardsflagga → bedöm; kvot ≥
-`STRUMPA_KVOT` 1,5 → strumpa; < `OMLAGG_KVOT` 1 → omläggning; djup ≤ `GRUND_DJUP_M` 2 och ≤ `FA_SERVISER_PER_100M` 2 →
-omläggning; n ≥ 2 → omläggning (samschakt); annars bedöm. TV: `tv_index` på normaliserat brunnspar ur kartunderlag
-(ersatta/ingår hoppas, sämsta gällande klass). Excel: Sammanfattning (källa/parametrar/OBS schablon, nätet per system,
-material/dimension/decennium/djupklass, kostnad strumpa alla/lägg om alla/enligt rekommendation, TV-klass × rekommendation,
-datakvalitet), Ledningar (`DOLDA_LEDNINGAR` + alla GIS-attribut dolda, Rekommendation färgad `REK_FARG`, TV-klass i
-klassfärg), Kostnad per schaktgrupp (+ utan samschakt, totalt), Serviser, Parallella, Korsningar, Brunnar, Datakvalitet
-(+ ingen strump-/omläggningskostnad, dimension/år saknas, fri ände), Kostnadsposter. gisdata.json fungerar (OBS, bedöm).
-Testa med /usr/bin/python3 (3.13 har openpyxl; /usr/local/bin/python3 3.11 saknar paketen):
-scratchpad/test_ledning_analys.py (nätet ur test_inventering: S1 3 i graven, D1 2, K1 ensam, S3 djup saknas, V1 grund →
-omläggning, framschaktning vid STB, dimension 1500, rader för 2 ledningar, TV-koppling relinad/grad 4/omvänt par/ersatt,
-flikar, dolda kolumner, gisdata). Handledning 7.15. Kvar i steg 3: ArcMap-verktyget Uppdatera inventeringslager
-(läser ledningsresultat.json).
+**Inventeringsbok och kostnad** (okt 2026, steg 3 i PLAN_ledningsinventering.md, användaren: "börja med schablonmall";
+sedan "blanda inte in TV-inspektionerna – jag vill bara veta vad det kostar att lägga om alla vs strumpinfodra; vatten går
+inte att infodra; ≤ 400 går att rörspräcka"): `ledning_analys.py` (Python 3, repots rot, KONFIG överst)
+`python ledning_analys.py ledningsdata.json [-o mapp] [--kostnader kostnader_omlaggning.csv] [--strumpa kostnader.csv]` →
+`ledningsinventering.xlsx` + `ledningsresultat.json` (version 2; standard i JSON-filens mapp). **Ingen TV-koppling, ingen
+rekommendation/kvot** (togs bort: `--karta`, `tv_index`, `rekommendation`, REK_FARG). Importerar `las_text`, `las_kostnader`,
+`pris` ur tv3_analys; egen `tabell()` (rubrik + enhetsrad, format per rubrik, dolda kolumner med outline, `rad_start` för block
+i Sammanfattning). `kostnader_omlaggning.csv` (schabloner): post;dimension_fran;dimension_till;djup_fran;djup_till;ledningar;
+enhet;kr;kommentar, rubrikraden styr ordningen (`las_kostnader_omlaggning`); schakt kr/m grav per dimension 0–300/301–600/
+601–1200 × djup 0–2/2–3/3–4/>4, `samschakt_faktor` 0,4, aterstallning 3 500, servis_omkoppling 35 000, servis_ledning 4 000,
+brunn_ny 60 000, rorsprackning 5 000 (≤ 200)/6 500 (201–400) kr/m, sprackningsgrop 40 000/st. `_djuprad`: största
+djup_fran ≤ djup; `gravpris(dim, djup, n)`: rader med ledningar = n direkt (prisdatabasen F13), annars 1-ledningsraden ×
+(1 + faktor·(n−1)). `berakna(data, kost_o, kost_s)` med tre metoder (`METODER`): `_omlaggning` (n = `ledningar_i_grav` =
+1 + round(Σ andel för samschakt-partner), max 3; dimension = största i graven; schaktpris medel över profilens provpunkter,
+annars djup_medel; grav/n·L + återställning·(1+f(n−1))/n·L + serviser + brunn_ny × 0,5 per brunnsände, ej vatten),
+`_strumpa` (bara `STRUMPA_SYSTEM` S/D/K – vatten "vattenledning – infodras inte"; `STRUMPA_DIM_MIN/MAX` 100–1200;
+kostnader.csv strumpa × L + hatt/servis + framschaktning + ny_brunn när båda ändbrunnarnas typ matchar `BRUNNSTYP_TILLSYN`),
+`_sprackning` (dimension ≤ `SPRACKNING_DIM_MAX` 400, alla system; rorsprackning × L + servis_omkoppling/servis +
+sprackningsgrop per ände utan brunn, vatten alltid 2); `_billigast`/`_lagst` = billigaste möjliga metod, `_anm` = varför
+metoder inte går; system härleds ur ledningstypen och id ur lager/oid när filen är en gisdata.json. Excel: Sammanfattning
+(källa/parametrar/metodgränser/OBS schablon, **Kostnad per metod** per system: lägg om, strumpa + strumpbar längd,
+rörspräckning + spräckbar längd, billigast per ledning; nätet; material/dimension/decennium/djupklass; datakvalitet),
+Ledningar (Omläggning, Strumpa, Rörspräckning, Billigast, Anmärkning synliga; detaljposter och GIS-attribut dolda via
+`DOLDA_LEDNINGAR`), Kostnad per schaktgrupp (lägg om, strumpa + ej strumpbara, rörspräckning + ej spräckbara, billigast;
++ utan samschakt, totalt), Serviser, Parallella, Korsningar, Brunnar, Datakvalitet, Kostnadsposter. Testa med /usr/bin/python3
+(3.13 har openpyxl; /usr/local/bin/python3 3.11 saknar paketen): scratchpad/test_ledning_analys.py (nätet ur test_inventering:
+S1 3 i graven, D1 2, K1 ensam, S3 djup saknas, V1 vatten utan strumpa → rörspräckning 1 080 000 billigast, framschaktning vid
+STB, dimension 600/1500, rader för 2 ledningar, flikar utan TV/rekommendation, dolda kolumner, gisdata utan system).
+Handledning 7.15. Kvar i steg 3: ArcMap-verktyget Uppdatera inventeringslager (läser ledningsresultat.json).
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
