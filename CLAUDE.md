@@ -957,6 +957,12 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 - Behåll ett enda skript med KONFIG-block överst; parametrar ska gå att ändra utan att röra
   koden.
 
+**Planerad ledningsinventering (okt 2026):** `PLAN_ledningsinventering.md` – användarens nya mål: exportera allt VA-nät
+inom polygoner till lokal gdb (Exportera område), inventering per ledning med serviser (antal/längd), medeldjup ur
+markhöjd − vg, parallella ledningar (samschakt), korsningar, lutning (`ledningsdata.json`), Excel + kostnad strumpa mot
+omläggning (`ledning_analys.py`, `kostnader_omlaggning.csv` med djupklasser), profiler per stråk (utbyggd
+projektering.rita_profil) och planritningar (kartexport), koppling till TV-klass. Frågor F10–F17 obesvarade (vattenlager,
+höjdmodell, parallellavstånd, kostnader, stråk/A3-mall, vattendjup).
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
