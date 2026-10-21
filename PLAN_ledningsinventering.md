@@ -1,8 +1,10 @@
 # Plan: ledningsinventering inom ett område – från ArcMap till kostnadsjämförelse strumpa/omläggning
 
 Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119), steg 2 (Ledningsinventering →
-`ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap.
-Besluten F10–F17 står längst ned; F10 (vattenlagrens namn) och prislistan i F13 väntar på användaren.
+`ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap,
+steg 3 (`ledning_analys.py` + `kostnader_omlaggning.csv` med schablonpriser och kolumn för antal ledningar i graven)
+är byggt; verktyget Uppdatera inventeringslager återstår. Besluten F10–F17 står längst ned; F10 (vattenlagrens
+namn) och prislistan i F13 väntar på användaren.
 
 ## Målet, som jag förstår det
 
