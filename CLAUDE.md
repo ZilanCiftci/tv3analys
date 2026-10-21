@@ -963,6 +963,22 @@ markhöjd − vg, parallella ledningar (samschakt), korsningar, lutning (`lednin
 omläggning (`ledning_analys.py`, `kostnader_omlaggning.csv` med djupklasser), profiler per stråk (utbyggd
 projektering.rita_profil) och planritningar (kartexport), koppling till TV-klass. Frågor F10–F17 obesvarade (vattenlager,
 höjdmodell, parallellavstånd, kostnader, stråk/A3-mall, vattendjup).
+**Exportera område** (okt 2026, steg 1 i PLAN_ledningsinventering.md, oprövat i riktig ArcMap): `arcmap/moduler/omrade_export.py`
+`exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn, namnfalt, buffert, bara_valda, lagg_i_kartan)`: polygoner ur
+`_polygoner` (cursor på lagerobjektet när `Describe(lyr).FIDSet` har urval och bara_valda, annars datakällan + dq), union
+(+ buffert) → `in_memory/tv3_omrade` via `CopyFeatures([geom])`, per lager `MakeFeatureLayer(kalla)` + `SelectLayerByLocation
+INTERSECT` + `GetCount` + `CopyFeatures` till `<ut_mapp>/<gdb>.gdb/<fc>` (`_fc_namn`: åäö→a/o, icke-alfanumeriskt→_, börjar med
+bokstav, unikt), nya fält OMRADE (namn med ';'), KORSAR_GRANS (`not g.within(union)`), KALLAGER; befintlig fc raderas efter
+`_ta_bort_ur_kartan`; `_lagg_in` = `mapping.Layer` + `UpdateLayer(df, ny, källa, True)` (symbologi) + AddLayer, namn
+"<lager> (lokal)"; `export_info.json` {version, datum, omradeslager, omraden, buffert_m, gdb, koordinatsystem, lager
+[{lager, langt_namn, kalla, fc, antal, korsar_grans, geometri}]}. .pyt `ExporteraOmrade` (sist i Toolbox): omrade
+(lagerparam), namnfalt (filter = fält, gissning `STANDARD_OMRADESNAMN`), lager (multi, förval `_va_lager`: featurelager vars
+longName börjar med `STANDARD_VA_GRUPPER` Avlopp/Vatten, annars lednings-/brunns-/servislagren; minnet vinner), ut_mapp
+(DEFolder), gdb_namn (regex), buffert, bara_valda, lagg; `_kolla_geometri` Polygon. Användarens beslut F11–F17 i planen
+(höjdmodell finns; parallellt = c–c < 3 m på ≥ 60 %; prisdatabas i Excel med 1/2/3 ledningar i graven kommer; brunn→brunn
+eller ledningsände; A3-mallar finns; vatten djup till centrum 1,7 m); F10 vattenlagrens namn väntar. Test:
+scratchpad/test_omrade.py med scratchpad/latsas/arcpy (ringpolygoner, urval, buffert, dq, omkörning, .pyt-laddning med
+execute). Handledning 7.13.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
