@@ -116,12 +116,12 @@ direkt i Excel om man bara vill titta).
   andel samschakt, summa strumpa/omläggning, datakvalitet.
 - **Ledningar** – en rad per sträcka: EntityID, från/till brunn, typ, dimension, material, år, längd,
   vg upp/ned, lutning (beräknad och fältet), bakfall, djup medel/min/max, djupklass, serviser (st, m),
-  parallell med (lista, andel), schaktgrupp, korsningar, kostnad omläggning, strumpa och rörspräckning,
-  billigaste metod, flaggor, alla originalfält dolda sist.
+  parallell med (lista, andel), schaktgrupp, korsningar, kostnad i alt. lägg om, metod och kostnad i
+  alt. strumpa, flaggor, alla originalfält dolda sist.
 - **Serviser** – en rad per servis med huvudledning, längd, typ, dimension, djup vid anslutningen.
 - **Parallella** – en rad per par med andel, medelavstånd, gemensam längd, schaktgrupp.
 - **Brunnar** – alla brunnar med lock, botten, djup, antal ledningar.
-- **Kostnad per stråk/schaktgrupp** – summerat: lägg om, strumpa och rörspräckning, och billigast per sträcka.
+- **Kostnad per stråk/schaktgrupp** – summerat: alt. lägg om och alt. strumpa med antal per metod.
 - **Datakvalitet** – vg saknas, bakfall, orimlig lutning, servis utan huvudledning, dimension saknas,
   ledning utan brunn i någon ände, år saknas.
 
@@ -151,14 +151,15 @@ per m av servisens längd) + ny brunn per brunn som byts; sträckor i samma scha
 `samschakt_andel` på schakt och återställning för alla utom den dyraste ledningen. Allt är schabloner
 som du byter ut; filen är det enda som behöver ändras.
 
-**Ingen rekommendation och ingen TV-koppling** (användarens beslut okt 2026): boken visar bara kostnaden per
-metod. Vattenledningar infodras inte. Ledningar till och med 400 mm kan rörspräckas (tredje metod: kr/m +
-omkoppling per servis + grop i ände utan brunn).
+**Ingen rekommendation och ingen TV-koppling** (användarens beslut okt 2026): boken jämför två alternativ.
+*Alt. lägg om*: allt läggs om. *Alt. strumpa*: avlopp strumpas (rörspräcks ≤ 400 mm eller läggs om där strumpa
+inte går); vattenledningar infodras inte utan rörspräcks (≤ 400 mm) – men bara när avloppet i samma grav
+strumpas; läggs avloppet om, läggs vattnet om i samma grav. Summorna omfattar ledningar med kostnad i båda.
 
 **Tillbaka till kartan.** `ledning_analys.py` skriver också `ledningsresultat.json`, och ett litet
 ArcMap-verktyg **Uppdatera inventeringslager** fyller fält i den lokala gdb:n (DJUP_MEDEL, DJUPKLASS,
-ANT_SERV, SERV_M, SCHAKTGRUPP, KOST_OMLAGG, KOST_STRUMPA, KOST_SPRACK, BILLIGAST) så att det går att
-symbolisera på kostnad eller djupklass. GeoJSON för webb-GIS som i övriga verktyg.
+ANT_SERV, SERV_M, SCHAKTGRUPP, ALT_OMLAGG, ALT_STRUMPA, METOD_STRUMPA) så att det går att
+symbolisera på kostnad, metod eller djupklass. GeoJSON för webb-GIS som i övriga verktyg.
 
 ## 4. Profiler och planritningar per stråk
 
@@ -223,11 +224,11 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
   som "korsningar" i steg 2.
 - **Serviser per fastighet** – koppla serviskopplingspunkterna till fastighetslagret för att se vilka
   fastigheter som berörs av en omläggning (brev, avstängning).
-- **Känslighet** – kör kostnaden med ±30 % på schaktpriset och visa om billigaste metod byter; billigt
+- **Känslighet** – kör kostnaden med ±30 % på schaktpriset och visa hur skillnaden mellan alternativen ändras; billigt
   att lägga in när modellen finns.
 - **Tidsplan och nuvärde** – strumpa nu + omläggning om 30 år mot omläggning nu, med ränta; en kolumn
   om ni jämför livscykelkostnad, inte bara investering.
-- **Webb-GIS** – GeoJSON av inventeringen med kostnader per metod, som de andra lagren.
+- **Webb-GIS** – GeoJSON av inventeringen med kostnaderna i båda alternativen, som de andra lagren.
 - **PowerPoint** – sidor ur inventeringen i `tv3_pptx.py` (nyckeltal, karta, topplista på kvot).
 
 ## Beslut och frågor (F10–F17)
