@@ -3,7 +3,8 @@
 Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119), steg 2 (Ledningsinventering →
 `ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap,
 steg 3 (`ledning_analys.py` + `kostnader_omlaggning.csv` med schablonpriser och kolumn för antal ledningar i graven)
-är byggt; verktyget Uppdatera inventeringslager återstår. Besluten F10–F17 står längst ned; F10 (vattenlagrens
+är byggt – utan TV-koppling och rekommendation (användaren okt 2026: bara kostnad omläggning mot strumpa;
+vatten infodras inte; ≤ 400 mm kan rörspräckas, tredje metod); verktyget Uppdatera inventeringslager återstår. Besluten F10–F17 står längst ned; F10 (vattenlagrens
 namn) och prislistan i F13 väntar på användaren.
 
 ## Målet, som jag förstår det
@@ -115,12 +116,12 @@ direkt i Excel om man bara vill titta).
   andel samschakt, summa strumpa/omläggning, datakvalitet.
 - **Ledningar** – en rad per sträcka: EntityID, från/till brunn, typ, dimension, material, år, längd,
   vg upp/ned, lutning (beräknad och fältet), bakfall, djup medel/min/max, djupklass, serviser (st, m),
-  parallell med (lista, andel), schaktgrupp, korsningar, kostnad strumpa, kostnad omläggning, kvot,
-  rekommendation (se nedan), TV-klass om `--karta` angetts, flaggor, alla originalfält dolda sist.
+  parallell med (lista, andel), schaktgrupp, korsningar, kostnad omläggning, strumpa och rörspräckning,
+  billigaste metod, flaggor, alla originalfält dolda sist.
 - **Serviser** – en rad per servis med huvudledning, längd, typ, dimension, djup vid anslutningen.
 - **Parallella** – en rad per par med andel, medelavstånd, gemensam längd, schaktgrupp.
 - **Brunnar** – alla brunnar med lock, botten, djup, antal ledningar.
-- **Kostnad per stråk/schaktgrupp** – summerat: strumpa alla, lägg om alla, och blandat per sträcka.
+- **Kostnad per stråk/schaktgrupp** – summerat: lägg om, strumpa och rörspräckning, och billigast per sträcka.
 - **Datakvalitet** – vg saknas, bakfall, orimlig lutning, servis utan huvudledning, dimension saknas,
   ledning utan brunn i någon ände, år saknas.
 
@@ -150,15 +151,14 @@ per m av servisens längd) + ny brunn per brunn som byts; sträckor i samma scha
 `samschakt_andel` på schakt och återställning för alla utom den dyraste ledningen. Allt är schabloner
 som du byter ut; filen är det enda som behöver ändras.
 
-**Rekommendation per sträcka** (enkel regel, justerbar i KONFIG): strumpa när kvoten omläggning/strumpa
-≥ `STRUMPA_KVOT` (1,5) och ledningen är strumpbar (inte RBR/DEF grad 4 om TV-klass finns, dimension
-inom strumpintervall); omläggning när ledningen är grund och har få serviser eller när flera ledningar
-delar schakt; annars *bedöm*. Det är en sorteringshjälp, inte ett beslut.
+**Ingen rekommendation och ingen TV-koppling** (användarens beslut okt 2026): boken visar bara kostnaden per
+metod. Vattenledningar infodras inte. Ledningar till och med 400 mm kan rörspräckas (tredje metod: kr/m +
+omkoppling per servis + grop i ände utan brunn).
 
 **Tillbaka till kartan.** `ledning_analys.py` skriver också `ledningsresultat.json`, och ett litet
 ArcMap-verktyg **Uppdatera inventeringslager** fyller fält i den lokala gdb:n (DJUP_MEDEL, DJUPKLASS,
-ANT_SERV, SERV_M, SCHAKTGRUPP, KOST_STRUMPA, KOST_OMLAGG, KVOT, REK) så att det går att symbolisera
-på kostnadskvot eller djupklass. GeoJSON för webb-GIS som i övriga verktyg.
+ANT_SERV, SERV_M, SCHAKTGRUPP, KOST_OMLAGG, KOST_STRUMPA, KOST_SPRACK, BILLIGAST) så att det går att
+symbolisera på kostnad eller djupklass. GeoJSON för webb-GIS som i övriga verktyg.
 
 ## 4. Profiler och planritningar per stråk
 
@@ -223,11 +223,11 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
   som "korsningar" i steg 2.
 - **Serviser per fastighet** – koppla serviskopplingspunkterna till fastighetslagret för att se vilka
   fastigheter som berörs av en omläggning (brev, avstängning).
-- **Känslighet** – kör kostnaden med ±30 % på schaktpriset och visa om rekommendationen byter; billigt
+- **Känslighet** – kör kostnaden med ±30 % på schaktpriset och visa om billigaste metod byter; billigt
   att lägga in när modellen finns.
 - **Tidsplan och nuvärde** – strumpa nu + omläggning om 30 år mot omläggning nu, med ränta; en kolumn
   om ni jämför livscykelkostnad, inte bara investering.
-- **Webb-GIS** – GeoJSON av inventeringen med kostnader och rekommendation, som de andra lagren.
+- **Webb-GIS** – GeoJSON av inventeringen med kostnader per metod, som de andra lagren.
 - **PowerPoint** – sidor ur inventeringen i `tv3_pptx.py` (nyckeltal, karta, topplista på kvot).
 
 ## Beslut och frågor (F10–F17)

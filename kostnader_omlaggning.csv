@@ -1,4 +1,4 @@
-# Kostnadsposter för omläggning i ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma.
+# Kostnadsposter för omläggning och rörspräckning i ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma.
 # ALLA BELOPP ÄR SCHABLONER tills prisdatabasen (F13) klistras in – byt mot egna värden.
 # Rubrikraden styr kolumnordningen. Tomma intervall = gäller alla. Strumpa (avlopp) och hattar tas ur kostnader.csv.
 #
@@ -9,7 +9,8 @@
 # aterstallning: kr per meter grav (asfalt, kantsten) – delas mellan ledningarna i graven som schakt.
 # servis_omkoppling: per servis på sträckan. servis_ledning: kr per meter servisledning som läggs om.
 # brunn_ny: per brunn i sträckans ändar (en brunn mellan två omlagda sträckor räknas en gång).
-# strumpa_vatten: relining av vattenledning (kr/m) – tom = ingen strumpkostnad för vatten.
+# rorsprackning: kr/m efter dimension (bara till och med SPRACKNING_DIM_MAX, 400 mm). Serviserna kopplas om
+#   (servis_omkoppling per st) och sprackningsgrop räknas i varje ände utan brunn (vattenledningar: båda ändarna).
 post;dimension_fran;dimension_till;djup_fran;djup_till;ledningar;enhet;kr;kommentar
 schakt;0;300;0;2;;m;9000;schablon – grund schakt
 schakt;0;300;2;3;;m;12000;schablon
@@ -28,5 +29,6 @@ aterstallning;;;;;;m;3500;schablon – asfalt/kantsten (ytskikt okänt i GIS)
 servis_omkoppling;;;;;;st;35000;schablon – ny anslutning och omkoppling
 servis_ledning;;;;;;m;4000;schablon – ny servisledning i schakt
 brunn_ny;;;;;;st;60000;schablon – ny brunn i omlagd sträcka
-strumpa_vatten;0;200;;;;m;6000;schablon – relining av vattenledning
-strumpa_vatten;201;400;;;;m;8000;schablon
+rorsprackning;0;200;;;;m;5000;schablon – rörspräckning inkl. nytt PE-rör
+rorsprackning;201;400;;;;m;6500;schablon
+sprackningsgrop;;;;;;st;40000;schablon – start- eller mottagningsgrop där ledningen inte slutar i en brunn
