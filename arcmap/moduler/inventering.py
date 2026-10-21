@@ -34,9 +34,9 @@ import datetime
 
 import arcpy
 
-from skapa_ledningslager import txt, logg, hitta_lager, hitta_falt, kalla, _avst, _punkt_segment, TEXTTYP
+from skapa_ledningslager import txt, logg, hitta_lager, kalla, _avst, _punkt_segment, TEXTTYP
 from natverk import _langd, _sr_namn
-from markprofil import _langs, _station, _punkt_vid
+from markprofil import _langs, _station
 import gisexport
 from gisexport import _tal, _heltal, _text, _faltnamn, _ovriga_falt, _json_varde, _vg_vid, _skriv_csv, skriv_json
 
