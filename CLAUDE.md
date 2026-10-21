@@ -979,6 +979,44 @@ longName börjar med `STANDARD_VA_GRUPPER` Avlopp/Vatten, annars lednings-/brunn
 eller ledningsände; A3-mallar finns; vatten djup till centrum 1,7 m); F10 vattenlagrens namn väntar. Test:
 scratchpad/test_omrade.py med scratchpad/latsas/arcpy (ringpolygoner, urval, buffert, dq, omkörning, .pyt-laddning med
 execute). Handledning 7.13.
+
+**Ledningsinventering** (okt 2026, steg 2 i PLAN_ledningsinventering.md, oprövat i riktig ArcMap): `arcmap/moduler/inventering.py`
+`inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager, vattenlager, markhojd, z_falt, lock_falt, botten_falt,
+typ_falt, vg_fran, vg_till, dim_falt, mat_falt, ledntyp_falt, ar_falt, ren_falt, lutning_falt, id_falt, tolerans 1,
+parallell_avstand 3, parallell_andel 0,6, intervall 1, vatten_djup 1,7, sokradie 5, hojdsystem, skriv_csv, omradeslager)`.
+gisexport refaktorerat: `bygg_data(...)` bygger strukturen i minnet (posterna har `_pts`, nya kwargs `alla_falt` → `attribut`
+med alla övriga fält via `_ovriga_falt`/`_json_varde` på ledningar och brunnar, `botten_falt` → `bottenniva`;
+returnerar `(data, hjalp)` med `sammanfattning` i data) och `exportera` är ett omslag som tar bort `_pts`, skriver JSON
+(`skriv_json`) + CSV som förut (test: samma nycklar som tidigare). Inventeringen: ledningslager + vattenlager läses ihop
+(`system` = V för vattenlagren, annars första bokstaven i ledningstypen), `id` = id-fält (+ `/del` vid flera delar) annars
+`lager/oid`, `lutning_promille` = (vg_fran − vg_till)/L·1000 + `lutning_gis`, flaggor bakfall/flack (`FLACK_PROMILLE` 2)/
+vg saknas/vg orimlig (`ORIMLIG_PROMILLE` 200) i `flaggor` och `datakvalitet`; `projektering.Markhojd` (raster eller
+punktlager, bbox över alla ledningar) samplas med `_langs(pts, intervall)` → `profil` [[m, mark, vg]], `djup_medel/min/max`,
+`djupklass` (`DJUPKLASSER` 2/3/4 → "0–2" … "> 4"), `tackning_min` (djup − dim), `djup_start/slut` (lock − vg), `djup_kalla`
+markmodell | lockniva (rät linje mellan ändbrunnarnas locknivåer när markhöjd saknas) | schablon (vatten: `vatten_djup`
+till centrum, ingen vg/lutning) | '' (saknas; djup bara när båda vg finns); serviser läses med alla fält (`_las_serviser`)
+och kopplas via `_Rutnat.inom` till närmaste huvudledning inom toleransen från någon ände (`_koppla_serviser`: `ledning`,
+`position_m` via `_station`, `vg_vid_anslutning`, `djup_vid_anslutning` ur närmaste profilpunkt; per ledning `serviser`,
+`antal_serviser`, `serviser_m`; okopplade → datakvalitet "servis utan huvudledning"); parallella: provpunkter var intervall
+mot alla andra ledningar inom `parallell_avstand` (provpunkter inom avståndet från en gemensam brunn/ände hoppas – anslutning,
+inte parallell), par med max(andel) < `PARALLELL_MIN_ANDEL` 0,2 listas inte (korsningar), `samschakt` = max(andel_a, andel_b)
+≥ parallell_andel, union-find → `schaktgrupp` (nr), `schakt_system` "D+S+V", `schakt_antal`, `schakt_ledningar`, per ledning
+`parallella` [{ledning, system, andel, andel_annan, medelavstand_m, gemensam_m, samschakt}] och toppfältet `parallella`;
+korsningar: `_skarning` segment mot segment i rutnätet, olika objekt, inte inom toleransen från någon ände, {ledning_a/b,
+system, x, y, station_a/b, niva_a/b (vg eller mark − schablon för vatten), niva_kalla, hojdskillnad_m}, per ledning
+`korsningar` sorterade på station; brunnar får `antal_ledningar`, `system`, `vg_min`, `djup_m` (lock − vg_min, annars
+lock − botten), `bottenniva`, `attribut`; datakvalitet "brunn utan ledning"/"brunn utan lockniva". JSON: gisdata-nycklarna +
+`kalla` inventering.py, `parametrar`, `serviser`, `parallella`, `korsningar`, `datakvalitet`, `sammanfattning`,
+`lager.vatten/serviser/bottenniva/lutning/ledning_id`; CSV `_ledningar/_brunnar/_serviser/_parallella/_korsningar.csv`
+(`_skriv_csvfiler`). .pyt `Ledningsinventering` (sist i Toolbox, 28 parametrar, hämtas på namn via `P = dict(...)`):
+förval ur `_lokala_lager(kartlager, nyckelord, utan)` (lager med `LOKAL_SUFFIX` ' (lokal)': ledning utan servis/vatten,
+vatten, brunn, servis) annars STANDARD_*; nya `STANDARD_BOTTENNIVA`, `STANDARD_LUTNING`, `STANDARD_LEDNING_ID`,
+`STANDARD_VATTEN`, `STANDARD_LEDNINGSDATA`; markhöjd = rullista med rasterlager + featurelager; json_ut föreslås bredvid
+gdb:n; andel anges i % (GPLong 60) och delas med 100. Test: scratchpad/test_inventering.py (låtsas-arcpy utökad med
+geometri-iteration, firstPoint/projectAs/extent, OID@/SHAPE@XY/SHAPE@Z i cursorn, Parameter.category): S1/S2/D1/K1/S3 +
+vatten V1 + tre serviser + nio brunnar + punktmarkhöjd z = 23 − 0,005x → djup 3,0/2,5, K1 bakfall −7,5 ‰, S3 vg saknas,
+schaktgrupp {S1, S2, D1, V1}, K1 korsar V1/S1/D1 (hojdskillnad 0,6), SERV3 okopplad; utan markhöjd → lockniva; gamla
+`exportera` oförändrad; verktygsdialogen (förval, gissningar, fel, execute, minne). Handledning 7.14 + verktygslistan.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
