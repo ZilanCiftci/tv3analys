@@ -67,6 +67,10 @@ SERVIS_GRAV_AVSTAND_M = 3.0       # serviser vars båda ändar ligger så här n
 SERVIS_LANGD_MAX_M = None         # meter servisledning som förnyas per servis; None = hela servisens längd
 FRAMSCHAKTA_TB = True             # infodring: båda ändbrunnarna tillsyns-/rensbrunn -> framschaktning + ny brunn
 BRUNNSTYP_TILLSYN = r"TB|RB"      # brunnstyp (t.ex. WellFunction STB/SRB) som räknas som tillsyns-/rensbrunn
+VENTILGROP_KATEGORIER = ("ventil", "brandpost")   # rörspräckning: en ventilgrop per sådan anordning på ledningen
+                                                  # (servisventiler ligger i servisgropen)
+ANORDNING_NAMN = {"ventil": "Ventiler", "brandpost": "Brandposter", "servisventil": "Servisventiler",
+                  "ledningsande": "Ledningsändar", "anordning": "Övriga anordningar"}
 
 # Kolumner i fliken Ledningar som döljs (grupperade, fälls ut med plustecknet)
 DOLDA_LEDNINGAR = [
@@ -75,7 +79,8 @@ DOLDA_LEDNINGAR = [
     "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
     "Schakt", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
     "Infodring", "Infodring per meter", "Serviser infodring", "Framschaktning", "Infodring totalt",
-    "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Serviser rörspräckning",
+    "Servisventiler", "Övriga anordningar",
+    "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
     "Rörspräckning totalt", "Ledningar i graven alt. strumpa", "Område", "Lager", "OID", "Del",
 ]
 
@@ -325,7 +330,8 @@ def _infodring(led, kost, brunnar, serv):
 
 
 def _sprackning(led, kost, serv):
-    """Rörspräckning av huvudledning + gropar + servisgrop och infodring per servis."""
+    """Rörspräckning av huvudledning + gropar + servisgrop och infodring per servis + ventilgrop per
+    ventil och brandpost på ledningen (VENTILGROP_KATEGORIER, ur inventeringens anordningar)."""
     L = led.get("langd_m") or 0.0
     dim = led.get("dimension")
     if dim is None:
@@ -339,9 +345,24 @@ def _sprackning(led, kost, serv):
     r = {"per_meter": kr_m, "sprackning": kr_m * L, "antal_gropar": gropar,
          "gropar": gropar * ((kr(kost, "inforingsgrop") or 0.0) + (kr(kost, "maskingrop") or 0.0)),
          "servisgropar": len(serv) * (kr(kost, "servisgrop") or 0.0),
+         "antal_ventilgropar": antal_ventilgropar(led),
          "serviser": sum((kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x) for x in serv)}
-    r["summa"] = r["sprackning"] + r["gropar"] + r["servisgropar"] + r["serviser"]
+    r["ventilgropar"] = r["antal_ventilgropar"] * (kr(kost, "ventilgrop") or kr(kost, "servisgrop") or 0.0)
+    r["summa"] = r["sprackning"] + r["gropar"] + r["servisgropar"] + r["ventilgropar"] + r["serviser"]
     return r, ""
+
+
+def antal_ventilgropar(led: dict) -> int:
+    antal = led.get("anordningar_antal") or {}
+    return sum(antal.get(k, 0) for k in VENTILGROP_KATEGORIER)
+
+
+def _anordningar(l: dict, kategori: str | tuple) -> int | None:
+    """Antal anordningar av kategorin på ledningen; None när filen saknar anordningar."""
+    if "anordningar_antal" not in l:
+        return None
+    k = (kategori,) if isinstance(kategori, str) else kategori
+    return sum((l["anordningar_antal"] or {}).get(x, 0) for x in k)
 
 
 def _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx, alla_serv, grupp, metod_for):
@@ -551,7 +572,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     kol = ["ID", "System", "Från brunn", "Till brunn", "Längd (m)", "Dimension (mm)", "Material", "Ledningstyp",
            "Anläggningsår", "Renoveringsår", "VG från (m)", "VG till (m)", "Lutning (‰)", "Lutning GIS (‰)",
            "Djup medel (m)", "Djup min (m)", "Djup max (m)", "Djupklass (m)", "Djupkälla", "Täckning min (m)",
-           "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Schaktgrupp",
+           "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
+           "Brandposter (st)", "Servisventiler (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Samschakt med", "Parallella", "Korsningar",
            "Alt. lägg om (kr)", "Metod alt. strumpa", "Alt. strumpa (kr)", "Anmärkning",
            "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
@@ -560,7 +582,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Framschaktning (kr)",
            "Infodring totalt (kr)",
            "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
-           "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
+           "Ventilgropar (kr)", "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
            "Flaggor", "Område", "Lager", "OID", "Del"]
     egna = {_dela_rubrik(k)[0] for k in kol}
     attrkol = [a if a not in egna else a + " (GIS)" for a in attrnamn]
@@ -574,6 +596,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                l.get("lutning_promille"), l.get("lutning_gis"), l.get("djup_medel"), l.get("djup_min"),
                l.get("djup_max"), l.get("djupklass") or None, l.get("djup_kalla") or None, l.get("tackning_min"),
                l.get("djup_start"), l.get("djup_slut"), l.get("antal_serviser"), _r(l.get("serviser_m")),
+               _anordningar(l, "ventil"), _anordningar(l, "brandpost"), _anordningar(l, "servisventil"),
+               _anordningar(l, ("ledningsande", "anordning")),
                l.get("schaktgrupp"), l.get("_grav"), ", ".join(l.get("schakt_ledningar") or []) or None,
                ", ".join(f"{p['ledning']} ({p['system']}, {round(100 * (p.get('andel') or 0))} %)"
                          for p in l.get("parallella") or []) or None,
@@ -585,7 +609,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                _kr(o, "serviser"),
                _kr(s, "per_meter"), _kr(s, "infodring"), _kr(s, "serviser"), _kr(s, "framschaktning"), _kr(s),
                _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
-               _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
+               _kr(r, "ventilgropar"), _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
                ", ".join(l.get("flaggor") or []) or None, l.get("omrade") or None,
                l.get("lager"), l.get("oid"), l.get("del")]
         rad += [(l.get("attribut") or {}).get(a) for a in attrnamn]
@@ -633,6 +657,17 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     tabell(ws, ["ID", "Huvudledning", "System", "Läge (m)", "Längd (m)", "Serviser i samma grav (st)", "Dimension (mm)",
                 "Material", "Ledningstyp", "VG vid anslutning (m)", "Djup vid anslutning (m)", "Lager", "OID"], rader,
            format={"Läge": M, "Längd": M, "Djup vid anslutning": M2})
+
+    if data.get("anordningar"):
+        ws = wb.create_sheet("Anordningar")
+        rader = [[a.get("id"), ANORDNING_NAMN.get(a.get("kategori"), a.get("kategori")), a.get("typ") or None,
+                  a.get("ledning") or "(ingen ledning)", a.get("system"), a.get("position_m"), a.get("avstand_m"),
+                  a.get("via_servis"), a.get("dimension"), a.get("anlaggningsar"), a.get("x"), a.get("y"),
+                  a.get("lager"), a.get("oid")]
+                 for a in sorted(data["anordningar"], key=lambda a: (str(a.get("ledning")), a.get("position_m") or 0))]
+        tabell(ws, ["ID", "Kategori", "Typ", "Ledning", "System", "Läge (m)", "Avstånd till ledning (m)", "Via servis",
+                    "Dimension (mm)", "Anläggningsår", "X", "Y", "Lager", "OID"], rader,
+               dolda=["X", "Y", "OID"], format={"Läge": M, "Avstånd till ledning": M2})
 
     ws = wb.create_sheet("Parallella")
     rader = [[p.get("ledning_a"), p.get("ledning_b"), p.get("system_a"), p.get("system_b"),
@@ -711,7 +746,8 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
             ("Infodring", f"spill-, dag- och kombinerade ledningar från {STRUMPA_DIM_MIN} mm, så långt prislistan räcker"
                           " (inte vatten)"),
             ("Rörspräckning", f"alla ledningar till och med {SPRACKNING_DIM_MAX} mm; införings- och maskingrop per "
-                              f"påbörjade {GROP_PER_M} m, servisgrop per servis"),
+                              f"påbörjade {GROP_PER_M} m, servisgrop per servis, ventilgrop per "
+                              f"{' och '.join(VENTILGROP_KATEGORIER)} på ledningen"),
             ("Djuptillägg", f"per påbörjade {_dk(DJUPTILLAGG_STEG_M)} m djup under {_dk(STANDARDDJUP_M)} m"),
             ("Serviser", "förnyas i båda alternativen (helschakt eller infodring per meter servisledning)"),
             ("Kostnadsfil", os.path.basename(kallor["kostnader"])),
@@ -786,6 +822,11 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
                                     if langd(lista) else None]),
           format={"Längd": M, "Servislängd": M, "Medeldjup": "0.00"})
 
+    if data.get("anordningar"):
+        kat = [k for k in ANORDNING_NAMN if any(a.get("kategori") == k for a in data["anordningar"])]
+        block("Anordningar (se fliken Anordningar)", ["System"] + [f"{ANORDNING_NAMN[k]} (st)" for k in kat],
+              per_system(lambda lista: [sum(_anordningar(l, k) or 0 for l in lista) for k in kat]))
+
     def fordelning(titel, nyckel, rubrik, sortering=None):
         tab = defaultdict(float)
         for l in ledningar:
@@ -828,6 +869,7 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),
             "kostnad_omlaggning": _kr(l.get("_omlagg")), "kostnad_strumpa": _kr(l.get("_strumpa")),
             "kostnad_rorsprackning": _kr(l.get("_sprack")),
+            "anordningar_antal": l.get("anordningar_antal"),
             "alt_lagg_om_kr": _kr(l.get("_omlagg")),
             "alt_lagg_om_per_schakttyp": {t: _kr(v) for t, v in (l.get("_typer") or {}).items()},
             "alt_strumpa_metod": l.get("_alt_metod"),

@@ -230,16 +230,20 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
 
 ## Beslut och frågor (F10–F17)
 
-- **F10 Lager.** Öppen: vattenlagrens namn och fält kommer när användaren sitter vid ArcMap (kör *Lista
-  fält* på dem). Exportera område förväljer alla featurelager under grupperna *Avlopp* och *Vatten*, så
-  namnen behövs först i steg 2 (fältgissningar för vatten).
+- **F10 Lager.** Klar okt 2026 (kartans_falt2.txt): vatten V Huvudledning (PipeType VHL) och V Ledning (ej VHL)
+  (VDL …), V Servis (VSE, VBPL = brandpostledning), V Brunn/V Platsgjuten brunnspunkt (CoverLevel), punktlager
+  V Ventil (ej servisventil) (ValveFunction VAV/VTV), V Servisventil (VSeV), V Brandpost (HydrantType VBP; samma
+  featureklass som V Brandpost Avstängningskarta), V Anordning (ApplianceType VRED/VTapp/VFOR/VSL/VDF/VSKA),
+  V Ledningsände (PipeEndType), A Ledningsände avlopp, Serviskopplingspunkter (används inte). Vattenledningarna
+  saknar nivåer (LevelFrom/LevelTo tomma) → schablondjup. Inventeringen tar anordningarna per ledning och
+  rörspräckningen räknar en ventilgrop per ventil och brandpost.
 - **F11 Markhöjd.** Ja, det finns en höjdmodell/markhöjder i kartan → djup ur markhöjd − vg.
 - **F12 Parallellt.** c–c < 3 m på minst 60 % av sträckan = samma schakt.
 - **F13 Kostnader.** Priserna ur SVOA:s kalkylverktyg (okt 2026) ligger i `kostnader_inventering.csv`: infodring per
   dimension, helschakt per meter grav efter antal ledningar (1–3), antal större än 400 mm och schakttyp (ledningschakt,
   spontsläde, bergschakt, KC-förstärkning), djuptillägg per 1,5 m under 2,5 m, rörspräckning per DN + gropar, serviser per
-  meter (helschakt/infodring). Djupklasserna ersattes av djuptillägget. Användarens besked okt 2026: raderna "Ø 700" gäller
-  även större dimensioner (ingen övre gräns); ensam spill-/dagservis i helschakt = komplett servis (spillen ligger djupast);
+  meter (helschakt/infodring). Djupklasserna ersattes av djuptillägget. Användarens besked okt 2026: raden "en större ledning Ø 700" gäller
+  > 400 till Ø 800, två/tre större ledningar Ø 700–1000; ensam spill-/dagservis i helschakt = komplett servis (spillen ligger djupast);
   övriga antaganden (två serviser i samma grav, ny brunn, återställning 0) godkända. Kalkylansvarig kontrollerar varför
   3 ledningar med en större ledning är billigare än 2 ledningar med en större i alla schakttyper (troligen fel i verktyget).
 - **F14 Sträcka.** Brunn→brunn, eller till ledningsände utan brunn (servis, T-rörsanslutning). Fristående
