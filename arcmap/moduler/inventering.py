@@ -12,7 +12,8 @@ kan lasa filen som gis:) och lagger till det som behovs for Excel och kalkyl per
   - markhojd var INTERVALL m langs linjen (projektering.Markhojd: raster/hojdmodell eller punktlager)
     och djup = mark - vattengang i samma punkt: medel, min, max, djupklass (DJUPKLASSER), tackning;
     saknas markhojd anvands locknivaerna i andbrunnarna som rat linje (djup_kalla 'lockniva');
-    vattenledningar (tryck, utan vattengang) far schablondjupet vatten_djup till rorets centrum
+    vattenledningar (tryck, utan vattengang) far schablondjupet vatten_djup till rorets centrum; djupet
+    (och djupklassen) raknas som for avloppet till rorets botten = vatten_djup + dimension / 2
   - serviser: varje servis vars ande ligger inom toleransen fran en huvudledning kopplas till den
     narmaste; per ledning antal, summerad langd och lista; okopplade serviser i datakvalitet
   - parallella ledningar: linjen samplas var INTERVALL m och alla andra ledningar inom
@@ -477,6 +478,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         mark = projektering.markhojd(_lista(markhojd), z_falt, sokradie, omrade, bbox, sr)
     n_mark = n_lock = n_schablon = n_utan = 0
     for p in ledningar:
+        vatten_vg = _vatten_till_botten(p, vatten_djup)
         pts = p['_pts']
         L = p['langd_m']
         b_fran, b_till = brunn_index.get(p['fran']), brunn_index.get(p['till'])
@@ -494,7 +496,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
                 kalla_ = 'markmodell' if kalla_ != 'lockniva' else kalla_
             if p['system'] == 'V':
                 vg = None
-                d = float(vatten_djup)
+                d = vatten_vg
             else:
                 vg = _vg_vid(m, L, p['vg_fran'], p['vg_till']) \
                     if (L > 0 and p['vg_fran'] is not None and p['vg_till'] is not None) else None
@@ -743,7 +745,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'genererad': datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
                        'parallell_andel': float(parallell_andel), 'intervall_m': float(intervall),
-                       'vatten_djup_m': float(vatten_djup), 'sokradie_m': float(sokradie),
+                       'vatten_djup_m': float(vatten_djup), 'vatten_djup_till': 'botten',
+                       'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
                        'vatten_klippt_vid_omrade': klipp is not None,
                        'markhojd': '; '.join(txt(m) for m in _lista(markhojd)) if markhojd else None, 'z_falt': z_falt,
@@ -767,6 +770,12 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     return samman
 
 
+def _vatten_till_botten(led, vatten_djup):
+    """Schablondjup for vattenledning till rorets botten (som vattengangen pa avloppet): djupet till
+    centrum + halva dimensionen (DN 1000 med 1,7 m till centrum -> 2,2 m)."""
+    return float(vatten_djup) + (led.get('dimension') or 0) / 2000.0
+
+
 def _korsning(p, q, x, y, vatten_djup):
     """Korsningspost mellan ledningarna p och q i (x, y): station och niva pa bada."""
     def niva(led, st):
@@ -775,7 +784,7 @@ def _korsning(p, q, x, y, vatten_djup):
             if prof:
                 n = min(prof, key=lambda r: abs(r[0] - st))
                 if n[1] is not None:
-                    return round(n[1] - vatten_djup, 3), 'schablon'
+                    return round(n[1] - _vatten_till_botten(led, vatten_djup), 3), 'schablon'
             return None, 'saknas'
         v = _vg_vid(st, led['langd_m'], led['vg_fran'], led['vg_till'])
         return (_runda(v, 3), 'vattengang') if v is not None else (None, 'saknas')

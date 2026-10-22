@@ -399,6 +399,10 @@ def anta_dimensioner(ledningar: list[dict]) -> int:
     """Ledningar utan dimension får uppströms ledningens (samma system, ansluter i den uppströms änden;
     flera -> den största). Kedjor fylls steg för steg uppifrån. Utan uppströms dimension tas nedströms
     ledningens (DIMENSION_NEDSTROMS_RESERV). Sätter dimension_antagen = {fran, riktning, dimension}."""
+    for l in ledningar:
+        l.setdefault("dimension_gis", l.get("dimension"))
+        if not l.get("dimension"):                  # 0 = okänd i GIS (platshållare), räknas som saknad
+            l["dimension"] = None
     saknas = [l for l in ledningar if l.get("dimension") is None]
     if not DIMENSION_UR_GRANNE or not saknas:
         return 0
@@ -412,28 +416,37 @@ def anta_dimensioner(ledningar: list[dict]) -> int:
             slut_i[(l.get("system"), n)].append(l)
         if u is not None:
             start_i[(l.get("system"), u)].append(l)
-    antal = 0
     steg = [("uppströms", lambda l: slut_i.get((l.get("system"), riktn[id(l)][0]), []))]
     if DIMENSION_NEDSTROMS_RESERV:
         steg.append(("nedströms", lambda l: start_i.get((l.get("system"), riktn[id(l)][1]), [])))
-    for riktning, grannar in steg:
-        andrat = True
-        while andrat:
-            andrat = False
-            for l in saknas:
-                if l.get("dimension") is not None:
-                    continue
-                kand = [q for q in grannar(l) if q is not l and q.get("dimension") is not None]
-                if not kand:
-                    continue
-                q = max(kand, key=lambda x: x["dimension"])
-                l["dimension"] = q["dimension"]
-                kalla = (q.get("dimension_antagen") or {}).get("ursprung") or q.get("id")
-                l["dimension_antagen"] = {"fran": q.get("id"), "riktning": riktning, "dimension": q["dimension"],
-                                          "ursprung": kalla}
-                antal += 1
-                andrat = True
-    return antal
+
+    def fyll(riktning, grannar) -> int:
+        n = 0
+        for l in saknas:
+            if l.get("dimension") is not None:
+                continue
+            kand = [q for q in grannar(l) if q is not l and q.get("dimension") is not None]
+            if not kand:
+                continue
+            q = max(kand, key=lambda x: x["dimension"])
+            l["dimension"] = q["dimension"]
+            kalla = (q.get("dimension_antagen") or {}).get("ursprung") or q.get("id")
+            l["dimension_antagen"] = {"fran": q.get("id"), "riktning": riktning, "dimension": q["dimension"],
+                                      "ursprung": kalla}
+            n += 1
+        return n
+    # uppströms först; nedströms bara när uppströms inte ger något mer – sedan uppströms igen, eftersom
+    # en ledning som fått nedströms dimension kan vara uppströms granne till en annan
+    antal = 0
+    while True:
+        n = 0
+        for riktning, grannar in steg:
+            n = fyll(riktning, grannar)
+            if n:
+                break
+        if not n:
+            return antal
+        antal += n
 
 
 def _dim_text(l: dict) -> str | None:
@@ -446,6 +459,45 @@ def _dim_text(l: dict) -> str | None:
     return t
 
 
+def _tal_text(v: float) -> str:
+    """Som inventering._heltal_text: 2 -> '2', 2.5 -> '2,5'."""
+    return f"{v:.0f}" if float(v).is_integer() else f"{v:.1f}".replace(".", ",")
+
+
+def _djupklass(djup: float, granser) -> str:
+    """Samma klassnamn som inventering._djupklass ('0–2', '2,5–3', '> 4')."""
+    forra = 0.0
+    for g in granser:
+        if djup < g:
+            return f"{_tal_text(forra)}–{_tal_text(g)}"
+        forra = g
+    return f"> {_tal_text(forra)}"
+
+
+def vatten_djup_till_botten(data: dict) -> int:
+    """Vattenledningarnas schablondjup räknas till rörets botten = djupet till centrum (vatten_djup_m) +
+    dimensionen/2, som avloppets djup till vattengången. Görs efter anta_dimensioner så att även antagna
+    dimensioner räknas med, och rättar äldre ledningsdata.json där djupet gällde centrum. Antal ledningar."""
+    p = data.get("parametrar") or {}
+    centrum = p.get("vatten_djup_m")
+    if centrum is None:
+        return 0
+    granser = p.get("djupklasser")
+    if not granser:
+        granser = (2.0, 3.0, 4.0)
+        print("  OBS: ledningsdata.json saknar djupklassgränserna – 2, 3 och 4 m antas")
+    n = 0
+    for led in data.get("ledningar", []):
+        if led.get("system") == "V" and led.get("djup_kalla") == "schablon":
+            d = round(float(centrum) + (led.get("dimension") or 0) / 2000.0, 3)
+            led["djup_medel"] = led["djup_min"] = led["djup_max"] = d
+            led["djupklass"] = _djupklass(d, granser)
+            n += 1
+    p["vatten_djup_till"] = "botten"
+    data["parametrar"] = p
+    return n
+
+
 def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[dict]:
     """Lägger till kostnaderna på varje ledning (i data['ledningar'])."""
     ledningar = data.get("ledningar", [])
@@ -455,6 +507,7 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
         if not led.get("id"):
             led["id"] = f"{(led.get('lager') or '').split(chr(92))[-1]}/{led.get('oid')}"
     data["_antagna_dim"] = anta_dimensioner(ledningar)
+    vatten_djup_till_botten(data)
     per_id = {l.get("id"): l for l in ledningar}
     brunnar = {b["littera"]: b for b in data.get("brunnar", [])}
     alla_serv = [s for s in data.get("serviser", []) if s.get("ledning") in per_id]
@@ -642,8 +695,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
             if k not in attrnamn:
                 attrnamn.append(k)
     ws = wb.create_sheet("Ledningar")
-    kol = ["ID", "System", "Från brunn", "Till brunn", "Längd (m)", "Dimension (mm)", "Material", "Ledningstyp",
-           "Anläggningsår", "Renoveringsår", "VG från (m)", "VG till (m)", "Lutning (‰)", "Lutning GIS (‰)",
+    kol = ["ID", "System", "Från brunn", "Till brunn", "Längd (m)", "Dimension (mm)", "Dimension antagen från",
+           "Material", "Ledningstyp", "Anläggningsår", "Renoveringsår", "VG från (m)", "VG till (m)", "Lutning (‰)", "Lutning GIS (‰)",
            "Djup medel (m)", "Djup min (m)", "Djup max (m)", "Djupklass (m)", "Djupkälla", "Täckning min (m)",
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Övriga anordningar (st)", "Schaktgrupp",
@@ -664,7 +717,10 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     for l in ordn:
         o, s, r = l.get("_omlagg"), l.get("_strumpa"), l.get("_sprack")
         rad = [l.get("id"), l.get("system"), l.get("fran") or "(fri ände)", l.get("till") or "(fri ände)",
-               _r(l.get("langd_m")), l.get("dimension"), l.get("material"), l.get("ledningstyp"),
+               _r(l.get("langd_m")), l.get("dimension"),
+               (f"{l['dimension_antagen']['riktning']} {l['dimension_antagen']['fran']}"
+                if l.get("dimension_antagen") else None),
+               l.get("material"), l.get("ledningstyp"),
                l.get("anlaggningsar"), l.get("renoveringsar"), l.get("vg_fran"), l.get("vg_till"),
                l.get("lutning_promille"), l.get("lutning_gis"), l.get("djup_medel"), l.get("djup_min"),
                l.get("djup_max"), l.get("djupklass") or None, l.get("djup_kalla") or None, l.get("tackning_min"),
@@ -816,7 +872,7 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
             ("Koordinatsystem", data.get("koordinatsystem")), ("Höjdsystem", data.get("hojdsystem")),
             ("Parallellt (c–c, andel)", f"{_dk(p.get('parallell_avstand_m'))} m, {round(100 * (p.get('parallell_andel') or 0))} %"
              if p else None),
-            ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m" if p.get("vatten_djup_m") is not None else None),
+            ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m (djupet räknas till rörets botten: + dimension/2)" if p.get("vatten_djup_m") is not None else None),
             ("Markhöjd", p.get("markhojd") or "locknivåerna (ingen markhöjd vald)"),
             ("Schakttyp", f"{SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
             ("Infodring", f"spill-, dag- och kombinerade ledningar från {STRUMPA_DIM_MIN} mm, så långt prislistan räcker"
@@ -943,7 +999,8 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
         poster.append({
             "id": l.get("id"), "lager": l.get("lager"), "oid": l.get("oid"), "del": l.get("del"),
             "fran": l.get("fran"), "till": l.get("till"), "system": l.get("system"),
-            "dimension": l.get("dimension"), "dimension_antagen": l.get("dimension_antagen"),
+            "dimension": l.get("dimension"), "dimension_gis": l.get("dimension_gis"),
+            "dimension_antagen": l.get("dimension_antagen"),
             "langd_m": l.get("langd_m"), "djup_medel": l.get("djup_medel"), "djupklass": l.get("djupklass"),
             "antal_serviser": l.get("antal_serviser"), "serviser_m": l.get("serviser_m"),
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),

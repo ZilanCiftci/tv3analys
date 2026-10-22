@@ -303,7 +303,17 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
         ledningslager = [ledningslager]
     if isinstance(brunnslager, (TEXTTYP, bytes)):
         brunnslager = [brunnslager]
-    led_lager = [hitta_lager(n) for n in ledningslager]
+    led_lager = []
+    for n in ledningslager:
+        lyr = hitta_lager(n)
+        typ = geometrityp(lyr)
+        if typ and typ != 'Polyline':
+            logg('  OBS hoppar over "%s": %s-lager, inte ledningar (valj det bland anordningar/brunnar i stallet)'
+                 % (txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', n)), typ))
+            continue
+        led_lager.append(lyr)
+    if not led_lager:
+        raise RuntimeError('Inget av de valda ledningslagren ar ett linjelager')
     brunn_lager = [hitta_lager(n) for n in brunnslager]
     omrade = None
     if omradeslager:
@@ -347,11 +357,6 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
     klippt_m = 0.0
     for lyr in led_lager:
         namn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', lyr))   # langt namn: tva lager kan heta lika
-        typ = geometrityp(lyr)
-        if typ and typ != 'Polyline':
-            logg('  OBS hoppar over "%s": %s-lager, inte ledningar (valj det bland anordningar/brunnar i stallet)'
-                 % (namn, typ))
-            continue
         falt = _faltnamn(lyr)
         f_vg1 = _valj_falt(falt, vg_fran, 'vattengangsfaltet (fran)', namn)
         f_vg2 = _valj_falt(falt, vg_till, 'vattengangsfaltet (till)', namn)
