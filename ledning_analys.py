@@ -725,6 +725,30 @@ def _summa(lista, f):
     return round(sum(v)) if v else None
 
 
+def schaktlangd(lista: list[dict]) -> float:
+    """Effektiv längd på schaktet för ledningarna i listan (en schaktgrupp): delar av en ledning som går i
+    samschakt med andra ledningar i listan räknas en gång. Ledningsinventering räknar ledningens andel
+    (schakt_langd_m) punkt för punkt längs ledningen; i äldre ledningsdata.json uppskattas den ur andelarna: andelen s = min(1, Σ andel) av
+    längden ligger i samschakt, i genomsnitt med m = 1 + Σ andel / s ledningar; bidraget blir
+    L × (1 − s) + L × s / m. Två lika långa parallella ledningar ger en längd, en 100 m och en 50 m
+    längs halva den ger 100 m."""
+    if lista and all(l.get("schakt_langd_m") is not None for l in lista):
+        return sum(l["schakt_langd_m"] for l in lista)      # räknat punkt för punkt i Ledningsinventering
+    ids = {l.get("id") for l in lista}
+    summa = 0.0
+    for l in lista:
+        L = l.get("langd_m") or 0.0
+        a = sum(p.get("andel") or 0.0 for p in l.get("parallella") or []
+                if p.get("samschakt") and p.get("ledning") in ids)
+        if a <= 0:
+            summa += L
+            continue
+        andel = min(1.0, a)
+        m = 1.0 + a / andel
+        summa += L * (1.0 - andel) + L * andel / m
+    return summa
+
+
 def _jamforbar(l: dict) -> bool:
     """Ledningen har kostnad i båda alternativen – bara sådana summeras, så att summorna går att jämföra."""
     return bool(l.get("_omlagg")) and bool(l.get("_alt"))
@@ -827,20 +851,24 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     for l in ledningar:
         grupper[l.get("schaktgrupp")].append(l)
     ws = wb.create_sheet("Kostnad per schaktgrupp")
-    kol = ["Schaktgrupp", "System", "Ledningar (st)", "Ledningar", "Längd (m)", "Alt. lägg om (kr)",
+    kol = ["Schaktgrupp", "System", "Ledningar (st)", "Ledningar", "Längd (m)", "Schaktlängd (m)", "Alt. lägg om (kr)",
            "Alt. strumpa (kr)", "Strumpas (st)", "Rörspräcks (st)", "Läggs om (st)", "Utan kostnad (st)"]
     rader = []
     for g in sorted(k for k in grupper if k is not None):
         lista = grupper[g]
         rader.append([g, "+".join(sorted({l.get("system") or "?" for l in lista})), len(lista),
-                      ", ".join(str(l.get("id")) for l in lista), _r(sum(l.get("langd_m") or 0 for l in lista))]
-                     + _altsummor(lista))
+                      ", ".join(str(l.get("id")) for l in lista), _r(sum(l.get("langd_m") or 0 for l in lista)),
+                      _r(schaktlangd(lista))] + _altsummor(lista))
     for namn_, lista in (("utan samschakt", grupper.get(None, [])), ("totalt", ledningar)):
         if lista:
+            sl = schaktlangd(lista) if namn_ == "utan samschakt" else \
+                sum(schaktlangd(v) for v in grupper.values())
             rader.append([namn_, "+".join(sorted({l.get("system") or "?" for l in lista})), len(lista), None,
-                          _r(sum(l.get("langd_m") or 0 for l in lista))] + _altsummor(lista))
+                          _r(sum(l.get("langd_m") or 0 for l in lista)), _r(sl)] + _altsummor(lista))
     start = tabell(ws, kol, rader, bredder={"Ledningar": 40},
-                   format={"Längd": M, "Alt. lägg om": KR, "Alt. strumpa": KR})
+                   format={"Längd": M, "Schaktlängd": M, "Alt. lägg om": KR, "Alt. strumpa": KR})
+    ws.cell(start + len(rader) + 1, 1, "Schaktlängd: schaktets längd när alla ledningar i gruppen läggs om – delar "
+            "som går i samschakt räknas en gång.").font = Font(italic=True, color="595959")
     for ri in range(start, start + len(rader)):
         if isinstance(ws.cell(ri, 1).value, str):
             for c in ws[ri]:
