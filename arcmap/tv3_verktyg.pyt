@@ -1741,6 +1741,10 @@ class Ledningsinventering(object):
         omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
                              False, kartlager, 'Optional')
         omrade.category = K_INST
+        klipp = arcpy.Parameter(
+            displayName='Klipp vattenledningarna vid omr\u00e5desgr\u00e4nsen (avloppsledningarna beh\u00e5lls hela, brunn till brunn)',
+            name='klipp_vatten', datatype='GPBoolean', parameterType='Optional', direction='Input', category=K_INST)
+        klipp.value = True
         hojdsystem = arcpy.Parameter(
             displayName='H\u00f6jdsystem i kartan (skrivs i filen)', name='hojdsystem',
             datatype='GPString', parameterType='Required', direction='Input', category=K_INST)
@@ -1750,7 +1754,7 @@ class Ledningsinventering(object):
                                     lock, botten, btyp, vg_fran, vg_till, dim, mat, ltyp, ar, ren, lut, lid,
                                     mark, z_falt, sokradie,
                                     tolerans, par_avst, par_andel, intervall, v_djup, a_radie, omrade,
-                                    hojdsystem])
+                                    klipp, hojdsystem])
         # forval: de lokala lagren fran Exportera omrade, annars kartans vanliga lager
         if not ledning.valueAsText:
             _satt_varden(ledning, _lokala_av_slag(kartlager, 'avlopp') or _langa_namn(STANDARD_LEDNING, kartlager))
@@ -1790,6 +1794,16 @@ class Ledningsinventering(object):
                         mapp = os.path.dirname(mapp)
                     if mapp:
                         P['json_ut'].value = os.path.join(mapp, STANDARD_LEDNINGSDATA)
+                    # omradet fran Exportera omrade (export_info.json bredvid gdb:n) foreslas
+                    omr = P['omradeslager']
+                    info = os.path.join(mapp, 'export_info.json')
+                    if mapp and not omr.altered and not omr.valueAsText and os.path.isfile(info):
+                        import json
+                        import io
+                        with io.open(info, encoding='utf-8') as f:
+                            namn = json.load(f).get('omradeslager')
+                        if namn and _lagerobjekt(namn) is not None:
+                            omr.value = namn
                 except Exception:
                     pass
         br = P['brunnslager']
@@ -1825,6 +1839,9 @@ class Ledningsinventering(object):
             P['vatten_djup'].setErrorMessage('Djupet kan inte vara negativt')
         if P['ledningslager'].valueAsText and not (P['vg_fran'].valueAsText and P['vg_till'].valueAsText):
             P['vg_fran'].setWarningMessage('Utan vatteng\u00e5ngsf\u00e4lt f\u00e5r ledningarna varken lutning eller djup.')
+        if P['klipp_vatten'].value and P['vattenlager'].valueAsText and not P['omradeslager'].valueAsText:
+            P['klipp_vatten'].setWarningMessage(
+                'V\u00e4lj omr\u00e5deslagret (Inst\u00e4llningar) f\u00f6r att vattenledningarna ska klippas vid gr\u00e4nsen.')
         if not P['markhojd'].valueAsText:
             P['markhojd'].setWarningMessage(
                 'Utan markh\u00f6jd r\u00e4knas djupet ur brunnarnas lockniv\u00e5er som r\u00e4t linje mellan brunnarna.')
@@ -1837,6 +1854,7 @@ class Ledningsinventering(object):
         _ladda_modul('markprofil')
         _ladda_modul('gisexport')
         _ladda_modul('projektering')
+        _ladda_modul('omrade_export')
         m = _ladda_modul('inventering')
         P = dict((p.name, p) for p in parameters)
 
@@ -1856,7 +1874,8 @@ class Ledningsinventering(object):
             parallell_andel=float(P['parallell_andel'].value) / 100.0, intervall=float(P['intervall'].value),
             vatten_djup=float(P['vatten_djup'].value), sokradie=float(P['sokradie'].value),
             hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'),
-            anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value))
+            anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value),
+            klipp_vatten=bool(P['klipp_vatten'].value))
         arcpy.AddMessage('Klart: %(ledningar)d ledningar, %(brunnar)d brunnar, %(serviser_kopplade)d av %(serviser)d '
                          'serviser kopplade, %(anordningar_kopplade)d av %(anordningar)d anordningar kopplade, '
                          '%(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '

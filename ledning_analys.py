@@ -82,6 +82,7 @@ DOLDA_LEDNINGAR = [
     "Servisventiler", "Övriga anordningar",
     "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
     "Rörspräckning totalt", "Ledningar i graven alt. strumpa", "Område", "Lager", "OID", "Del",
+    "Klippt vid områdesgränsen",
 ]
 
 SYSTEM_NAMN = {"S": "Spillvatten", "D": "Dagvatten", "K": "Kombinerat", "V": "Vatten", "": "Okänt"}
@@ -583,7 +584,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Infodring totalt (kr)",
            "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
            "Ventilgropar (kr)", "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
-           "Flaggor", "Område", "Lager", "OID", "Del"]
+           "Flaggor", "Område", "Lager", "OID", "Del", "Klippt vid områdesgränsen (m)"]
     egna = {_dela_rubrik(k)[0] for k in kol}
     attrkol = [a if a not in egna else a + " (GIS)" for a in attrnamn]
     rader = []
@@ -611,7 +612,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
                _kr(r, "ventilgropar"), _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
                ", ".join(l.get("flaggor") or []) or None, l.get("omrade") or None,
-               l.get("lager"), l.get("oid"), l.get("del")]
+               l.get("lager"), l.get("oid"), l.get("del"), l.get("klippt_m")]
         rad += [(l.get("attribut") or {}).get(a) for a in attrnamn]
         rader.append(rad)
     format_ = {"Längd": M, "VG från": "0.000", "VG till": "0.000", "Lutning": P, "Lutning GIS": P, "Djup medel": M2,

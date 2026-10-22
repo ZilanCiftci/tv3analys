@@ -168,6 +168,8 @@ class _Rutnat(object):
 # ------------------------------------------------ serviser
 
 def _las_serviser(servislager, omrade, dim_falt, mat_falt, ledntyp_falt, id_falt, sr):
+    # omrade begransar bara vattenlagren (de klippta vattenledningarna); avloppsserviser langs hela
+    # avloppsledningar (aven utanfor omradet) ska med
     """[{lager, oid, id, pts, langd_m, dimension, material, ledningstyp, attribut}] ur servislagren."""
     ut = []
     for lyr in servislager:
@@ -182,7 +184,7 @@ def _las_serviser(servislager, omrade, dim_falt, mat_falt, ledntyp_falt, id_falt
         src, dq = kalla(lyr)
         projicera = sr is not None and _sr_namn(arcpy.Describe(src)) not in ('', txt(getattr(sr, 'name', '')))
         arcpy.MakeFeatureLayer_management(src, 'lyr_inv_serv', dq)
-        if omrade is not None:
+        if omrade is not None and _lagersystem(lyr) == 'V':
             arcpy.SelectLayerByLocation_management('lyr_inv_serv', 'INTERSECT', omrade, '', 'NEW_SELECTION')
         n = 0
         with arcpy.da.SearchCursor('lyr_inv_serv', lasfalt) as mark:
@@ -294,7 +296,7 @@ def _las_anordningar(lagerlista, omrade, ar_falt, id_falt, sr):
         src, dq = kalla(lyr)
         projicera = sr is not None and _sr_namn(arcpy.Describe(src)) not in ('', txt(getattr(sr, 'name', '')))
         arcpy.MakeFeatureLayer_management(src, 'lyr_inv_anord', dq)
-        if omrade is not None:
+        if omrade is not None and _lagersystem(lyr) == 'V':      # som serviserna: bara vatten begransas
             arcpy.SelectLayerByLocation_management('lyr_inv_anord', 'INTERSECT', omrade, '', 'NEW_SELECTION')
         n = 0
         with arcpy.da.SearchCursor('lyr_inv_anord', ['OID@', 'SHAPE@'] + ovriga) as mark:
@@ -380,7 +382,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
               ar_falt=None, ren_falt=None, lutning_falt=None, id_falt=None, tolerans=1.0,
               parallell_avstand=3.0, parallell_andel=0.6, intervall=1.0, vatten_djup=1.7,
               sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None,
-              anordningslager=None, anordning_radie=3.0):
+              anordningslager=None, anordning_radie=3.0, klipp_vatten=True):
     """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen."""
     import time
     t0 = time.time()
@@ -399,11 +401,18 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     alla_led = ledningslager + [n for n in vattenlager if n not in ledningslager]
 
     logg('Ledningsinventering')
+    klipp = None
+    if klipp_vatten and omradeslager and vatten:
+        # vattenledningar klipps vid omradesgransen (avlopp behalls hela, brunn till brunn)
+        from omrade_export import _polygoner, _union
+        klipp = _union([g for _, g in _polygoner(hitta_lager(omradeslager), None, True)])
+        logg('  vattenledningarna klipps vid omradesgransen')
     data, hjalp = gisexport.bygg_data(
         alla_led, _lista(brunnslager), brunn_id, lock_falt=lock_falt, typ_falt=typ_falt,
         vg_fran=vg_fran, vg_till=vg_till, dim_falt=dim_falt, mat_falt=mat_falt, ledntyp_falt=ledntyp_falt,
         ar_falt=ar_falt, tolerans=tolerans, omradeslager=omradeslager, hojdsystem=hojdsystem,
-        ren_falt=ren_falt, botten_falt=botten_falt, alla_falt=True)
+        ren_falt=ren_falt, botten_falt=botten_falt, alla_falt=True,
+        klipp_lager=sorted(vatten), klipp_omrade=klipp, brunnar_i_omrade=False)
     ledningar, brunnar = data['ledningar'], data['brunnar']
     sr = hjalp['sr']
     brunn_index = dict((b['littera'], b) for b in brunnar)
@@ -530,7 +539,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     serviser = []
     if servislager:
         logg('Laser serviser')
-        serviser = _las_serviser([hitta_lager(n) for n in servislager], omrade, dim_falt, mat_falt,
+        serviser = _las_serviser([hitta_lager(n) for n in servislager], omrade if klipp is not None else None,
+                                 dim_falt, mat_falt,
                                  ledntyp_falt, id_falt, sr)
         n_ok = _koppla_serviser(serviser, ledningar, rutnat, float(tolerans), float(intervall))
         for s in serviser:
@@ -543,7 +553,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     anordningar = []
     if anordningslager:
         logg('Laser anordningar (ventiler, brandposter ...)')
-        anordningar = _las_anordningar([hitta_lager(n) for n in anordningslager], omrade, ar_falt, id_falt, sr)
+        anordningar = _las_anordningar([hitta_lager(n) for n in anordningslager],
+                                       omrade if klipp is not None else None, ar_falt, id_falt, sr)
         n_ok = _koppla_anordningar(anordningar, ledningar, rutnat, serviser, float(anordning_radie))
         for a in anordningar:
             if a['ledning'] is None:
@@ -730,6 +741,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
                        'parallell_andel': float(parallell_andel), 'intervall_m': float(intervall),
                        'vatten_djup_m': float(vatten_djup), 'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
+                       'vatten_klippt_vid_omrade': klipp is not None,
                        'markhojd': txt(markhojd) if markhojd else None, 'z_falt': z_falt,
                        'djupklasser': list(DJUPKLASSER), 'flack_promille': FLACK_PROMILLE},
         'serviser': serviser,
@@ -799,7 +811,8 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         'renoveringsar', 'vg_fran', 'vg_till', 'lutning_promille', 'lutning_gis', 'djup_medel', 'djup_min',
         'djup_max', 'djupklass', 'djup_kalla', 'djup_start', 'djup_slut', 'tackning_min', 'mark_medel',
         'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_system', 'schakt_antal',
-        'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar'], rader)
+        'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar',
+        'klippt_m'], rader)
     _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'system', 'lockniva', 'bottenniva', 'vg_min', 'djup_m',
                                        'antal_ledningar', 'omrade', 'x', 'y', 'lager'], brunnar)
     _skriv_csv(stam + '_serviser.csv', ['id', 'ledning', 'system', 'position_m', 'langd_m', 'dimension', 'material',
