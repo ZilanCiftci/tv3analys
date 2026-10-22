@@ -118,11 +118,11 @@ direkt i Excel om man bara vill titta).
 - **Ledningar** – en rad per sträcka: EntityID, från/till brunn, typ, dimension, material, år, längd,
   vg upp/ned, lutning (beräknad och fältet), bakfall, djup medel/min/max, djupklass, serviser (st, m),
   parallell med (lista, andel), schaktgrupp, korsningar, kostnad i alt. lägg om, metod och kostnad i
-  alt. strumpa, flaggor, alla originalfält dolda sist.
+  alt. schaktfritt, flaggor, alla originalfält dolda sist.
 - **Serviser** – en rad per servis med huvudledning, längd, typ, dimension, djup vid anslutningen.
 - **Parallella** – en rad per par med andel, medelavstånd, gemensam längd, schaktgrupp.
 - **Brunnar** – alla brunnar med lock, botten, djup, antal ledningar.
-- **Kostnad per stråk/schaktgrupp** – summerat: alt. lägg om och alt. strumpa med antal per metod.
+- **Kostnad per stråk/schaktgrupp** – summerat: alt. lägg om och alt. schaktfritt med antal per metod.
 - **Datakvalitet** – vg saknas, bakfall, orimlig lutning, servis utan huvudledning, dimension saknas,
   ledning utan brunn i någon ände, år saknas.
 
@@ -153,13 +153,13 @@ per m av servisens längd) + ny brunn per brunn som byts; sträckor i samma scha
 som du byter ut; filen är det enda som behöver ändras.
 
 **Ingen rekommendation och ingen TV-koppling** (användarens beslut okt 2026): boken jämför två alternativ.
-*Alt. lägg om*: allt läggs om. *Alt. strumpa*: avlopp strumpas (rörspräcks ≤ 400 mm eller läggs om där strumpa
+*Alt. lägg om*: allt läggs om. *Alt. schaktfritt*: avlopp strumpas (rörspräcks ≤ 400 mm eller läggs om där strumpa
 inte går); vattenledningar infodras inte utan rörspräcks (≤ 400 mm) – men bara när avloppet i samma grav
 strumpas; läggs avloppet om, läggs vattnet om i samma grav. Summorna omfattar ledningar med kostnad i båda.
 
 **Tillbaka till kartan.** `ledning_analys.py` skriver också `ledningsresultat.json`, och ett litet
 ArcMap-verktyg **Uppdatera inventeringslager** fyller fält i den lokala gdb:n (DJUP_MEDEL, DJUPKLASS,
-ANT_SERV, SERV_M, SCHAKTGRUPP, ALT_OMLAGG, ALT_STRUMPA, METOD_STRUMPA) så att det går att
+ANT_SERV, SERV_M, SCHAKTGRUPP, ALT_OMLAGG, ALT_SKFRI, METOD_SKFR) så att det går att
 symbolisera på kostnad, metod eller djupklass. GeoJSON för webb-GIS som i övriga verktyg.
 
 ## 4. Profiler och planritningar per stråk

@@ -10,7 +10,7 @@ Läser ledningsdata.json från ArcMap-verktyget Ledningsinventering och räknar 
                   djup: gravens medeldjup under 2 m ledningschakt, 2–3 m spontlåda (spontsläde), från 3 m
                   ledningschakt + slagen spont på båda sidor (medeldjup + 3 m, kr/m²). Räknas även för de fyra
                   fasta schakttyperna (ledningschakt, med spontsläde, bergschakt, KC-förstärkning).
-  Alt. strumpa  – spill-, dag- och kombinerade ledningar infodras (rörspräcks om infodring inte går och
+  Alt. schaktfritt  – spill-, dag- och kombinerade ledningar infodras (rörspräcks om infodring inte går och
                   dimensionen tillåter, annars läggs de om). Vattenledningar rörspräcks – men bara när
                   avloppsledningarna i samma grav också klaras utan schakt; läggs någon av dem om, läggs
                   vattenledningen om i samma grav. Ledningar som läggs om i alternativet delar grav.
@@ -58,7 +58,7 @@ SCHAKTTYPER = {"ledningschakt": "Ledningschakt", "spontslade": "Med spontsläde"
                "bergschakt": "Bergschakt", "kc": "KC-förstärkning"}
 SCHAKTTYP_DJUP = "djup"           # schakttyp efter ledningens djup (spontlåda, slagen spont) – se nedan
 ALLA_SCHAKTTYPER = {SCHAKTTYP_DJUP: "Efter djup – spont", **SCHAKTTYPER}
-SCHAKTTYP = SCHAKTTYP_DJUP        # schakttypen i Alt. lägg om och Alt. strumpa (övriga redovisas också)
+SCHAKTTYP = SCHAKTTYP_DJUP        # schakttypen i Alt. lägg om och Alt. schaktfritt (övriga redovisas också)
 SPONTLADA_FRAN_M = 2.0            # schakttyp djup: grav från detta medeldjup (m) -> spontsläde/spontlåda (prisraderna)
 SLAGEN_SPONT_FRAN_M = 3.0         # ... från detta medeldjup -> ledningschakt + slagen spont (post slagen_spont, kr/m²)
 SPONT_NEDSLAGNING_M = 3.0         # slagen spont: höjd = gravens medeldjup + detta (m)
@@ -95,7 +95,7 @@ DOLDA_LEDNINGAR = [
     "Infodring", "Infodring per meter", "Serviser infodring", "Hattar", "Framschaktning", "Infodring totalt",
     "Servisventiler", "Övriga anordningar",
     "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
-    "Rörspräckning totalt", "Ledningar i graven alt. strumpa", "Område", "Lager", "OID", "Del",
+    "Rörspräckning totalt", "Ledningar i graven alt. schaktfritt", "Område", "Lager", "OID", "Del",
     "Klippt vid områdesgränsen",
 ]
 
@@ -606,7 +606,7 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
 
 
 def alternativ_strumpa(ledningar, per_id, kost, schakttyp, alla_serv, grupp, serv_idx) -> None:
-    """Metod och kostnad per ledning i alternativet strumpa (_alt_metod, _alt, _alt_grav).
+    """Metod och kostnad per ledning i alternativet schaktfritt (_alt_metod, _alt, _alt_grav).
     Avlopp: infodring, annars rörspräckning, annars omläggning. Vatten: rörspräckning bara när ingen
     avloppsledning i samma grav läggs om – annars omläggning tillsammans med den."""
     for led in ledningar:
@@ -715,7 +715,7 @@ def _kr(d: dict | None, k: str = "summa"):
 
 def _anmarkning(l: dict) -> str | None:
     delar = [x for x in (_dim_text(l), l.get("_alt_motiv"), l.get("_anm"),
-                         ("alt. strumpa: " + l["_alt_brist"]) if l.get("_alt_brist") else None) if x]
+                         ("alt. schaktfritt: " + l["_alt_brist"]) if l.get("_alt_brist") else None) if x]
     return "; ".join(delar) or None
 
 
@@ -755,7 +755,7 @@ def _jamforbar(l: dict) -> bool:
 
 
 def _altsummor(lista):
-    """[alt. lägg om (kr), alt. strumpa (kr), strumpa (st), rörspräckning (st), omläggning (st), utan kostnad (st)]."""
+    """[alt. lägg om (kr), alt. schaktfritt (kr), strumpa (st), rörspräckning (st), omläggning (st), utan kostnad (st)]."""
     jfr = [l for l in lista if _jamforbar(l)]
     return [_summa(jfr, lambda l: l["_omlagg"]["summa"]),
             _summa(jfr, lambda l: l["_alt"]["summa"]),
@@ -787,14 +787,14 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Samschakt med", "Parallella", "Korsningar",
-           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. strumpa", "Alt. strumpa (kr)", "Anmärkning",
+           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
            "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Hattar (st)", "Framschaktning (kr)",
            "Infodring totalt (kr)",
            "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
-           "Ventilgropar (kr)", "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
+           "Ventilgropar (kr)", "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. schaktfritt (st)",
            "Flaggor", "Område", "Lager", "OID", "Del", "Klippt vid områdesgränsen (m)"]
     egna = {_dela_rubrik(k)[0] for k in kol}
     attrkol = [a if a not in egna else a + " (GIS)" for a in attrnamn]
@@ -852,7 +852,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
         grupper[l.get("schaktgrupp")].append(l)
     ws = wb.create_sheet("Kostnad per schaktgrupp")
     kol = ["Schaktgrupp", "System", "Ledningar (st)", "Ledningar", "Längd (m)", "Schaktlängd (m)", "Alt. lägg om (kr)",
-           "Alt. strumpa (kr)", "Strumpas (st)", "Rörspräcks (st)", "Läggs om (st)", "Utan kostnad (st)"]
+           "Alt. schaktfritt (kr)", "Strumpas (st)", "Rörspräcks (st)", "Läggs om (st)", "Utan kostnad (st)"]
     rader = []
     for g in sorted(k for k in grupper if k is not None):
         lista = grupper[g]
@@ -866,7 +866,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
             rader.append([namn_, "+".join(sorted({l.get("system") or "?" for l in lista})), len(lista), None,
                           _r(sum(l.get("langd_m") or 0 for l in lista)), _r(sl)] + _altsummor(lista))
     start = tabell(ws, kol, rader, bredder={"Ledningar": 40},
-                   format={"Längd": M, "Schaktlängd": M, "Alt. lägg om": KR, "Alt. strumpa": KR})
+                   format={"Längd": M, "Schaktlängd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR})
     ws.cell(start + len(rader) + 1, 1, "Schaktlängd: schaktets längd när alla ledningar i gruppen läggs om – delar "
             "som går i samschakt räknas en gång.").font = Font(italic=True, color="595959")
     for ri in range(start, start + len(rader)):
@@ -1028,7 +1028,7 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
             ut.append([SYSTEM_NAMN.get(s, s) if s != "alla" else "Alla"] + f(lista))
         return ut
 
-    block("Lägga om eller strumpa", ["System", "Längd (m)", "Alt. lägg om (kr)", "Alt. strumpa (kr)",
+    block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om (kr)", "Alt. schaktfritt (kr)",
                                      "Strumpas (m)", "Rörspräcks (m)", "Läggs om (m)", "Utan kostnad (st)"],
           per_system(lambda lista: [langd(lista),
                                     _summa([l for l in lista if _jamforbar(l)], lambda l: l["_omlagg"]["summa"]),
@@ -1037,10 +1037,10 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
                                     langd([l for l in lista if l.get("_alt_metod") == "rörspräckning"]),
                                     langd([l for l in lista if l.get("_alt_metod") == "omläggning"]),
                                     sum(1 for l in lista if not _jamforbar(l))]),
-          format={"Längd": M, "Alt. lägg om": KR, "Alt. strumpa": KR, "Strumpas": M, "Rörspräcks": M,
+          format={"Längd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR, "Strumpas": M, "Rörspräcks": M,
                   "Läggs om": M})
     for t in ("Alt. lägg om: alla ledningar läggs om; ledningar i samma grav delar graven.",
-              "Alt. strumpa: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
+              "Alt. schaktfritt: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
               "men läggs om i samma grav när en avloppsledning i graven läggs om.",
               "Summorna omfattar bara ledningar med kostnad i båda alternativen; övriga står under Utan kostnad "
               "(djup eller dimension saknas – se fliken Datakvalitet)."):
@@ -1131,8 +1131,8 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
             "anordningar_antal": l.get("anordningar_antal"),
             "alt_lagg_om_kr": _kr(l.get("_omlagg")),
             "alt_lagg_om_per_schakttyp": {t: _kr(v) for t, v in (l.get("_typer") or {}).items()},
-            "alt_strumpa_metod": l.get("_alt_metod"),
-            "alt_strumpa_kr": _kr(l.get("_alt")), "anmarkning": _anmarkning(l),
+            "alt_schaktfritt_metod": l.get("_alt_metod"),
+            "alt_schaktfritt_kr": _kr(l.get("_alt")), "anmarkning": _anmarkning(l),
         })
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"version": 2, "kalla": "ledning_analys.py", "ledningsdata": kalla,
@@ -1183,7 +1183,7 @@ def main(argv=None) -> int:
         print(f"  {data['_antagna_dim']} ledningar utan dimension fick grannledningens dimension"
               + (f" ({kvar} saknar fortfarande)" if kvar else ""))
     jfr = [l for l in ledningar if _jamforbar(l)]
-    for namn, k in (("Alt. lägg om", "_omlagg"), ("Alt. strumpa", "_alt")):
+    for namn, k in (("Alt. lägg om", "_omlagg"), ("Alt. schaktfritt", "_alt")):
         belopp = sum(l[k]["summa"] for l in jfr)
         print(f"  {namn}: {belopp:,.0f} kr".replace(",", " "))
     if len(jfr) < len(ledningar):
