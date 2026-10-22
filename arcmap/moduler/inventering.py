@@ -21,9 +21,13 @@ kan lasa filen som gis:) och lagger till det som behovs for Excel och kalkyl per
   - korsningar med andra ledningar (geometrisk skarning, inte vid gemensam brunn/ande) med
     vattengang/niva pa bada och hojdskillnaden
   - brunnar: lockniva, bottenniva, antal anslutna ledningar, lagsta vattengang och djup
+  - anordningar (punktlager: ventiler, servisventiler, brandposter, ovriga anordningar, ledningsandar):
+    kategori ur lagernamnet (och typkoden VSeV), kopplas till narmaste huvudledning av ratt slag
+    (V-lager -> vattenledning, A-lager -> avlopp) inom anordning_radie; servisventiler och brandposter
+    kopplas via servisen/brandpostledningen nar den ligger narmare; per ledning antal per kategori
 
 Utdata: ledningsdata.json + ledningsdata_ledningar.csv, _brunnar.csv, _serviser.csv,
-_parallella.csv, _korsningar.csv (semikolon, decimalkomma, UTF-8 med BOM).
+_parallella.csv, _korsningar.csv, _anordningar.csv (semikolon, decimalkomma, UTF-8 med BOM).
 
 Testas utan ArcMap med en latsas-arcpy (scratchpad/test_inventering.py).
 """
@@ -48,6 +52,16 @@ DJUPKLASSER = (2.0, 3.0, 4.0)  # granser for djupklasserna 0-2, 2-3, 3-4, > 4 m 
 PARALLELL_MIN_ANDEL = 0.2     # par dar ingen av ledningarna har minst denna andel inom avstandet listas inte
                               # (korsningar och anslutningar snett intill ger nagra procent)
 SERVIS_SYSTEM = {'S': 'S', 'D': 'D', 'K': 'K', 'V': 'V'}
+# Anordningar: faltet med typkoden (forsta som finns i lagret), dimensionsfaltet och kategorierna.
+# Kategorin tas ur lagernamnet (nyckelorden provas i ordning), annars 'anordning'.
+ANORDNING_TYPFALT = ('ValveFunction', 'HydrantType', 'ApplianceType', 'PipeEndType', 'TYP', 'FUNKTION')
+ANORDNING_DIMFALT = ('Dimension', 'DIMENSION', 'DIM')
+ANORDNING_KATEGORIER = (('servisventil', ('servisventil',)),
+                        ('ventil', ('ventil',)),
+                        ('brandpost', ('brandpost', 'hydrant')),
+                        ('ledningsande', ('ledningsande', 'ledningsände', 'pipeend')))
+ANORDNING_TYPKODER = {'VSEV': 'servisventil'}   # typkod som avgor kategorin oavsett lagernamn
+ANORDNING_VIA_SERVIS = ('servisventil', 'brandpost')   # sitter pa servis/brandpostledning
 
 
 # ------------------------------------------------ smahjalp
@@ -232,6 +246,131 @@ def _koppla_serviser(serviser, ledningar, rutnat, tolerans, intervall):
     return n_ok
 
 
+# ------------------------------------------------ anordningar
+
+def _kategori(lagernamn, typ):
+    kod = _text(typ).upper()
+    if kod in ANORDNING_TYPKODER:
+        return ANORDNING_TYPKODER[kod]
+    n = txt(lagernamn).lower()
+    for kat, ord_ in ANORDNING_KATEGORIER:
+        if any(o in n for o in ord_):
+            return kat
+    return 'anordning'
+
+
+def _lagersystem(lyr):
+    """'V' for lager i vattengruppen eller med namn 'V ...', 'A' for avlopp, annars ''."""
+    kort = txt(getattr(lyr, 'name', '') or '').strip().lower()
+    langt = txt(getattr(lyr, 'longName', '') or '').strip().lower()
+    if kort.startswith('v ') or langt.startswith('vatten'):
+        return 'V'
+    if kort.startswith('a ') or langt.startswith('avlopp'):
+        return 'A'
+    return ''
+
+
+def _las_anordningar(lagerlista, omrade, ar_falt, id_falt, sr):
+    """[{id, lager, oid, kategori, typ, dimension, anlaggningsar, lagersystem, x, y, attribut}] ur
+    punktlagren. Samma id i flera lager (t.ex. V Brandpost och V Brandpost Avstangningskarta) raknas en gang."""
+    ut, sedda, n_dubbel = [], set(), 0
+    for lyr in lagerlista:
+        namn = _lagernamn(lyr)
+        falt = _faltnamn(lyr)
+
+        def f(onskat):
+            return falt.get(txt(onskat).upper()) if onskat else None
+
+        def forsta(kand):
+            for k in kand:
+                if falt.get(k.upper()):
+                    return falt[k.upper()]
+            return None
+        f_typ, f_dim = forsta(ANORDNING_TYPFALT), forsta(ANORDNING_DIMFALT)
+        f_ar, f_id = f(ar_falt), f(id_falt)
+        lsys = _lagersystem(lyr)
+        ovriga = _ovriga_falt(lyr)
+        src, dq = kalla(lyr)
+        projicera = sr is not None and _sr_namn(arcpy.Describe(src)) not in ('', txt(getattr(sr, 'name', '')))
+        arcpy.MakeFeatureLayer_management(src, 'lyr_inv_anord', dq)
+        if omrade is not None:
+            arcpy.SelectLayerByLocation_management('lyr_inv_anord', 'INTERSECT', omrade, '', 'NEW_SELECTION')
+        n = 0
+        with arcpy.da.SearchCursor('lyr_inv_anord', ['OID@', 'SHAPE@'] + ovriga) as mark:
+            for rad in mark:
+                oid, geom = rad[0], rad[1]
+                if geom is None:
+                    continue
+                if projicera:
+                    geom = geom.projectAs(sr)
+                pkt = geom.firstPoint
+                if pkt is None:
+                    continue
+                v = dict(zip(ovriga, rad[2:]))
+                ident = _text(v.get(f_id)) if f_id else ''
+                nyckel = ident or '%s/%s' % (namn, oid)
+                if nyckel in sedda:
+                    n_dubbel += 1
+                    continue
+                sedda.add(nyckel)
+                typ = _text(v.get(f_typ)) if f_typ else ''
+                ut.append({
+                    'id': nyckel, 'lager': namn, 'oid': oid, 'kategori': _kategori(namn, typ), 'typ': typ,
+                    'dimension': _heltal(v.get(f_dim)) if f_dim else None,
+                    'anlaggningsar': _heltal(v.get(f_ar)) if f_ar else None,
+                    'lagersystem': lsys, 'x': round(pkt.X, 3), 'y': round(pkt.Y, 3),
+                    'attribut': dict((k, _json_varde(v.get(k))) for k in ovriga),
+                })
+                n += 1
+        arcpy.Delete_management('lyr_inv_anord')
+        logg('  %s: %d anordningar' % (namn, n))
+    if n_dubbel:
+        logg('  %d anordningar fanns i flera lager och raknas en gang' % n_dubbel)
+    return ut
+
+
+def _koppla_anordningar(anordningar, ledningar, rutnat, serviser, radie):
+    """Kopplar varje anordning till narmaste huvudledning av ratt slag inom radien; servisventiler och
+    brandposter via servisen/brandpostledningen nar den ligger narmare an huvudledningen."""
+    def passar(lsys, system):
+        return not lsys or (system == 'V') == (lsys == 'V')
+    srut = _Rutnat(10.0)
+    for i, s in enumerate(serviser):
+        if s.get('ledning') is not None:
+            srut.lagg_till(s['pts'], i)
+    n_ok = 0
+    for a in anordningar:
+        x, y = a['x'], a['y']
+        led = None
+        for k, (d, q) in rutnat.inom(x, y, radie).items():
+            if passar(a['lagersystem'], ledningar[k]['system']) and (led is None or d < led[0]):
+                led = (d, k)
+        serv = None
+        for k, (d, q) in srut.inom(x, y, radie).items():
+            if passar(a['lagersystem'], serviser[k].get('system')) and (serv is None or d < serv[0]):
+                serv = (d, k)
+        a['ledning'] = a['system'] = a['position_m'] = a['avstand_m'] = a['via_servis'] = None
+        if serv is not None and (led is None or (a['kategori'] in ANORDNING_VIA_SERVIS and serv[0] < led[0])):
+            s = serviser[serv[1]]
+            p = ledningar[s['ledning_index']]
+            a['via_servis'] = s['id']
+            a['position_m'] = s['position_m']
+            a['avstand_m'] = round(serv[0], 2)
+        elif led is not None:
+            p = ledningar[led[1]]
+            st, _ = _station(p['_pts'], (x, y))
+            a['position_m'] = round(st, 2)
+            a['avstand_m'] = round(led[0], 2)
+        else:
+            continue
+        a['ledning'] = p['id']
+        a['system'] = p['system']
+        p['anordningar'].append(a['id'])
+        p['anordningar_antal'][a['kategori']] = p['anordningar_antal'].get(a['kategori'], 0) + 1
+        n_ok += 1
+    return n_ok
+
+
 # ------------------------------------------------ huvudfunktionen
 
 def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, vattenlager=None,
@@ -239,7 +378,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, ren_falt=None, lutning_falt=None, id_falt=None, tolerans=1.0,
               parallell_avstand=3.0, parallell_andel=0.6, intervall=1.0, vatten_djup=1.7,
-              sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None):
+              sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None,
+              anordningslager=None, anordning_radie=3.0):
     """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen."""
     import time
     t0 = time.time()
@@ -253,6 +393,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     ledningslager = _lista(ledningslager)
     vattenlager = _lista(vattenlager)
     servislager = _lista(servislager)
+    anordningslager = _lista(anordningslager)
     vatten = set(_lagernamn(hitta_lager(n)) for n in vattenlager)
     alla_led = ledningslager + [n for n in vattenlager if n not in ledningslager]
 
@@ -292,6 +433,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         p['lutning_gis'] = _tal(upp.get(f_lut)) if f_lut else None
         p['lutning_promille'] = None
         p['serviser'], p['antal_serviser'], p['serviser_m'] = [], 0, 0.0
+        p['anordningar'], p['anordningar_antal'] = [], {}
         if p['system'] == 'V':
             continue
         if p['vg_fran'] is None or p['vg_till'] is None:
@@ -395,6 +537,19 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
                 kvalitet.append({'typ': 'servis utan huvudledning', 'id': s['id'],
                                  'text': 'ingen huvudledning inom %.1f m fran nagon ande' % float(tolerans)})
         logg('  %d av %d serviser kopplade till en huvudledning (%s)' % (n_ok, len(serviser), tid()))
+
+    # --- anordningar (ventiler, brandposter ...) -------------------------------------------
+    anordningar = []
+    if anordningslager:
+        logg('Laser anordningar (ventiler, brandposter ...)')
+        anordningar = _las_anordningar([hitta_lager(n) for n in anordningslager], omrade, ar_falt, id_falt, sr)
+        n_ok = _koppla_anordningar(anordningar, ledningar, rutnat, serviser, float(anordning_radie))
+        for a in anordningar:
+            if a['ledning'] is None:
+                kvalitet.append({'typ': 'anordning utan ledning', 'id': a['id'],
+                                 'text': '%s: ingen ledning inom %.1f m' % (a['kategori'], float(anordning_radie))})
+        logg('  %d av %d anordningar kopplade till en ledning: %s (%s)' % (n_ok, len(anordningar), ', '.join(
+            '%s %d' % (k, v) for k, v in sorted(_rakna(anordningar, 'kategori').items())), tid()))
 
     # --- parallella ledningar -----------------------------------------------------------
     logg('Soker parallella ledningar (c-c inom %.1f m)' % float(parallell_avstand))
@@ -561,7 +716,9 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'serviser_m': round(sum(s['langd_m'] for s in serviser), 1),
         'langd_per_system_m': dict((k, round(v, 1)) for k, v in langd.items()),
         'parallella_par': len(parallella), 'samschakt_par': n_sam, 'schaktgrupper': len(grupper),
-        'korsningar': len(korsningar), 'djup_ur_markmodell': n_mark, 'djup_ur_lockniva': n_lock,
+        'korsningar': len(korsningar),
+        'anordningar': len(anordningar), 'anordningar_kopplade': sum(1 for a in anordningar if a['ledning']),
+        'anordningar_per_kategori': _rakna(anordningar, 'kategori'), 'djup_ur_markmodell': n_mark, 'djup_ur_lockniva': n_lock,
         'djup_schablon': n_schablon, 'djup_saknas': n_utan, 'datakvalitet': len(kvalitet),
     })
     data.update({
@@ -571,22 +728,25 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
                        'parallell_andel': float(parallell_andel), 'intervall_m': float(intervall),
                        'vatten_djup_m': float(vatten_djup), 'sokradie_m': float(sokradie),
+                       'anordning_radie_m': float(anordning_radie),
                        'markhojd': txt(markhojd) if markhojd else None, 'z_falt': z_falt,
                        'djupklasser': list(DJUPKLASSER), 'flack_promille': FLACK_PROMILLE},
         'serviser': serviser,
+        'anordningar': anordningar,
         'parallella': parallella,
         'korsningar': korsningar,
         'datakvalitet': kvalitet,
         'sammanfattning': samman,
     })
     data['lager'].update({'vatten': sorted(vatten), 'serviser': [txt(n) for n in servislager],
+                          'anordningar': [txt(n) for n in anordningslager],
                           'bottenniva': botten_falt, 'lutning': lutning_falt, 'ledning_id': id_falt})
     skriv_json(data, json_ut)
     if skriv_csv:
-        _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsningar)
-    logg('Klart (%s): %d ledningar, %d brunnar, %d serviser, %d samschakt-par i %d grupper, %d korsningar, '
-         '%d anmarkningar' % (tid(), len(ledningar), len(brunnar), len(serviser), n_sam, len(grupper),
-                              len(korsningar), len(kvalitet)))
+        _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsningar, anordningar)
+    logg('Klart (%s): %d ledningar, %d brunnar, %d serviser, %d anordningar, %d samschakt-par i %d grupper, '
+         '%d korsningar, %d anmarkningar' % (tid(), len(ledningar), len(brunnar), len(serviser), len(anordningar),
+                                             n_sam, len(grupper), len(korsningar), len(kvalitet)))
     return samman
 
 
@@ -620,7 +780,7 @@ def _rakna(poster, nyckel):
     return ut
 
 
-def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsningar):
+def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsningar, anordningar=()):
     stam = os.path.splitext(json_ut)[0]
     rader = []
     for p in ledningar:
@@ -631,12 +791,13 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         r['serviser'] = ', '.join(p['serviser'])
         r['flaggor'] = ', '.join(p['flaggor'])
         r['schakt_ledningar'] = ', '.join(p['schakt_ledningar'])
+        r['anordningar'] = ', '.join('%s %d' % (k, v) for k, v in sorted(p.get('anordningar_antal', {}).items()))
         rader.append(r)
     _skriv_csv(stam + '_ledningar.csv', [
         'id', 'system', 'fran', 'till', 'langd_m', 'dimension', 'material', 'ledningstyp', 'anlaggningsar',
         'renoveringsar', 'vg_fran', 'vg_till', 'lutning_promille', 'lutning_gis', 'djup_medel', 'djup_min',
         'djup_max', 'djupklass', 'djup_kalla', 'djup_start', 'djup_slut', 'tackning_min', 'mark_medel',
-        'antal_serviser', 'serviser_m', 'serviser', 'schaktgrupp', 'schakt_system', 'schakt_antal',
+        'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_system', 'schakt_antal',
         'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar'], rader)
     _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'system', 'lockniva', 'bottenniva', 'vg_min', 'djup_m',
                                        'antal_ledningar', 'omrade', 'x', 'y', 'lager'], brunnar)
@@ -647,7 +808,10 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
     _skriv_csv(stam + '_korsningar.csv', ['ledning_a', 'ledning_b', 'system_a', 'system_b', 'station_a', 'station_b',
                                           'niva_a', 'niva_b', 'niva_kalla_a', 'niva_kalla_b', 'hojdskillnad_m', 'x', 'y'],
                korsningar)
-    logg('Skrev %s_ledningar/_brunnar/_serviser/_parallella/_korsningar.csv' % stam)
+    _skriv_csv(stam + '_anordningar.csv', ['id', 'kategori', 'typ', 'ledning', 'system', 'position_m', 'avstand_m',
+                                           'via_servis', 'dimension', 'anlaggningsar', 'x', 'y', 'lager', 'oid'],
+               anordningar)
+    logg('Skrev %s_ledningar/_brunnar/_serviser/_parallella/_korsningar/_anordningar.csv' % stam)
 
 
 def _csvtal(v):

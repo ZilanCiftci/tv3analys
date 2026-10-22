@@ -954,6 +954,8 @@ datumtransformation vid `projectAs(4326)` (rätt för SWEREF 99, fel ~100 m för
 - Rendera och titta på PDF/diagram innan leverans (pdftoppm → bild) – flera fel hittades så.
 - Hjälptexter i rapporter är oönskade ("det kan vi se själva").
 - Dokumentation som Word (.docx), inte Markdown. Filnamn utan åäö i zip. Dokumentationsgenomgång okt 2026 mot koden (rättat i make_docs.js): python-pptx i installationen, flaggorna `--bilder`/`--markprofil` i tabellen, avsnitt 3.4 (var dubblerat 3.3), flikarna Inspektionsgrad/Ej inspekterat och `littera_forslag.csv` under Resultatfiler, kolumnerna Tidigare inspektion/Renoveringsår GIS/Driftområde, KONFIG-rader (SVACKA_MAX_M, BAKFALL_*, GIS_SAKNAS_UNDER, GIS_FALL_ORIMLIGT_M, GIS_PLATSHALLARE, RELINAD_SOM_MATERIAL, BEHALL_RAPPORTER …), verktygslistan i avsnitt 7 (alla elva verktyg + minnet av senaste val), grafmatchningen i stället för vertexjämförelse, FAQ utan "listar saknade bilder"; metodbeskrivningen: avbruten även vid < 85 % av kartlängd, omfilmning/sammanslagning/ny inspektion automatiskt (inte "slås ihop manuellt"), höjdfel och GIS-kontroll som punkter, exempel 2 räknat med kodvikt (18,5 p → 92,5, konstruktion 85).
+- CSV-filer (indata i repot och utdata) skrivs som UTF-8 **med BOM** och CRLF – utan BOM visar Excel åäö fel
+  (användaren okt 2026 om kostnader_inventering.csv); inläsningen (`las_text`) tål båda.
 - Behåll ett enda skript med KONFIG-block överst; parametrar ska gå att ändra utan att röra
   koden.
 

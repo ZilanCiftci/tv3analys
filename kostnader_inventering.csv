@@ -1,4 +1,4 @@
-# Kostnadsposter för ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma eller heltal.
+﻿# Kostnadsposter för ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma eller heltal.
 # Belopp ur SVOA:s kalkylverktyg (okt 2026) där inget annat sägs; rader märkta ANTAGET/SCHABLON finns inte i verktyget.
 # Rubrikraden styr kolumnordningen. Tom cell = gäller alla.
 #   schakttyp  ledningschakt | spontslade | bergschakt | kc  (helschakt; vilken som räknas väljs med --schakttyp)
