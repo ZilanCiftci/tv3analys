@@ -75,6 +75,8 @@ SPRACKNING_DIM_MAX = 400          # rörspräckning för dimensioner till och me
 GROP_PER_M = 50                   # rörspräckning: en införingsgrop och en maskingrop per påbörjade 50 m
 SERVIS_GRAV_AVSTAND_M = 3.0       # serviser vars båda ändar ligger så här nära varandra delar servisgrav
 SERVIS_LANGD_MAX_M = None         # meter servisledning som förnyas per servis; None = hela servisens längd
+SERVIS_HATT_MAX_M = 6.0           # spill-, dag- och kombinerade serviser hit (m) infodras med hatt (kr/st) ...
+SERVIS_HATT_SYSTEM = ("S", "D", "K")  # ... längre serviser och vattenserviser per meter servisledning
 FRAMSCHAKTA_TB = True             # infodring: båda ändbrunnarna tillsyns-/rensbrunn -> framschaktning + ny brunn
 BRUNNSTYP_TILLSYN = r"TB|RB"      # brunnstyp (t.ex. WellFunction STB/SRB) som räknas som tillsyns-/rensbrunn
 VENTILGROP_KATEGORIER = ("ventil", "brandpost")   # rörspräckning: en ventilgrop per sådan anordning på ledningen
@@ -90,7 +92,7 @@ DOLDA_LEDNINGAR = [
     "Täckning min", "Djup start", "Djup slut", "Samschakt med", "Parallella", "Korsningar",
     "Lägg om efter djup", "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
     "Schakt", "Gravdjup", "Slagen spont", "Spont", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
-    "Infodring", "Infodring per meter", "Serviser infodring", "Framschaktning", "Infodring totalt",
+    "Infodring", "Infodring per meter", "Serviser infodring", "Hattar", "Framschaktning", "Infodring totalt",
     "Servisventiler", "Övriga anordningar",
     "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
     "Rörspräckning totalt", "Ledningar i graven alt. strumpa", "Område", "Lager", "OID", "Del",
@@ -348,6 +350,28 @@ def _servis_helschakt(egna, alla, grupp, metod_for, kost, schakttyp, metod="oml�
     return summa
 
 
+def servis_schaktfritt(serv, kost) -> float:
+    """Serviserna när huvudledningen infodras eller rörspräcks: spill-, dag- och kombinerade serviser
+    upp till SERVIS_HATT_MAX_M infodras med hatt (post servis_hatt, kr/st), längre serviser och
+    vattenserviser per meter (servis_infodring)."""
+    summa = 0.0
+    for x in serv:
+        hatt = kr(kost, "servis_hatt", system=x.get("system")) if _hatt(x) else None
+        if hatt is not None:
+            summa += hatt
+        else:
+            summa += (kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x)
+    return summa
+
+
+def _hatt(x: dict) -> bool:
+    return (x.get("system") or "") in SERVIS_HATT_SYSTEM and (x.get("langd_m") or 0.0) <= SERVIS_HATT_MAX_M
+
+
+def antal_hattar(serv) -> int:
+    return sum(1 for x in serv if _hatt(x))
+
+
 def _infodring(led, kost, brunnar, serv):
     """Infodring av huvudledning + serviser schaktfritt (+ framschaktning)."""
     L = led.get("langd_m") or 0.0
@@ -362,7 +386,7 @@ def _infodring(led, kost, brunnar, serv):
     if kr_m is None:
         return None, f"inget infodringspris för Ø {dim:g}"
     s = {"per_meter": kr_m, "infodring": kr_m * L,
-         "serviser": sum((kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x) for x in serv)}
+         "serviser": servis_schaktfritt(serv, kost)}
     typer = [(brunnar.get(b) or {}).get("typ") or "" for b in (led.get("fran"), led.get("till"))]
     if FRAMSCHAKTA_TB and all(typer) and all(re.search(BRUNNSTYP_TILLSYN, t.upper()) for t in typer):
         s["framschaktning"] = (kr(kost, "framschaktning") or 0.0) + (kr(kost, "ny_brunn") or 0.0)
@@ -387,7 +411,7 @@ def _sprackning(led, kost, serv):
          "gropar": gropar * ((kr(kost, "inforingsgrop") or 0.0) + (kr(kost, "maskingrop") or 0.0)),
          "servisgropar": len(serv) * (kr(kost, "servisgrop") or 0.0),
          "antal_ventilgropar": antal_ventilgropar(led),
-         "serviser": sum((kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x) for x in serv)}
+         "serviser": servis_schaktfritt(serv, kost)}
     r["ventilgropar"] = r["antal_ventilgropar"] * (kr(kost, "ventilgrop") or kr(kost, "servisgrop") or 0.0)
     r["summa"] = r["sprackning"] + r["gropar"] + r["servisgropar"] + r["ventilgropar"] + r["serviser"]
     return r, ""
@@ -743,7 +767,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
-           "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Framschaktning (kr)",
+           "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Hattar (st)", "Framschaktning (kr)",
            "Infodring totalt (kr)",
            "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
            "Ventilgropar (kr)", "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
@@ -751,6 +775,10 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     egna = {_dela_rubrik(k)[0] for k in kol}
     attrkol = [a if a not in egna else a + " (GIS)" for a in attrnamn]
     rader = []
+    hattar = defaultdict(int)
+    for x in data.get("_serviser_kopplade") or []:
+        if _hatt(x):
+            hattar[x.get("ledning")] += 1
     ordn = sorted(ledningar, key=lambda l: ("SDKV".find(l.get("system") or "?") % 9, str(l.get("id"))))
     for l in ordn:
         o, s, r = l.get("_omlagg"), l.get("_strumpa"), l.get("_sprack")
@@ -776,7 +804,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
               [_kr(o, "schakt"), _r((o or {}).get("gravdjup"), 2), _r((o or {}).get("spont_m2")) or None,
                _kr(o, "spont") or None, _kr(o, "djuptillagg"), _kr(o, "aterstallning"), _kr(o, "brunnar"),
                _kr(o, "serviser"),
-               _kr(s, "per_meter"), _kr(s, "infodring"), _kr(s, "serviser"), _kr(s, "framschaktning"), _kr(s),
+               _kr(s, "per_meter"), _kr(s, "infodring"), _kr(s, "serviser"),
+               hattar.get(l.get("id")) or None, _kr(s, "framschaktning"), _kr(s),
                _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
                _kr(r, "ventilgropar"), _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
                ", ".join(l.get("flaggor") or []) or None, l.get("omrade") or None,
@@ -931,6 +960,10 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
                                   + (" (nedströms när ingen finns uppströms)" if DIMENSION_NEDSTROMS_RESERV else "")
                                   + " – se Anmärkning") if DIMENSION_UR_GRANNE else None),
             ("Serviser", "förnyas i båda alternativen (helschakt eller infodring per meter servisledning)"),
+            ("Hattar", f"spill-, dag- och kombinerade serviser högst {_dk(SERVIS_HATT_MAX_M)} m infodras med hatt "
+                       f"({_dk(kr(kost, 'servis_hatt', system='S'))} kr/st) när huvudledningen infodras eller rörspräcks; "
+                       "längre per meter"
+             if kr(kost, "servis_hatt", system="S") is not None else None),
             ("Kostnadsfil", os.path.basename(kallor["kostnader"])),
             ("Analys", datetime.now().strftime("%Y-%m-%d %H:%M"))]
     antagna = sorted({k["post"] for k in kost if re.search(r"schablon|antaget", (k.get("kommentar") or "").lower())})
