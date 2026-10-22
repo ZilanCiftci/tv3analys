@@ -276,6 +276,14 @@ class Omraden(object):
         return ''
 
 
+def geometrityp(lyr):
+    """Lagrets geometrityp ('Polyline', 'Point' ...) eller '' om den inte gar att lasa."""
+    try:
+        return txt(arcpy.Describe(kalla(lyr)[0]).shapeType)
+    except Exception:
+        return ''
+
+
 def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000',
@@ -339,6 +347,11 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
     klippt_m = 0.0
     for lyr in led_lager:
         namn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', lyr))   # langt namn: tva lager kan heta lika
+        typ = geometrityp(lyr)
+        if typ and typ != 'Polyline':
+            logg('  OBS hoppar over "%s": %s-lager, inte ledningar (valj det bland anordningar/brunnar i stallet)'
+                 % (namn, typ))
+            continue
         falt = _faltnamn(lyr)
         f_vg1 = _valj_falt(falt, vg_fran, 'vattengangsfaltet (fran)', namn)
         f_vg2 = _valj_falt(falt, vg_till, 'vattengangsfaltet (till)', namn)
