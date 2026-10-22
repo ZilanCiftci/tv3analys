@@ -50,6 +50,8 @@ VERSION = 1
 
 FLACK_PROMILLE = 2.0          # lutning under detta (i belopp) flaggas "flack"
 ORIMLIG_PROMILLE = 200.0      # lutning over detta flaggas "vg orimlig" (troligen fel niva i GIS)
+SCHAKT_BREDD_FAKTOR = 2.0       # schaktlangd: ledningar i samma schaktgrupp inom faktor x parallell_avstand
+                                # (c-c) fran varandra raknas till samma schakt
 DJUPKLASSER = (2.0, 3.0, 4.0)  # granser for djupklasserna 0-2, 2-3, 3-4, > 4 m (F13)
 PARALLELL_MIN_ANDEL = 0.2     # par dar ingen av ledningarna har minst denna andel inom avstandet listas inte
                               # (korsningar och anslutningar snett intill ger nagra procent)
@@ -646,6 +648,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     for post in parallella:
         post['schaktgrupp'] = gruppnr.get(post['_i']) if post['samschakt'] else None
         del post['_i'], post['_j']
+    _schaktlangd(ledningar, rutnat, gruppnr, float(intervall), float(parallell_avstand), float(tolerans))
     n_sam = sum(1 for p in parallella if p['samschakt'])
     logg('  %d parallella par, %d samschakt, %d schaktgrupper (%s)' % (len(parallella), n_sam, len(grupper), tid()))
 
@@ -776,6 +779,39 @@ def _vatten_till_botten(led, vatten_djup):
     return float(vatten_djup) + (led.get('dimension') or 0) / 2000.0
 
 
+def _schaktlangd(ledningar, rutnat, gruppnr, intervall, avstand, tolerans):
+    """Ledningens andel av schaktets langd (schakt_langd_m): provpunkter var intervall m; i varje punkt
+    raknas ledningarna i samma schaktgrupp inom SCHAKT_BREDD_FAKTOR x parallell_avstand (inte vid en
+    gemensam brunn/ande), och punktens langd delas med antalet. Summan over en schaktgrupp = schaktets
+    langd. Ledningar utan samschakt far hela sin langd."""
+    radie = SCHAKT_BREDD_FAKTOR * avstand
+    for p in ledningar:
+        L = p.get('langd_m') or 0.0
+        g = p.get('schaktgrupp')
+        if not g or L <= 0:
+            p['schakt_langd_m'] = round(L, 2)
+            continue
+        i = p['index']
+        pts = [(q[0], q[1]) for q in p['_pts']]
+        prov = _langs(pts, intervall)
+        andar = (pts[0], pts[-1])
+        ms = [m for m, _, _ in prov]
+        summa = 0.0
+        for k, (m, x, y) in enumerate(prov):
+            w = ((ms[k + 1] if k + 1 < len(ms) else m) - (ms[k - 1] if k > 0 else m)) / 2.0
+            n = 1
+            for j in rutnat.inom(x, y, radie):
+                if j == i or gruppnr.get(j) != g:
+                    continue
+                o = [(r[0], r[1]) for r in (ledningar[j]['_pts'][0], ledningar[j]['_pts'][-1])]
+                gemensam = [e for e in andar if any(_avst(e, h) <= tolerans for h in o)]
+                if any(_avst((x, y), h) <= avstand for h in gemensam):
+                    continue
+                n += 1
+            summa += w / n
+        p['schakt_langd_m'] = round(summa, 2)
+
+
 def _korsning(p, q, x, y, vatten_djup):
     """Korsningspost mellan ledningarna p och q i (x, y): station och niva pa bada."""
     def niva(led, st):
@@ -823,7 +859,8 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         'id', 'system', 'fran', 'till', 'langd_m', 'dimension', 'material', 'ledningstyp', 'anlaggningsar',
         'renoveringsar', 'vg_fran', 'vg_till', 'lutning_promille', 'lutning_gis', 'djup_medel', 'djup_min',
         'djup_max', 'djupklass', 'djup_kalla', 'djup_start', 'djup_slut', 'tackning_min', 'mark_medel',
-        'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_system', 'schakt_antal',
+        'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_langd_m', 'schakt_system',
+        'schakt_antal',
         'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar',
         'klippt_m'], rader)
     _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'system', 'lockniva', 'bottenniva', 'vg_min', 'djup_m',
