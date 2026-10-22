@@ -20,6 +20,7 @@ infodring;;;;;901;1300;m;15000;Renovering av ledning Ø 1000–1300 (användaren
 servis_infodring;;;;V;;;m;14697;Dricksvattenservis infodring – servisledning schaktfritt
 servis_infodring;;;;S,K;;;m;22464;Spillvattenservis infodring – servisledning schaktfritt (kombinerat som spill)
 servis_infodring;;;;D;;;m;22464;Dagvattenservis infodring – servisledning schaktfritt
+servis_hatt;;;;S,D,K;;;st;30000;ANTAGET (användaren okt 2026, ca-pris) – spill-, dag- och kombinerad servis högst 6 m infodras med hatt; längre serviser per meter (servis_infodring)
 schakt;ledningschakt;1;;;0;350;m;19000;Svoa 1 ledning upp till Ø 350 ledningschakt
 schakt;ledningschakt;1;;;351;400;m;23200;Svoa 1 ledning Ø 400 ledningschakt
 schakt;ledningschakt;1;;;401;600;m;28200;Svoa 1 ledning Ø 600 ledningschakt
