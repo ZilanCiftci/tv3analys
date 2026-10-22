@@ -1083,8 +1083,11 @@ Rörspräckning …, Gropar, Servisgropar; Serviser-fliken "Serviser i samma gra
 kolumner. JSON `alt_lagg_om_per_schakttyp`. Test: scratchpad/test_ledning_analys.py (prislista, handräknade S1 1 205 303 /
 S2 1 545 076 / K1 970 000 / V1 2 360 000 resp. rörspräckt 1 134 984, servisgrav V+S → komplett servis delad, S1 Ø 950 med
 spontsläde → läggs om i alt. strumpa och V1 med den, inget pris för 3 ledningar med en Ø 950, `--schakttyp kc`, gisdata).
-Att stämma av med användaren: 3 ledningar med en större ledning (34 200) billigare än 2 ledningar med en större (63 260) i alla
-schakttyper; ensam spill-/dagservis i helschakt; återställning; ny brunn.
+Användarens besked okt 2026: "Ø 700"-raderna (dimension_till 700) har ingen övre gräns ("≥ 700 när det står större än 700";
+8 rader, testet: 2 ledningar en Ø 800 = 63 260, S1 Ø 950 spontsläde 39 300/3); ensam spill-/dagservis i helschakt = komplett
+servis 22 464 (spillen djupast); övriga ANTAGET/SCHABLON godkända. Kvar: kalkylansvarig kontrollerar 3 ledningar med en
+större (34 200) < 2 ledningar med en större (63 260) – OBS kvar i kommentaren. Användaren återkommer med Lista fält för
+vattenlagren (ventiler, brandposter, övriga anordningar).
 **Lista fält: "ImportError: No module named lista_falt"** (okt 2026, användarens körning i ArcMap): `ListaFalt.execute` gjorde
 `import lista_falt` direkt i stället för `_ladda_modul('lista_falt')`, så modulmappen lades aldrig i sys.path när ArcMap
 återställt den (samma orsak som skapa_ledningslager-felet tidigare). Rättat; alla verktyg laddar nu modulerna via
