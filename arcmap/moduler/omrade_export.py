@@ -153,6 +153,7 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
 
     tagna = set()
     resultat = []
+    hoppade = []
     sr_namn = ''
     mxd = _mxd() if lagg_i_kartan else None
     df = None
@@ -163,58 +164,68 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
             df = None
     try:
         for namn in lager:
-            lyr = hitta_lager(namn)
-            src, dq = kalla(lyr)
             try:
-                d = arcpy.Describe(src)
-                geometri = txt(getattr(d, 'shapeType', '') or '')
-                if not sr_namn:
-                    sr_namn = txt(getattr(getattr(d, 'spatialReference', None), 'name', '') or '')
-            except Exception as e:
-                logg('  hoppar "%s": kan inte beskrivas (%s)' % (txt(namn), txt(e)))
-                continue
-            if not geometri:
-                logg('  hoppar "%s": inget featurelager' % txt(namn))
-                continue
-            lagernamn = _lagernamn(lyr)
-            fc_namn = _fc_namn(lagernamn, tagna)
-            ut_fc = os.path.join(gdb, fc_namn)
-            try:
+                lyr = hitta_lager(namn)
+                src, dq = kalla(lyr)
+                try:
+                    d = arcpy.Describe(src)
+                    geometri = txt(getattr(d, 'shapeType', '') or '')
+                    if not sr_namn:
+                        sr_namn = txt(getattr(getattr(d, 'spatialReference', None), 'name', '') or '')
+                except Exception as e:
+                    logg('  hoppar "%s": kan inte beskrivas (%s)' % (txt(namn), txt(e)))
+                    continue
+                if not geometri:
+                    logg('  hoppar "%s": inget featurelager' % txt(namn))
+                    continue
+                lagernamn = _lagernamn(lyr)
+                fc_namn = _fc_namn(lagernamn, tagna)
+                ut_fc = os.path.join(gdb, fc_namn)
+                try:
+                    arcpy.Delete_management(TMP_LAGER)
+                except Exception:
+                    pass
+                _tillfalligt_lager(lyr, src, dq, lagernamn)
+                arcpy.SelectLayerByLocation_management(TMP_LAGER, 'INTERSECT', TMP_OMRADE)
+                antal = int(arcpy.GetCount_management(TMP_LAGER).getOutput(0))
+                if antal == 0:
+                    logg('  %s: inga objekt inom omradet' % lagernamn)
+                    arcpy.Delete_management(TMP_LAGER)
+                    resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
+                                     'kalla': txt(src), 'fc': None, 'antal': 0, 'korsar_grans': 0,
+                                     'geometri': geometri})
+                    continue
+                if arcpy.Exists(ut_fc):
+                    _ta_bort_ur_kartan(mxd, ut_fc)
+                    arcpy.Delete_management(ut_fc)
+                arcpy.CopyFeatures_management(TMP_LAGER, ut_fc)
                 arcpy.Delete_management(TMP_LAGER)
-            except Exception:
-                pass
-            arcpy.MakeFeatureLayer_management(src, TMP_LAGER, dq)
-            arcpy.SelectLayerByLocation_management(TMP_LAGER, 'INTERSECT', TMP_OMRADE)
-            antal = int(arcpy.GetCount_management(TMP_LAGER).getOutput(0))
-            if antal == 0:
-                logg('  %s: inga objekt inom omradet' % lagernamn)
-                arcpy.Delete_management(TMP_LAGER)
-                resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
-                                 'kalla': txt(src), 'fc': None, 'antal': 0, 'korsar_grans': 0,
-                                 'geometri': geometri})
-                continue
-            if arcpy.Exists(ut_fc):
-                _ta_bort_ur_kartan(mxd, ut_fc)
-                arcpy.Delete_management(ut_fc)
-            arcpy.CopyFeatures_management(TMP_LAGER, ut_fc)
-            arcpy.Delete_management(TMP_LAGER)
 
-            # Omrade, grans och kallager per objekt
-            befintliga = set(f.name.upper() for f in arcpy.ListFields(ut_fc))
-            if FALT_OMRADE not in befintliga:
-                arcpy.AddField_management(ut_fc, FALT_OMRADE, 'TEXT', field_length=254, field_alias='Omrade')
-            if FALT_KORSAR not in befintliga:
-                arcpy.AddField_management(ut_fc, FALT_KORSAR, 'SHORT', field_alias='Korsar omradesgrans')
-            if FALT_KALLA not in befintliga:
-                arcpy.AddField_management(ut_fc, FALT_KALLA, 'TEXT', field_length=100, field_alias='Kallager')
-            korsar = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)
-            logg('  %s: %d objekt -> %s%s' % (lagernamn, antal, fc_namn,
-                                               (' (%d korsar omradesgransen)' % korsar) if korsar else ''))
-            resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
-                             'kalla': txt(src), 'fc': ut_fc, 'antal': antal, 'korsar_grans': korsar,
-                             'geometri': geometri})
-            if df is not None:
-                _lagg_in(df, ut_fc, lyr, lagernamn)
+                # Omrade, grans och kallager per objekt
+                befintliga = set(f.name.upper() for f in arcpy.ListFields(ut_fc))
+                if FALT_OMRADE not in befintliga:
+                    arcpy.AddField_management(ut_fc, FALT_OMRADE, 'TEXT', field_length=254, field_alias='Omrade')
+                if FALT_KORSAR not in befintliga:
+                    arcpy.AddField_management(ut_fc, FALT_KORSAR, 'SHORT', field_alias='Korsar omradesgrans')
+                if FALT_KALLA not in befintliga:
+                    arcpy.AddField_management(ut_fc, FALT_KALLA, 'TEXT', field_length=100, field_alias='Kallager')
+                korsar = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)
+                logg('  %s: %d objekt -> %s%s' % (lagernamn, antal, fc_namn,
+                                                   (' (%d korsar omradesgransen)' % korsar) if korsar else ''))
+                resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
+                                 'kalla': txt(src), 'fc': ut_fc, 'antal': antal, 'korsar_grans': korsar,
+                                 'geometri': geometri})
+                if df is not None:
+                    _lagg_in(df, ut_fc, lyr, lagernamn)
+            except Exception as e:                      # ett trasigt lager ska inte stoppa exporten
+                logg('  OBS hoppar over "%s": %s' % (txt(namn), txt(e)))
+                hoppade.append(txt(namn))
+                resultat.append({'lager': txt(namn), 'langt_namn': txt(namn), 'kalla': '', 'fc': None,
+                                 'antal': 0, 'korsar_grans': 0, 'geometri': '', 'fel': txt(e)})
+                try:
+                    arcpy.Delete_management(TMP_LAGER)
+                except Exception:
+                    pass
     finally:
         try:
             arcpy.Delete_management(TMP_OMRADE)
@@ -237,6 +248,8 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
     n_tot = sum(r['antal'] for r in resultat)
     logg('%d objekt i %d lager exporterade till %s' % (n_tot, sum(1 for r in resultat if r['fc']), gdb))
     logg('  export_info.json skriven i %s' % ut_mapp)
+    if hoppade:
+        logg('OBS %d lager kunde inte exporteras (se ovan): %s' % (len(hoppade), ', '.join(hoppade)))
     if mxd is not None and df is not None:
         try:
             arcpy.RefreshTOC()
@@ -244,6 +257,40 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
         except Exception:
             pass
     return info
+
+
+def _utan_tabellprefix(dq):
+    """sde_geopipe.GNG.pipeSewerWellP.Status -> Status (falt i en kopplad tabell, join)."""
+    return re.sub(r"\b(?:[A-Za-z_]\w*\.)+([A-Za-z_]\w*)\b", r"\1", dq)
+
+
+def _tillfalligt_lager(lyr, src, dq, lagernamn):
+    """MakeFeatureLayer for exporten. Lager med en koppling (join) i kartan har en definitionsfraga med
+    tabellprefix (sde_geopipe.GNG.pipeSewerWellP.Status ...) som inte galler datakallan ensam (ERROR
+    000358). Da provas fragan utan prefix och sist lagret i kartan sjalvt (med kopplingen)."""
+    forsok = [(src, dq, '')]
+    if dq and _utan_tabellprefix(dq) != dq:
+        forsok.append((src, _utan_tabellprefix(dq), 'definitionsfragan utan tabellprefix'))
+    if lyr is not None and not isinstance(lyr, (TEXTTYP, bytes)):
+        forsok.append((lyr, None, 'lagret i kartan med sin koppling (join)'))
+    fel = []
+    for kalla_, fraga, hur in forsok:
+        try:
+            arcpy.Delete_management(TMP_LAGER)
+        except Exception:
+            pass
+        try:
+            if fraga:
+                arcpy.MakeFeatureLayer_management(kalla_, TMP_LAGER, fraga)
+            else:
+                arcpy.MakeFeatureLayer_management(kalla_, TMP_LAGER)
+        except Exception as e:
+            fel.append(txt(e).strip().split('\n')[0])
+            continue
+        if hur:
+            logg('  %s: definitionsfragan gick inte att anvanda direkt - %s' % (lagernamn, hur))
+        return
+    raise RuntimeError('kan inte skapa lagret (%s)' % ' / '.join(fel))
 
 
 def _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn):
