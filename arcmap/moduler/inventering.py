@@ -17,8 +17,10 @@ kan lasa filen som gis:) och lagger till det som behovs for Excel och kalkyl per
   - serviser: varje servis vars ande ligger inom toleransen fran en huvudledning kopplas till den
     narmaste; per ledning antal, summerad langd och lista; okopplade serviser i datakvalitet
   - parallella ledningar: linjen samplas var INTERVALL m och alla andra ledningar inom
-    parallell_avstand (c-c) soks; andel av langden >= parallell_andel (for nagon av de tva) =
-    samschakt; sammanhangande samschakt-par bildar schaktgrupper (S + D + V i samma gata)
+    parallell_avstand (c-c) soks; par som gar parallellt minst parallell_min_m = samschakt;
+    sammanhangande samschakt-par bildar schaktgrupper (S + D + V i samma gata). Varje ledning delas
+    langs sin langd i grav_delar: stracka for stracka vilka andra ledningar som ligger i samma grav
+    (gar de parallellt 50 m och sedan fortsatter den ena ensam 20 m ar det tva delar)
   - korsningar med andra ledningar (geometrisk skarning, inte vid gemensam brunn/ande) med
     vattengang/niva pa bada och hojdskillnaden
   - brunnar: lockniva, bottenniva, antal anslutna ledningar, lagsta vattengang och djup
@@ -53,7 +55,7 @@ ORIMLIG_PROMILLE = 200.0      # lutning over detta flaggas "vg orimlig" (trolige
 SCHAKT_BREDD_FAKTOR = 2.0       # schaktlangd: ledningar i samma schaktgrupp inom faktor x parallell_avstand
                                 # (c-c) fran varandra raknas till samma schakt
 DJUPKLASSER = (2.0, 3.0, 4.0)  # granser for djupklasserna 0-2, 2-3, 3-4, > 4 m (F13)
-PARALLELL_MIN_ANDEL = 0.2     # par dar ingen av ledningarna har minst denna andel inom avstandet listas inte
+PARALLELL_MIN_ANDEL = 0.2     # par som varken ar samschakt eller har minst denna andel inom avstandet listas inte
                               # (korsningar och anslutningar snett intill ger nagra procent)
 SERVIS_SYSTEM = {'S': 'S', 'D': 'D', 'K': 'K', 'V': 'V'}
 # Anordningar: faltet med typkoden (forsta som finns i lagret), dimensionsfaltet och kategorierna.
@@ -387,7 +389,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
               markhojd=None, z_falt=None, lock_falt=None, botten_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, ren_falt=None, lutning_falt=None, id_falt=None, tolerans=1.0,
-              parallell_avstand=3.0, parallell_andel=0.6, intervall=1.0, vatten_djup=1.7,
+              parallell_avstand=3.0, parallell_min_m=10.0, intervall=1.0, vatten_djup=1.7,
               sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None,
               anordningslager=None, anordning_radie=3.0, klipp_vatten=True):
     """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen."""
@@ -599,13 +601,14 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         a, b = ledningar[i], ledningar[j]
         andel_a = rec['n'][i] / float(max(n_prov[i], 1))
         andel_b = rec['n'][j] / float(max(n_prov[j], 1))
-        if max(andel_a, andel_b) < PARALLELL_MIN_ANDEL:
-            continue                                # korsning eller strax forbi - inte parallell
         gemensam_m = min(max(rec['n'][i], rec['n'][j]) * float(intervall), min(a['langd_m'], b['langd_m']))
+        samschakt = gemensam_m >= float(parallell_min_m) - 1e-9
+        if not samschakt and max(andel_a, andel_b) < PARALLELL_MIN_ANDEL:
+            continue                                # korsning eller strax forbi - inte parallell
         post = {'ledning_a': a['id'], 'ledning_b': b['id'], 'system_a': a['system'], 'system_b': b['system'],
                 'andel_a': round(andel_a, 2), 'andel_b': round(andel_b, 2),
                 'medelavstand_m': _runda(_medel(rec['d'])), 'gemensam_m': round(gemensam_m, 1),
-                'samschakt': max(andel_a, andel_b) >= float(parallell_andel), '_i': i, '_j': j}
+                'samschakt': samschakt, '_i': i, '_j': j}
         parallella.append(post)
     # schaktgrupper (union-find over samschakt-paren)
     foralder = {}
@@ -648,7 +651,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
     for post in parallella:
         post['schaktgrupp'] = gruppnr.get(post['_i']) if post['samschakt'] else None
         del post['_i'], post['_j']
-    _schaktlangd(ledningar, rutnat, gruppnr, float(intervall), float(parallell_avstand), float(tolerans))
+    _grav_delar(ledningar, rutnat, gruppnr, float(intervall), float(parallell_avstand), float(tolerans),
+                float(parallell_min_m))
     n_sam = sum(1 for p in parallella if p['samschakt'])
     logg('  %d parallella par, %d samschakt, %d schaktgrupper (%s)' % (len(parallella), n_sam, len(grupper), tid()))
 
@@ -747,7 +751,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'kalla': 'inventering.py',
         'genererad': datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
-                       'parallell_andel': float(parallell_andel), 'intervall_m': float(intervall),
+                       'parallell_min_m': float(parallell_min_m), 'intervall_m': float(intervall),
                        'vatten_djup_m': float(vatten_djup), 'vatten_djup_till': 'botten',
                        'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
@@ -779,27 +783,31 @@ def _vatten_till_botten(led, vatten_djup):
     return float(vatten_djup) + (led.get('dimension') or 0) / 2000.0
 
 
-def _schaktlangd(ledningar, rutnat, gruppnr, intervall, avstand, tolerans):
-    """Ledningens andel av schaktets langd (schakt_langd_m): provpunkter var intervall m; i varje punkt
-    raknas ledningarna i samma schaktgrupp inom SCHAKT_BREDD_FAKTOR x parallell_avstand (inte vid en
-    gemensam brunn/ande), och punktens langd delas med antalet. Summan over en schaktgrupp = schaktets
-    langd. Ledningar utan samschakt far hela sin langd."""
+def _grav_delar(ledningar, rutnat, gruppnr, intervall, avstand, tolerans, min_m):
+    """Delar varje ledning langs sin langd efter vilka andra ledningar som ligger i samma grav
+    (grav_delar: [{fran_m, till_m, langd_m, ledningar: [id]}]). Provpunkter var intervall m; i varje
+    punkt raknas ledningarna i samma schaktgrupp inom SCHAKT_BREDD_FAKTOR x parallell_avstand (inte vid
+    en gemensam brunn/ande); en partner som ligger intill kortare an min_m i foljd raknas inte (korsning,
+    snett forbi). schakt_langd_m = sum(delens langd / antal ledningar i graven) - summan over en
+    schaktgrupp ar schaktets langd. Ledningar utan samschakt far en del med hela langden."""
     radie = SCHAKT_BREDD_FAKTOR * avstand
     for p in ledningar:
         L = p.get('langd_m') or 0.0
         g = p.get('schaktgrupp')
         if not g or L <= 0:
             p['schakt_langd_m'] = round(L, 2)
+            p['grav_delar'] = [{'fran_m': 0.0, 'till_m': round(L, 2), 'langd_m': round(L, 2), 'ledningar': []}]
             continue
         i = p['index']
         pts = [(q[0], q[1]) for q in p['_pts']]
         prov = _langs(pts, intervall)
         andar = (pts[0], pts[-1])
         ms = [m for m, _, _ in prov]
-        summa = 0.0
+        punkter = []                   # [(fran, till, set av index)]
         for k, (m, x, y) in enumerate(prov):
-            w = ((ms[k + 1] if k + 1 < len(ms) else m) - (ms[k - 1] if k > 0 else m)) / 2.0
-            n = 1
+            fran = (m + ms[k - 1]) / 2.0 if k > 0 else 0.0
+            till = (m + ms[k + 1]) / 2.0 if k + 1 < len(ms) else L
+            med = set()
             for j in rutnat.inom(x, y, radie):
                 if j == i or gruppnr.get(j) != g:
                     continue
@@ -807,8 +815,35 @@ def _schaktlangd(ledningar, rutnat, gruppnr, intervall, avstand, tolerans):
                 gemensam = [e for e in andar if any(_avst(e, h) <= tolerans for h in o)]
                 if any(_avst((x, y), h) <= avstand for h in gemensam):
                     continue
-                n += 1
-            summa += w / n
+                med.add(j)
+            punkter.append((fran, till, med))
+        # korta stycken intill en partner raknas inte
+        for j in set().union(*[q[2] for q in punkter]) if punkter else ():
+            k = 0
+            while k < len(punkter):
+                if j not in punkter[k][2]:
+                    k += 1
+                    continue
+                e = k
+                while e + 1 < len(punkter) and j in punkter[e + 1][2]:
+                    e += 1
+                if punkter[e][1] - punkter[k][0] < min_m - 1e-9:
+                    for q in range(k, e + 1):
+                        punkter[q][2].discard(j)
+                k = e + 1
+        delar = []
+        for fran, till, med in punkter:
+            namn = sorted(ledningar[j]['id'] for j in med)
+            if delar and delar[-1]['ledningar'] == namn:
+                delar[-1]['till_m'] = till
+            else:
+                delar.append({'fran_m': fran, 'till_m': till, 'ledningar': namn})
+        summa = 0.0
+        for d in delar:
+            d['fran_m'], d['till_m'] = round(d['fran_m'], 2), round(d['till_m'], 2)
+            d['langd_m'] = round(d['till_m'] - d['fran_m'], 2)
+            summa += (d['till_m'] - d['fran_m']) / (1 + len(d['ledningar']))
+        p['grav_delar'] = delar
         p['schakt_langd_m'] = round(summa, 2)
 
 
@@ -853,6 +888,9 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         r['serviser'] = ', '.join(p['serviser'])
         r['flaggor'] = ', '.join(p['flaggor'])
         r['schakt_ledningar'] = ', '.join(p['schakt_ledningar'])
+        r['grav_delar'] = '; '.join('%s-%s m: %s' % (_csvtal(d['fran_m']), _csvtal(d['till_m']),
+                                                       ', '.join(d['ledningar']) or 'ensam')
+                                    for d in p.get('grav_delar') or [])
         r['anordningar'] = ', '.join('%s %d' % (k, v) for k, v in sorted(p.get('anordningar_antal', {}).items()))
         rader.append(r)
     _skriv_csv(stam + '_ledningar.csv', [
@@ -860,7 +898,7 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         'renoveringsar', 'vg_fran', 'vg_till', 'lutning_promille', 'lutning_gis', 'djup_medel', 'djup_min',
         'djup_max', 'djupklass', 'djup_kalla', 'djup_start', 'djup_slut', 'tackning_min', 'mark_medel',
         'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_langd_m', 'schakt_system',
-        'schakt_antal',
+        'schakt_antal', 'grav_delar',
         'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar',
         'klippt_m'], rader)
     _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'system', 'lockniva', 'bottenniva', 'vg_min', 'djup_m',

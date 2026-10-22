@@ -67,6 +67,10 @@ SCHAKTSATT_NAMN = {"ledningschakt": "Ledningschakt", "spontlada": "Spontlåda", 
                    "djup_saknas": "Djup saknas (ledningschakt)"}
 STORRE_DIM = 400                  # ledningar över detta (mm) räknas som "större" i grav med 2–3 ledningar
 MAX_LEDNINGAR_I_GRAV = 3          # prislistan har 1–3 ledningar i samma grav
+PARALLELL_MIN_M = 10.0            # äldre ledningsdata.json (utan grav_delar): partner som går parallellt minst så här
+                                  # långt delar grav på sin andel av längden (nyare filer: Ledningsinventering delar upp)
+VATTEN_OMLAGGNING_ANDEL = 0.5     # alt. schaktfritt: vattenledningen läggs om i samma grav när minst denna andel av dess
+                                  # längd ligger intill en avloppsledning som läggs om (annars rörspräcks den)
 STANDARDDJUP_M = 2.5              # schaktpriset gäller till detta djup (vattengång) ...
 DJUPTILLAGG_STEG_M = 1.5          # ... därefter ett djuptillägg per påbörjade 1,5 m
 STRUMPA_SYSTEM = ("S", "D", "K")  # system som kan infodras – vattenledningar (V) infodras inte
@@ -205,25 +209,58 @@ def _djup_punkter(led: dict) -> list[float]:
     return ut
 
 
+def grav_delar(led: dict) -> list[dict]:
+    """Ledningens delsträckor med de andra ledningarna i samma grav: [{langd_m, ledningar: [id]}]. Går två
+    ledningar parallellt 50 m och den ena fortsätter ensam 20 m blir det två delar. Ur Ledningsinventering
+    (grav_delar); i äldre ledningsdata.json uppskattas delarna ur parallella: partner som går parallellt
+    minst PARALLELL_MIN_M ligger intill på sin andel av längden, de med störst andel överlappar varandra."""
+    if led.get("grav_delar") is not None:
+        return led["grav_delar"]
+    L = led.get("langd_m") or 0.0
+    par = sorted(((p.get("ledning"), min(1.0, p.get("andel") or 0.0)) for p in led.get("parallella") or []
+                  if (p.get("gemensam_m") or 0.0) >= PARALLELL_MIN_M - 1e-9), key=lambda x: -x[1])
+    a = [x for _, x in par] + [0.0]
+    delar = [{"langd_m": L * (a[k - 1] - a[k]), "ledningar": [q for q, _ in par[:k]]}
+             for k in range(len(par), 0, -1) if a[k - 1] - a[k] > 1e-9]
+    if 1.0 - a[0] > 1e-9 or not delar:
+        delar.append({"langd_m": L * (1.0 - a[0]), "ledningar": []})
+    return delar
+
+
 def _gravpartners(led: dict, per_id: dict, medlagda: set | None = None) -> list[tuple[dict, float]]:
-    """Samschakt-partner (ledning, andel av den här ledningens längd) som också läggs om, störst andel först.
-    medlagda = id:n som läggs om i alternativet (None = alla)."""
-    ut = []
-    for p in led.get("parallella") or []:
-        q = per_id.get(p.get("ledning"))
-        if p.get("samschakt") and q is not None and (medlagda is None or q.get("id") in medlagda):
-            ut.append((q, p.get("andel") or 0.0))
-    return sorted(ut, key=lambda x: -x[1])
+    """Ledningar som ligger i samma grav på någon del av ledningen och också läggs om: (ledning, andel av den
+    här ledningens längd), störst andel först. medlagda = id:n som läggs om i alternativet (None = alla)."""
+    L = led.get("langd_m") or 0.0
+    delad = defaultdict(float)
+    for d in grav_delar(led):
+        for x in d.get("ledningar") or []:
+            delad[x] += d.get("langd_m") or 0.0
+    ut = [(per_id[x], (m / L) if L > 0 else 0.0) for x, m in delad.items()
+          if x in per_id and x != led.get("id") and (medlagda is None or x in medlagda)]
+    return sorted(ut, key=lambda x: (-x[1], str(x[0].get("id"))))
+
+
+def _i_grav(led: dict, del_: dict, per_id: dict, medlagda: set | None, rang: dict) -> list[dict]:
+    """De andra ledningarna i graven på delsträckan som också läggs om (högst MAX_LEDNINGAR_I_GRAV − 1,
+    de med längst gemensam sträcka)."""
+    med = [per_id[x] for x in del_.get("ledningar") or []
+           if x in per_id and x != led.get("id") and (medlagda is None or x in medlagda)]
+    return sorted(med, key=lambda q: rang.get(q.get("id"), 99))[:MAX_LEDNINGAR_I_GRAV - 1]
 
 
 def ledningar_i_grav(led: dict, per_id: dict | None = None, medlagda: set | None = None) -> int:
-    """1 + summan av andelen av ledningens längd som delas med varje samschakt-partner som också läggs
-    om, avrundat (högst MAX_LEDNINGAR_I_GRAV)."""
-    if per_id is None:
-        andel = sum(p.get("andel") or 0.0 for p in led.get("parallella") or [] if p.get("samschakt"))
-    else:
-        andel = sum(a for _, a in _gravpartners(led, per_id, medlagda))
-    return max(1, min(MAX_LEDNINGAR_I_GRAV, 1 + int(round(andel))))
+    """Flest ledningar i graven på någon delsträcka (1 = ensam hela vägen, högst MAX_LEDNINGAR_I_GRAV)."""
+    n = 1
+    for d in grav_delar(led):
+        if (d.get("langd_m") or 0) <= 0:
+            continue
+        if per_id is None:
+            k = len(d.get("ledningar") or [])
+        else:
+            k = sum(1 for x in d.get("ledningar") or []
+                    if x in per_id and x != led.get("id") and (medlagda is None or x in medlagda))
+        n = max(n, 1 + k)
+    return min(MAX_LEDNINGAR_I_GRAV, n)
 
 
 def _antal_djuptillagg(djup: float) -> int:
@@ -245,49 +282,81 @@ def schaktsatt(djup: float | None) -> str:
 
 def _grav(led, kost, per_id, schakttyp, medlagda=None):
     """Huvudledningens del av graven: ({schakt, djuptillagg, aterstallning, brunnar, spont, schaktsatt,
-    pris_typ}, brist, n, beskrivning). Schakttyp djup: gravens medeldjup (djupaste ledningen i graven)
-    avgör schaktsättet; slagen spont = SPONT_SIDOR × (medeldjup + SPONT_NEDSLAGNING_M) × längd m²."""
+    pris_typ, gravdjup, delad_m}, brist, n, beskrivning). Räknas delsträcka för delsträcka (grav_delar): där
+    ledningen ligger i samma grav som andra ledningar som läggs om gäller priset för 2–3 ledningar delat på
+    antalet, där den går ensam priset för en ledning. Schakttyp djup: gravens medeldjup (djupaste ledningen i
+    graven på delsträckan) avgör schaktsättet; slagen spont = SPONT_SIDOR × (medeldjup + SPONT_NEDSLAGNING_M)
+    × längd m², delad på antalet ledningar. n = flest ledningar i graven på någon delsträcka."""
     L = led.get("langd_m") or 0.0
     system = led.get("system") or ""
-    n = ledningar_i_grav(led, per_id, medlagda)
-    i_grav = [led] + [q for q, _ in _gravpartners(led, per_id, medlagda)][:n - 1]
-    dims = [q.get("dimension") for q in i_grav]
-    if any(d is None for d in dims):
-        return None, "dimension saknas" + ("" if led.get("dimension") is None else " på ledning i samma grav"), n, ""
-    dmax = max(dims)
-    storre = sum(1 for d in dims if d > STORRE_DIM)
-    satt, gdjup, pris_typ = None, None, schakttyp
-    if schakttyp == SCHAKTTYP_DJUP:
-        djupen_g = [q.get("djup_medel") for q in i_grav if q.get("djup_medel") is not None]
-        gdjup = max(djupen_g) if djupen_g else None
-        satt = schaktsatt(gdjup)
-        pris_typ = "spontslade" if satt == "spontlada" else "ledningschakt"
-    pris_m = gravpris(kost, pris_typ, n, storre, dmax)
-    beskr = f"{n} ledning{'ar' if n > 1 else ''}" + (f", {storre} större" if n > 1 else "") + f", Ø {dmax:g}"
-    if pris_m is None:
-        return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(pris_typ, pris_typ)})", n, beskr
-    o = {"schakt": pris_m / n * L, "spont": 0.0, "spont_m2": 0.0, "schaktsatt": satt, "pris_typ": pris_typ,
-         "gravdjup": gdjup}
-    if satt == "slagen_spont":
-        m2 = SPONT_SIDOR * (gdjup + SPONT_NEDSLAGNING_M) * L / n
-        pris_m2 = kr(kost, "slagen_spont")
-        if pris_m2 is None:
-            return None, "pris för slagen spont saknas i kostnadsfilen", n, beskr
-        o["spont_m2"], o["spont"] = m2, m2 * pris_m2
+    rang = {q.get("id"): k for k, (q, _) in enumerate(_gravpartners(led, per_id, medlagda))}
+    delar = [(d, _i_grav(led, d, per_id, medlagda, rang)) for d in grav_delar(led) if (d.get("langd_m") or 0) > 0]
+    summa_delar = sum(d["langd_m"] for d, _ in delar)
+    skala = L / summa_delar if summa_delar > 0 else 0.0       # delarnas avrundade längder summerar till L
+    n_max = max([1 + len(med) for _, med in delar] or [1])
     # Djuptillägg per påbörjade DJUPTILLAGG_STEG_M under STANDARDDJUP_M, medel över profilens punkter
-    tillagg_m = kr(kost, "djuptillagg", dim=dmax) or 0.0
     djupen = _djup_punkter(led) if system != "V" else []
     if not djupen and led.get("djup_medel") is not None:
         djupen = [led["djup_medel"]]
     steg = (sum(_antal_djuptillagg(d) for d in djupen) / len(djupen)) if djupen else 0.0
-    o["djuptillagg"] = steg * tillagg_m / n * L
-    o["aterstallning"] = (kr(kost, "aterstallning") or 0.0) / n * L
+    o = {"schakt": 0.0, "spont": 0.0, "spont_m2": 0.0, "djuptillagg": 0.0, "aterstallning": 0.0,
+         "schaktsatt": None, "pris_typ": schakttyp, "gravdjup": None, "delad_m": 0.0}
+    beskr_delar, noter, utan_pris = [], [], defaultdict(float)
+    if led.get("dimension") is None:
+        return None, "dimension saknas", n_max, ""
+    for d, med in delar:
+        lm = d["langd_m"] * skala
+        utan = [q for q in med if q.get("dimension") is None]
+        if utan:
+            noter.append("dimension saknas på " + ", ".join(str(q.get("id")) for q in utan) +
+                         " i samma grav – graven räknad utan den")
+            med = [q for q in med if q.get("dimension") is not None]
+        while True:
+            n = 1 + len(med)
+            i_grav = [led] + med
+            dims = [q.get("dimension") for q in i_grav]
+            dmax = max(dims)
+            storre = sum(1 for x in dims if x > STORRE_DIM)
+            satt, gdjup, pris_typ = None, None, schakttyp
+            if schakttyp == SCHAKTTYP_DJUP:
+                djupen_g = [q.get("djup_medel") for q in i_grav if q.get("djup_medel") is not None]
+                gdjup = max(djupen_g) if djupen_g else None
+                satt = schaktsatt(gdjup)
+                pris_typ = "spontslade" if satt == "spontlada" else "ledningschakt"
+            pris_m = gravpris(kost, pris_typ, n, storre, dmax)
+            beskr = f"{n} ledning{'ar' if n > 1 else ''}" + (f", {storre} större" if n > 1 else "") + f", Ø {dmax:g}"
+            if pris_m is not None or not med:
+                break
+            # prislistan saknar kombinationen: den största av de andra ledningarna räknas i egen grav här
+            storst = max(med, key=lambda q: q.get("dimension"))
+            utan_pris[(beskr, storst.get("id"))] += lm
+            med = [q for q in med if q is not storst]
+        if pris_m is None:
+            return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(pris_typ, pris_typ)})", n_max, beskr
+        o["schakt"] += pris_m / n * lm
+        if satt == "slagen_spont":
+            pris_m2 = kr(kost, "slagen_spont")
+            if pris_m2 is None:
+                return None, "pris för slagen spont saknas i kostnadsfilen", n_max, beskr
+            m2 = SPONT_SIDOR * (gdjup + SPONT_NEDSLAGNING_M) * lm / n
+            o["spont_m2"] += m2
+            o["spont"] += m2 * pris_m2
+        o["djuptillagg"] += steg * (kr(kost, "djuptillagg", dim=dmax) or 0.0) / n * lm
+        o["aterstallning"] += (kr(kost, "aterstallning") or 0.0) / n * lm
+        if n > 1:
+            o["delad_m"] += lm
+        if o["schaktsatt"] is None or (gdjup is not None and (o["gravdjup"] is None or gdjup > o["gravdjup"])):
+            o["schaktsatt"], o["pris_typ"], o["gravdjup"] = satt, pris_typ, gdjup   # djupaste delsträckan
+        beskr_delar.append(f"{beskr} {lm:.0f} m".replace(".", ","))
     andar = sum(0.5 for b in (led.get("fran"), led.get("till")) if b) if system != "V" else 0.0
     o["brunnar"] = andar * (kr(kost, "brunn_ny") or 0.0)
     brist = "" if djupen or system == "V" else "djup saknas – inget djuptillägg"
-    if satt == "djup_saknas":
+    if o["schaktsatt"] == "djup_saknas":
         brist = "djup saknas – ingen spont, inget djuptillägg"
-    return o, brist, n, beskr
+    noter += [f"inget schaktpris för {b} på {_dk(round(m, 1))} m – {q} räknad i egen grav där"
+              for (b, q), m in utan_pris.items()]
+    brist = "; ".join(x for x in [brist] + list(dict.fromkeys(noter)) if x)
+    return o, brist, n_max, "; ".join(beskr_delar)
 
 
 def _servis_m(s: dict) -> float:
@@ -608,8 +677,9 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
 
 def alternativ_strumpa(ledningar, per_id, kost, schakttyp, alla_serv, grupp, serv_idx) -> None:
     """Metod och kostnad per ledning i alternativet schaktfritt (_alt_metod, _alt, _alt_grav).
-    Avlopp: infodring, annars rörspräckning, annars omläggning. Vatten: rörspräckning bara när ingen
-    avloppsledning i samma grav läggs om – annars omläggning tillsammans med den."""
+    Avlopp: infodring, annars rörspräckning, annars omläggning. Vatten: läggs om tillsammans med avloppet när
+    minst VATTEN_OMLAGGNING_ANDEL av dess längd ligger i samma grav som en avloppsledning som läggs om, annars
+    rörspräckning."""
     for led in ledningar:
         if led.get("system") == "V":
             continue
@@ -618,9 +688,11 @@ def alternativ_strumpa(ledningar, per_id, kost, schakttyp, alla_serv, grupp, ser
     for led in ledningar:
         if led.get("system") != "V":
             continue
-        grannar = [q for q, _ in _gravpartners(led, per_id) if q.get("system") != "V"]
-        schakt = [q.get("id") for q in grannar if q.get("id") in omlagda_avlopp]
-        if schakt:
+        schakt = sorted({x for d in grav_delar(led) for x in d.get("ledningar") or [] if x in omlagda_avlopp})
+        L = led.get("langd_m") or 0.0
+        intill = sum(d.get("langd_m") or 0.0 for d in grav_delar(led)
+                     if any(x in omlagda_avlopp for x in d.get("ledningar") or []))
+        if schakt and L > 0 and intill >= VATTEN_OMLAGGNING_ANDEL * L - 1e-6:
             led["_alt_metod"] = "omläggning"
             led["_alt_motiv"] = "läggs om i samma grav som " + ", ".join(str(x) for x in schakt)
         else:
@@ -770,6 +842,21 @@ def _kr(d: dict | None, k: str = "summa"):
     return round(d[k]) if d and d.get(k) is not None else None
 
 
+def _grav_text(l: dict) -> str | None:
+    """Delsträckorna med ledningarna i samma grav: "0–94,5 m: DSL1, SSL1; 94,5–200 m: SSL2"."""
+    delar = grav_delar(l)
+    if not any(d.get("ledningar") for d in delar):
+        return None
+    ut = []
+    for d in delar:
+        vem = ", ".join(d.get("ledningar") or []) or "ensam"
+        if d.get("fran_m") is not None:
+            ut.append(f"{_dk(round(d['fran_m'], 1))}–{_dk(round(d['till_m'], 1))} m: {vem}")
+        else:
+            ut.append(f"{_dk(round(d.get('langd_m') or 0, 1))} m: {vem}")
+    return "; ".join(ut)
+
+
 def _anmarkning(l: dict) -> str | None:
     delar = [x for x in (_dim_text(l), l.get("_alt_motiv"), l.get("_anm"),
                          ("alt. schaktfritt: " + l["_alt_brist"]) if l.get("_alt_brist") else None) if x]
@@ -890,7 +977,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Djup medel (m)", "Djup min (m)", "Djup max (m)", "Djupklass (m)", "Djupkälla", "Täckning min (m)",
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Ledningsändar (st)", "Övriga anordningar (st)", "Schaktgrupp",
-           "Ledningar i graven (st)", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
+           "Ledningar i graven (st)", "Delad grav (m)", "Grav längs ledningen", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
            "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)", "Schaktsätt efter djup", "Slagen spont efter djup (m²)", "Spont efter djup (kr)",
@@ -930,7 +1017,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                l.get("djup_start"), l.get("djup_slut"), l.get("antal_serviser"), _r(l.get("serviser_m")),
                _anordningar(l, "ventil"), _anordningar(l, "brandpost"), _anordningar(l, "servisventil"),
                _anordningar(l, "ledningsande"), _anordningar(l, "anordning"),
-               l.get("schaktgrupp"), l.get("_grav"), _r(schaktdel.get(id(l)), 2), ", ".join(l.get("schakt_ledningar") or []) or None,
+               l.get("schaktgrupp"), l.get("_grav"), _r((o or {}).get("delad_m")) if o else None, _grav_text(l),
+               _r(schaktdel.get(id(l)), 2), ", ".join(l.get("schakt_ledningar") or []) or None,
                ", ".join(f"{p['ledning']} ({p['system']}, {round(100 * (p.get('andel') or 0))} %)"
                          for p in l.get("parallella") or []) or None,
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
@@ -960,8 +1048,9 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
         if _dela_rubrik(k)[1] in ("kr", "kr/m"):
             format_[_dela_rubrik(k)[0]] = KR
     format_["Schaktlängd"] = M
+    format_["Delad grav"] = M
     format_["Slagen spont efter djup"] = M
-    tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14},
+    tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14, "Grav längs ledningen": 40},
            dolda=DOLDA_LEDNINGAR + attrkol, format=format_)
 
     # --- Kostnad per schaktgrupp (formler mot fliken Ledningar) ----------------------------------
@@ -1087,8 +1176,14 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kol
     p = data.get("parametrar") or {}
     info = [("Ledningsdata", kallor["ledningsdata"]), ("Genererad i ArcMap", data.get("genererad")),
             ("Koordinatsystem", data.get("koordinatsystem")), ("Höjdsystem", data.get("hojdsystem")),
-            ("Parallellt (c–c, andel)", f"{_dk(p.get('parallell_avstand_m'))} m, {round(100 * (p.get('parallell_andel') or 0))} %"
-             if p else None),
+            ("Parallellt", (f"inom {_dk(p.get('parallell_avstand_m'))} m c–c, minst "
+                            f"{_dk(p.get('parallell_min_m', PARALLELL_MIN_M))} m i följd"
+                            if p.get("parallell_andel") is None else
+                            f"inom {_dk(p.get('parallell_avstand_m'))} m c–c (äldre ledningsdata: andelen av längden "
+                            f"uppskattad, delar med minst {_dk(PARALLELL_MIN_M)} m gemensamt)") if p else None),
+            ("Samma grav", "räknas delsträcka för delsträcka längs ledningen: där ledningar går parallellt delar de "
+                           "graven (pris för 2–3 ledningar delat på antalet), där en ledning går ensam gäller priset "
+                           "för en ledning – se kolumnen Grav längs ledningen"),
             ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m (djupet räknas till rörets botten: + dimension/2)" if p.get("vatten_djup_m") is not None else None),
             ("Markhöjd", p.get("markhojd") or "locknivåerna (ingen markhöjd vald)"),
             ("Schakttyp", f"{ALLA_SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
@@ -1261,6 +1356,9 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
             "langd_m": l.get("langd_m"), "djup_medel": l.get("djup_medel"), "djupklass": l.get("djupklass"),
             "antal_serviser": l.get("antal_serviser"), "serviser_m": l.get("serviser_m"),
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),
+            "delad_grav_m": _r((l.get("_omlagg") or {}).get("delad_m")) if l.get("_omlagg") else None,
+            "grav_delar": [{k: d.get(k) for k in ("fran_m", "till_m", "langd_m", "ledningar") if k in d}
+                           for d in grav_delar(l)],
             "kostnad_omlaggning": _kr(l.get("_omlagg")), "kostnad_strumpa": _kr(l.get("_strumpa")),
             "kostnad_rorsprackning": _kr(l.get("_sprack")),
             "anordningar_antal": l.get("anordningar_antal"),

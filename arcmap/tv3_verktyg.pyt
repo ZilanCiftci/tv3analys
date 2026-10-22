@@ -1741,8 +1741,8 @@ class Ledningsinventering(object):
             return p
         tolerans = tal('Tolerans brunn\u2013ledning och servis\u2013ledning (m)', 'tolerans', 1.0)
         par_avst = tal('Parallella ledningar: st\u00f6rsta avst\u00e5nd c\u2013c (m)', 'parallell_avstand', 3.0)
-        par_andel = tal('Parallella ledningar: minsta andel av str\u00e4ckan f\u00f6r samschakt (%)',
-                        'parallell_andel', 60, 'GPLong')
+        par_andel = tal('Parallella ledningar: minsta str\u00e4cka de g\u00e5r parallellt f\u00f6r samschakt (m)',
+                        'parallell_min_m', 10.0)
         intervall = tal('Provt\u00e4thet l\u00e4ngs ledningen (m)', 'intervall', 1.0)
         v_djup = tal('Vattenledningar: djup till r\u00f6rets centrum (m)', 'vatten_djup', 1.7)
         a_radie = tal('Anordningar: st\u00f6rsta avst\u00e5nd till ledning eller servis (m)', 'anordning_radie', 3.0)
@@ -1841,8 +1841,8 @@ class Ledningsinventering(object):
         for namn in ('tolerans', 'parallell_avstand', 'intervall', 'sokradie', 'anordning_radie'):
             if P[namn].value is not None and not P[namn].value > 0:
                 P[namn].setErrorMessage('St\u00f6rre \u00e4n 0')
-        if P['parallell_andel'].value is not None and not (1 <= P['parallell_andel'].value <= 100):
-            P['parallell_andel'].setErrorMessage('Andel i procent, 1-100')
+        if P['parallell_min_m'].value is not None and P['parallell_min_m'].value < 0:
+            P['parallell_min_m'].setErrorMessage('Minsta str\u00e4cka i meter, 0 eller mer')
         if P['vatten_djup'].value is not None and P['vatten_djup'].value < 0:
             P['vatten_djup'].setErrorMessage('Djupet kan inte vara negativt')
         if P['ledningslager'].valueAsText and not (P['vg_fran'].valueAsText and P['vg_till'].valueAsText):
@@ -1879,7 +1879,7 @@ class Ledningsinventering(object):
             ledntyp_falt=v('ledntyp_falt'), ar_falt=v('ar_falt'), ren_falt=v('ren_falt'),
             lutning_falt=v('lutning_falt'), id_falt=v('id_falt'),
             tolerans=float(P['tolerans'].value), parallell_avstand=float(P['parallell_avstand'].value),
-            parallell_andel=float(P['parallell_andel'].value) / 100.0, intervall=float(P['intervall'].value),
+            parallell_min_m=float(P['parallell_min_m'].value), intervall=float(P['intervall'].value),
             vatten_djup=float(P['vatten_djup'].value), sokradie=float(P['sokradie'].value),
             hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'),
             anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value),
