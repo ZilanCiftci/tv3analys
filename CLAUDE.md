@@ -1126,6 +1126,9 @@ Servisventiler/Övriga anordningar/Ventilgropar, synliga Ventiler/Brandposter (s
 Anordningar, JSON `anordningar_antal`. Byte av ventiler/brandposter vid omläggning räknas inte (inget pris). Test:
 scratchpad/test_inventering.py test_anordningar (ventil 2,6 m från SSL1 men på V1, servisventil och brandpost via servis,
 dubblett i två lager, okopplad VFOR, ledningsände avlopp, förval i dialogen) och test_ledning_analys.py test_anordningar.
+Användarens skärmbild (okt 2026, "jag ser inte mina lokala lager i listorna"): rullistorna följde TOC-ordningen, så grupperna
+Lokalt Vatten/Lokalt Avlopp hamnade under INSAR, Vatten m.fl. `_ordning_lokala_forst(kartlager, slag)` sätter filterlistan per
+parameter: lokala lager av rätt slag (`_lokalt_slag`) först, övriga lokala, sist kartans övriga lager.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
