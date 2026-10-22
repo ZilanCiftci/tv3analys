@@ -5,38 +5,35 @@ ledning_analys.py – inventeringsbok och kostnad lägga om mot strumpa (PLAN_le
 
 Läser ledningsdata.json från ArcMap-verktyget Ledningsinventering och räknar två alternativ för hela nätet:
 
-  Alt. lägg om  – alla ledningar läggs om; ledningar i samma grav delar graven.
-  Alt. strumpa  – spill-, dag- och kombinerade ledningar strumpinfodras (rörspräcks om strumpa inte går
-                  och dimensionen tillåter, annars läggs de om). Vattenledningar rörspräcks – men bara när
+  Alt. lägg om  – alla ledningar läggs om i helschakt; ledningar i samma grav delar graven (pris per meter
+                  grav efter antal ledningar, antal större än 400 mm och schakttyp). Räknas för alla fyra
+                  schakttyperna (ledningschakt, med spontsläde, bergschakt, KC-förstärkning).
+  Alt. strumpa  – spill-, dag- och kombinerade ledningar infodras (rörspräcks om infodring inte går och
+                  dimensionen tillåter, annars läggs de om). Vattenledningar rörspräcks – men bara när
                   avloppsledningarna i samma grav också klaras utan schakt; läggs någon av dem om, läggs
                   vattenledningen om i samma grav. Ledningar som läggs om i alternativet delar grav.
 
-Skriver
+Serviserna förnyas i båda alternativen: i helschakt per meter servisledning (serviser till samma fastighet
+i samma servisgrav), schaktfritt infodras de per meter; vid rörspräckning tillkommer en servisgrop per servis.
 
+Skriver
   * <utdata>/ledningsinventering.xlsx – Sammanfattning, Ledningar, Kostnad per schaktgrupp, Serviser,
                                          Parallella, Korsningar, Brunnar, Datakvalitet, Kostnadsposter
-  * <utdata>/ledningsresultat.json    – djup, serviser, schaktgrupp och kostnad per metod per ledning,
+  * <utdata>/ledningsresultat.json    – djup, serviser, schaktgrupp och kostnader per ledning,
                                          för att fylla fält i kartan
 
 Användning:
     python ledning_analys.py ledningsdata.json
-    python ledning_analys.py ledningsdata.json -o utdata --kostnader kostnader_omlaggning.csv
+    python ledning_analys.py ledningsdata.json -o utdata --schakttyp bergschakt --kostnader kostnader_inventering.csv
 
-Kostnadsmodell (alla belopp i kostnadsfilerna, inga i koden):
-  Omläggning    = graven (schakt kr/m efter största dimension i graven, djup och antal ledningar i graven,
-                  delad lika mellan ledningarna) + återställning (delad på samma sätt) + serviser (omkoppling
-                  per st + ny servisledning per m) + ny brunn per brunnsände (halv per ände, så att en brunn
-                  mellan två omlagda sträckor räknas en gång).
-  Strumpa       = strumpa kr/m efter dimension × längd + hatt per servis (kostnader.csv, samma som
-                  åtgärdspaketet i tv3_analys) + framschaktning och ny brunn när båda ändbrunnarna är
-                  tillsyns-/rensbrunnar. Vattenledningar infodras inte.
-  Rörspräckning = rörspräckning kr/m efter dimension × längd + omkoppling per servis + grop i varje ände
-                  utan brunn (vattenledningar: båda ändarna). Bara dimensioner upp till SPRACKNING_DIM_MAX.
+Alla belopp står i kostnadsfilen (kostnader_inventering.csv), inga i koden. Inga rekommendationer – bara
+beräkningar (användarens beslut okt 2026).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -46,32 +43,40 @@ from datetime import datetime
 HAR = os.path.dirname(os.path.abspath(__file__))
 if HAR not in sys.path:
     sys.path.insert(0, HAR)
-from tv3_analys import las_kostnader, las_text, pris  # noqa: E402
+from tv3_analys import las_text  # noqa: E402
 
 # ============================================================================
 # KONFIG – ändra här, inte i koden
 # ============================================================================
-KOSTNADSFIL_OMLAGGNING = os.path.join(HAR, "kostnader_omlaggning.csv")   # schakt, återställning, serviser, brunnar, rörspräckning
-KOSTNADSFIL_STRUMPA = os.path.join(HAR, "kostnader.csv")                 # strumpa, hatt, framschaktning, ny_brunn
+KOSTNADSFIL = os.path.join(HAR, "kostnader_inventering.csv")   # alla priser (SVOA:s kalkylverktyg okt 2026)
 UTDATA_XLSX = "ledningsinventering.xlsx"
 UTDATA_JSON = "ledningsresultat.json"
 
-STRUMPA_SYSTEM = ("S", "D", "K")  # system som kan strumpinfodras – vattenledningar (V) infodras inte
-STRUMPA_DIM_MIN = 100             # strumpbara dimensioner (mm)
-STRUMPA_DIM_MAX = 1200
+SCHAKTTYPER = {"ledningschakt": "Ledningschakt", "spontslade": "Med spontsläde",
+               "bergschakt": "Bergschakt", "kc": "KC-förstärkning"}
+SCHAKTTYP = "ledningschakt"       # schakttypen i Alt. lägg om och Alt. strumpa (övriga redovisas också)
+STORRE_DIM = 400                  # ledningar över detta (mm) räknas som "större" i grav med 2–3 ledningar
+MAX_LEDNINGAR_I_GRAV = 3          # prislistan har 1–3 ledningar i samma grav
+STANDARDDJUP_M = 2.5              # schaktpriset gäller till detta djup (vattengång) ...
+DJUPTILLAGG_STEG_M = 1.5          # ... därefter ett djuptillägg per påbörjade 1,5 m
+STRUMPA_SYSTEM = ("S", "D", "K")  # system som kan infodras – vattenledningar (V) infodras inte
+STRUMPA_DIM_MIN = 100             # infodring från denna dimension (mm); övre gräns = sista priset i filen
 SPRACKNING_DIM_MAX = 400          # rörspräckning för dimensioner till och med detta (mm), alla system
-MAX_LEDNINGAR_I_GRAV = 3          # antal ledningar i graven räknas upp till detta (prisdatabasen har 1–3)
-SERVIS_OMLAGG_MAX_M = None        # meter servisledning som läggs om per servis; None = hela servisens längd
-FRAMSCHAKTA_TB = True             # strumpa: båda ändbrunnarna tillsyns-/rensbrunn -> framschaktning + ny brunn
+GROP_PER_M = 50                   # rörspräckning: en införingsgrop och en maskingrop per påbörjade 50 m
+SERVIS_GRAV_AVSTAND_M = 3.0       # serviser vars båda ändar ligger så här nära varandra delar servisgrav
+SERVIS_LANGD_MAX_M = None         # meter servisledning som förnyas per servis; None = hela servisens längd
+FRAMSCHAKTA_TB = True             # infodring: båda ändbrunnarna tillsyns-/rensbrunn -> framschaktning + ny brunn
 BRUNNSTYP_TILLSYN = r"TB|RB"      # brunnstyp (t.ex. WellFunction STB/SRB) som räknas som tillsyns-/rensbrunn
 
 # Kolumner i fliken Ledningar som döljs (grupperade, fälls ut med plustecknet)
 DOLDA_LEDNINGAR = [
     "Ledningstyp", "Renoveringsår", "VG från", "VG till", "Lutning GIS", "Djup min", "Djup max", "Djupkälla",
     "Täckning min", "Djup start", "Djup slut", "Samschakt med", "Parallella", "Korsningar",
-    "Schakt", "Återställning", "Serviser omläggning", "Brunnar", "Strumpa per meter", "Hattar", "Framschaktning",
-    "Rörspräckning per meter", "Serviser rörspräckning", "Gropar", "Område", "Lager", "OID", "Del",
-    "Strumpa", "Rörspräckning", "Ledningar i graven alt. strumpa",
+    "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
+    "Schakt", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
+    "Infodring", "Infodring per meter", "Serviser infodring", "Framschaktning", "Infodring totalt",
+    "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Serviser rörspräckning",
+    "Rörspräckning totalt", "Ledningar i graven alt. strumpa", "Område", "Lager", "OID", "Del",
 ]
 
 SYSTEM_NAMN = {"S": "Spillvatten", "D": "Dagvatten", "K": "Kombinerat", "V": "Vatten", "": "Okänt"}
@@ -83,8 +88,8 @@ METOD_NYCKEL = dict(METODER)
 # Kostnader
 # ============================================================================
 
-KOLUMNER_OMLAGG = ["post", "dimension_fran", "dimension_till", "djup_fran", "djup_till", "ledningar",
-                   "enhet", "kr", "kommentar"]
+KOLUMNER = ["post", "schakttyp", "ledningar", "storre", "system", "dimension_fran", "dimension_till",
+            "enhet", "kr", "kommentar"]
 
 
 def _tal(v: str | None) -> float | None:
@@ -97,10 +102,10 @@ def _tal(v: str | None) -> float | None:
         return None
 
 
-def las_kostnader_omlaggning(path: str) -> list[dict]:
-    """Läser kostnader_omlaggning.csv. Rubrikraden (som börjar med 'post') styr kolumnordningen;
-    utan rubrikrad gäller KOLUMNER_OMLAGG. Returnerar [{post, dim_fran, dim_till, djup_fran, djup_till,
-    ledningar, enhet, kr, kommentar}]."""
+def las_kostnader(path: str) -> list[dict]:
+    """Läser kostnadsfilen. Rubrikraden (som börjar med 'post') styr kolumnordningen; utan rubrikrad
+    gäller KOLUMNER. Returnerar [{post, schakttyp, ledningar, storre, system (mängd), dim_fran, dim_till,
+    enhet, kr, kommentar}]."""
     poster, kolumner = [], None
     for rad in las_text(path).splitlines():
         rad = rad.split("#", 1)[0].strip()
@@ -110,7 +115,7 @@ def las_kostnader_omlaggning(path: str) -> list[dict]:
         if d[0].lower() == "post":
             kolumner = [k.lower() for k in d]
             continue
-        kol = kolumner or KOLUMNER_OMLAGG
+        kol = kolumner or KOLUMNER
         v = dict(zip(kol, d + [""] * (len(kol) - len(d))))
         if not v.get("post"):
             continue
@@ -118,11 +123,13 @@ def las_kostnader_omlaggning(path: str) -> list[dict]:
         if kr is None:
             print(f"  VARNING {os.path.basename(path)}: kan inte tolka beloppet '{v.get('kr')}' för {v['post']} – hoppas över")
             continue
-        n = _tal(v.get("ledningar"))
-        poster.append({"post": v["post"].lower(), "dim_fran": _tal(v.get("dimension_fran")),
-                       "dim_till": _tal(v.get("dimension_till")), "djup_fran": _tal(v.get("djup_fran")),
-                       "djup_till": _tal(v.get("djup_till")), "ledningar": int(n) if n else None,
-                       "enhet": v.get("enhet", ""), "kr": kr, "kommentar": v.get("kommentar", "")})
+        n, k = _tal(v.get("ledningar")), _tal(v.get("storre"))
+        system = {s.strip().upper() for s in re.split(r"[,+/ ]", v.get("system") or "") if s.strip()}
+        poster.append({"post": v["post"].lower(), "schakttyp": (v.get("schakttyp") or "").lower() or None,
+                       "ledningar": int(n) if n is not None else None, "storre": int(k) if k is not None else None,
+                       "system": system or None, "dim_fran": _tal(v.get("dimension_fran")),
+                       "dim_till": _tal(v.get("dimension_till")), "enhet": v.get("enhet", ""), "kr": kr,
+                       "kommentar": v.get("kommentar", "")})
     return poster
 
 
@@ -134,43 +141,34 @@ def _dim_ok(k: dict, dim: float | None) -> bool:
     return (k["dim_fran"] is None or dim >= k["dim_fran"]) and (k["dim_till"] is None or dim <= k["dim_till"])
 
 
-def _djuprad(rader: list[dict], djup: float | None) -> dict | None:
-    """Raden vars djupintervall gäller: den med största djup_fran ≤ djup (gränsen 2,0 m hör till 2–3 m,
-    djup över sista intervallet får det sista). Rader utan djup gäller alla djup."""
-    utan = [k for k in rader if k["djup_fran"] is None and k["djup_till"] is None]
-    med = [k for k in rader if k not in utan]
-    if djup is None or not med:
-        return utan[0] if utan else None
-    under = [k for k in med if (k["djup_fran"] or 0.0) <= djup]
-    if under:
-        return max(under, key=lambda k: k["djup_fran"] or 0.0)
-    return min(med, key=lambda k: k["djup_fran"] or 0.0)        # negativt djup: grundaste raden
+def hitta(kost: list[dict], post: str, dim: float | None = None, schakttyp: str | None = None,
+          system: str | None = None, ledningar: int | None = None, storre: int | None = None) -> dict | None:
+    """Första raden för posten som passar. En tom cell i raden gäller alla värden."""
+    for k in kost:
+        if k["post"] != post or not _dim_ok(k, dim):
+            continue
+        if k["schakttyp"] is not None and k["schakttyp"] != schakttyp:
+            continue
+        if k["system"] is not None and (system or "").upper() not in k["system"]:
+            continue
+        if k["ledningar"] is not None and k["ledningar"] != ledningar:
+            continue
+        if k["storre"] is not None and k["storre"] != storre:
+            continue
+        return k
+    return None
 
 
-def enkelpris(kost: list[dict], post: str, dim: float | None = None) -> float | None:
-    rader = [k for k in kost if k["post"] == post and _dim_ok(k, dim)]
-    return rader[0]["kr"] if rader else None
+def kr(kost: list[dict], post: str, **kw) -> float | None:
+    r = hitta(kost, post, **kw)
+    return r["kr"] if r else None
 
 
-def gravpris(kost: list[dict], dim: float | None, djup: float | None, n: int) -> tuple[float | None, str]:
-    """kr per meter grav med n ledningar. Rader med ledningar = n används direkt; annars raden för en
-    ledning × (1 + samschakt_faktor × (n − 1)). Returnerar (kr, hur)."""
-    rader = [k for k in kost if k["post"] == "schakt" and _dim_ok(k, dim)]
-    if not rader:
-        return None, "inget schaktpris för dimensionen"
-    med_n = [k for k in rader if k["ledningar"] == n]
-    if med_n:
-        r = _djuprad(med_n, djup)
-        if r is not None:
-            return r["kr"], f"{n} ledningar i graven"
-    en = [k for k in rader if k["ledningar"] in (None, 1)]
-    r = _djuprad(en, djup)
-    if r is None:
-        return None, "inget schaktpris för djupet"
+def gravpris(kost, schakttyp: str, n: int, storre: int, dmax: float | None) -> float | None:
+    """kr per meter grav med n ledningar varav `storre` över STORRE_DIM, största dimension dmax."""
     if n <= 1:
-        return r["kr"], "1 ledning"
-    f = enkelpris(kost, "samschakt_faktor") or 0.0
-    return r["kr"] * (1 + f * (n - 1)), f"{n} ledningar (faktor {f:g})"
+        return kr(kost, "schakt", dim=dmax, schakttyp=schakttyp, ledningar=1)
+    return kr(kost, "schakt", dim=dmax, schakttyp=schakttyp, ledningar=n, storre=storre)
 
 
 # ============================================================================
@@ -187,14 +185,14 @@ def _djup_punkter(led: dict) -> list[float]:
 
 
 def _gravpartners(led: dict, per_id: dict, medlagda: set | None = None) -> list[tuple[dict, float]]:
-    """Samschakt-partner (ledning, andel av den här ledningens längd) som också läggs om.
+    """Samschakt-partner (ledning, andel av den här ledningens längd) som också läggs om, störst andel först.
     medlagda = id:n som läggs om i alternativet (None = alla)."""
     ut = []
     for p in led.get("parallella") or []:
         q = per_id.get(p.get("ledning"))
         if p.get("samschakt") and q is not None and (medlagda is None or q.get("id") in medlagda):
             ut.append((q, p.get("andel") or 0.0))
-    return ut
+    return sorted(ut, key=lambda x: -x[1])
 
 
 def ledningar_i_grav(led: dict, per_id: dict | None = None, medlagda: set | None = None) -> int:
@@ -207,112 +205,200 @@ def ledningar_i_grav(led: dict, per_id: dict | None = None, medlagda: set | None
     return max(1, min(MAX_LEDNINGAR_I_GRAV, 1 + int(round(andel))))
 
 
-def _omlaggning(led, kost_o, per_id, serv_m, antal_serv, medlagda=None):
-    """(kostnad, brist, antal i graven, hur). medlagda: id:n som läggs om samtidigt (None = alla)."""
+def _antal_djuptillagg(djup: float) -> int:
+    if djup is None or djup <= STANDARDDJUP_M:
+        return 0
+    return int(math.ceil((djup - STANDARDDJUP_M) / DJUPTILLAGG_STEG_M - 1e-9))
+
+
+def _grav(led, kost, per_id, schakttyp, medlagda=None):
+    """Huvudledningens del av graven: ({schakt, djuptillagg, aterstallning, brunnar}, brist, n, beskrivning)."""
     L = led.get("langd_m") or 0.0
     system = led.get("system") or ""
     n = ledningar_i_grav(led, per_id, medlagda)
-    partners = [q for q, _ in _gravpartners(led, per_id, medlagda)]
-    dimensioner = [d for d in [led.get("dimension")] + [q.get("dimension") for q in partners if q] if d]
-    dim_grav = max(dimensioner) if dimensioner else None
+    i_grav = [led] + [q for q, _ in _gravpartners(led, per_id, medlagda)][:n - 1]
+    dims = [q.get("dimension") for q in i_grav]
+    if any(d is None for d in dims):
+        return None, "dimension saknas" + ("" if led.get("dimension") is None else " på ledning i samma grav"), n, ""
+    dmax = max(dims)
+    storre = sum(1 for d in dims if d > STORRE_DIM)
+    pris_m = gravpris(kost, schakttyp, n, storre, dmax)
+    beskr = f"{n} ledning{'ar' if n > 1 else ''}" + (f", {storre} större" if n > 1 else "") + f", Ø {dmax:g}"
+    if pris_m is None:
+        return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(schakttyp, schakttyp)})", n, beskr
+    o = {"schakt": pris_m / n * L}
+    # Djuptillägg per påbörjade DJUPTILLAGG_STEG_M under STANDARDDJUP_M, medel över profilens punkter
+    tillagg_m = kr(kost, "djuptillagg", dim=dmax) or 0.0
     djupen = _djup_punkter(led) if system != "V" else []
-    if djupen:
-        priser = [p for p in (gravpris(kost_o, dim_grav, d, n)[0] for d in djupen) if p is not None]
-        grav_m = sum(priser) / len(priser) if priser else None
-        hur = gravpris(kost_o, dim_grav, led.get("djup_medel"), n)[1]
-    else:
-        grav_m, hur = gravpris(kost_o, dim_grav, led.get("djup_medel"), n)
-    if led.get("djup_medel") is None and not djupen:
-        return None, "djup saknas", n, hur
-    if grav_m is None:
-        return None, hur, n, hur
-    f_sam = enkelpris(kost_o, "samschakt_faktor") or 0.0
-    o = {"schakt": grav_m / n * L,
-         "aterstallning": (enkelpris(kost_o, "aterstallning") or 0.0) * (1 + f_sam * (n - 1)) / n * L,
-         "serviser": antal_serv * (enkelpris(kost_o, "servis_omkoppling") or 0.0)
-         + serv_m * (enkelpris(kost_o, "servis_ledning") or 0.0)}
+    if not djupen and led.get("djup_medel") is not None:
+        djupen = [led["djup_medel"]]
+    steg = (sum(_antal_djuptillagg(d) for d in djupen) / len(djupen)) if djupen else 0.0
+    o["djuptillagg"] = steg * tillagg_m / n * L
+    o["aterstallning"] = (kr(kost, "aterstallning") or 0.0) / n * L
     andar = sum(0.5 for b in (led.get("fran"), led.get("till")) if b) if system != "V" else 0.0
-    o["brunnar"] = andar * (enkelpris(kost_o, "brunn_ny") or 0.0)
-    o["summa"] = sum(o.values())
-    return o, "", n, hur
+    o["brunnar"] = andar * (kr(kost, "brunn_ny") or 0.0)
+    brist = "" if djupen or system == "V" else "djup saknas – inget djuptillägg"
+    return o, brist, n, beskr
 
 
-def _strumpa(led, kost_s, brunnar, antal_serv):
+def _servis_m(s: dict) -> float:
+    L = s.get("langd_m") or 0.0
+    return min(L, SERVIS_LANGD_MAX_M) if SERVIS_LANGD_MAX_M is not None else L
+
+
+def servisgravar(serviser: list[dict]) -> dict[int, int]:
+    """{index i serviser: gruppnummer}: serviser vars båda ändar ligger inom SERVIS_GRAV_AVSTAND_M från
+    varandras ändar (i någon riktning) delar servisgrav – t.ex. vatten-, spill- och dagservis till samma hus."""
+    def avst(a, b):
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+    foralder = list(range(len(serviser)))
+
+    def rot(i):
+        while foralder[i] != i:
+            foralder[i] = foralder[foralder[i]]
+            i = foralder[i]
+        return i
+    andar = [(s.get("fran_xy"), s.get("till_xy")) for s in serviser]
+    t = SERVIS_GRAV_AVSTAND_M
+    cell = defaultdict(list)
+    for i, (a, b) in enumerate(andar):
+        if a and b:
+            cell[(int(a[0] // t), int(a[1] // t))].append(i)
+            cell[(int(b[0] // t), int(b[1] // t))].append(i)
+    for i, (a, b) in enumerate(andar):
+        if not (a and b):
+            continue
+        kand = set()
+        for p in (a, b):
+            cx, cy = int(p[0] // t), int(p[1] // t)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    kand.update(cell.get((cx + dx, cy + dy), ()))
+        for j in kand:
+            if j <= i:
+                continue
+            c, d = andar[j]
+            if max(avst(a, c), avst(b, d)) <= t or max(avst(a, d), avst(b, c)) <= t:
+                ri, rj = rot(i), rot(j)
+                if ri != rj:
+                    foralder[rj] = ri
+    return {i: rot(i) for i in range(len(serviser))}
+
+
+def _servis_helschakt(egna, alla, grupp, metod_for, kost, schakttyp, metod="omläggning"):
+    """Serviskostnad i helschakt för en lednings serviser. En servis delar servisgrav med de serviser i
+    samma grupp vars huvudledning också läggs om i alternativet; gravens pris delas lika mellan dem.
+    grupp = (index -> gruppnummer, gruppnummer -> index)."""
+    gmap, medl = grupp
+    summa = 0.0
+    tillagg = kr(kost, "servis_tillagg", schakttyp=schakttyp) or 0.0
+    for i in egna:
+        s = alla[i]
+        med = [j for j in medl[gmap[i]] if metod_for(alla[j]) == metod]
+        m = max(1, min(MAX_LEDNINGAR_I_GRAV, len(med)))
+        L = max(_servis_m(alla[j]) for j in med) if med else _servis_m(s)
+        pris_m = kr(kost, "servis_helschakt", ledningar=m, system=s.get("system")) or 0.0
+        summa += (pris_m + tillagg) * L / max(1, len(med))
+    return summa
+
+
+def _infodring(led, kost, brunnar, serv):
+    """Infodring av huvudledning + serviser schaktfritt (+ framschaktning)."""
     L = led.get("langd_m") or 0.0
     dim = led.get("dimension")
     if (led.get("system") or "") not in STRUMPA_SYSTEM:
         return None, "vattenledning – infodras inte" if led.get("system") == "V" else "okänt system"
     if dim is None:
         return None, "dimension saknas"
-    if not (STRUMPA_DIM_MIN <= dim <= STRUMPA_DIM_MAX):
-        return None, f"dimension {dim} mm utanför {STRUMPA_DIM_MIN}–{STRUMPA_DIM_MAX}"
-    kr_m = pris(kost_s, "strumpa", int(dim))
+    if dim < STRUMPA_DIM_MIN:
+        return None, f"dimension {dim:g} mm under {STRUMPA_DIM_MIN}"
+    kr_m = kr(kost, "infodring", dim=dim)
     if kr_m is None:
-        return None, "inget strumpapris för dimensionen"
-    s = {"per_meter": kr_m, "strumpa": kr_m * L, "hattar": antal_serv * (pris(kost_s, "hatt") or 0.0)}
+        return None, f"inget infodringspris för Ø {dim:g}"
+    s = {"per_meter": kr_m, "infodring": kr_m * L,
+         "serviser": sum((kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x) for x in serv)}
     typer = [(brunnar.get(b) or {}).get("typ") or "" for b in (led.get("fran"), led.get("till"))]
     if FRAMSCHAKTA_TB and all(typer) and all(re.search(BRUNNSTYP_TILLSYN, t.upper()) for t in typer):
-        s["framschaktning"] = (pris(kost_s, "framschaktning") or 0.0) + (pris(kost_s, "ny_brunn") or 0.0)
-    s["summa"] = s["strumpa"] + s["hattar"] + s.get("framschaktning", 0.0)
+        s["framschaktning"] = (kr(kost, "framschaktning") or 0.0) + (kr(kost, "ny_brunn") or 0.0)
+    s["summa"] = s["infodring"] + s["serviser"] + s.get("framschaktning", 0.0)
     return s, ""
 
 
-def _sprackning(led, kost_o, antal_serv):
+def _sprackning(led, kost, serv):
+    """Rörspräckning av huvudledning + gropar + servisgrop och infodring per servis."""
     L = led.get("langd_m") or 0.0
     dim = led.get("dimension")
     if dim is None:
         return None, "dimension saknas"
     if dim > SPRACKNING_DIM_MAX:
-        return None, f"dimension {dim} mm > {SPRACKNING_DIM_MAX}"
-    kr_m = enkelpris(kost_o, "rorsprackning", dim)
+        return None, f"dimension {dim:g} mm > {SPRACKNING_DIM_MAX}"
+    kr_m = kr(kost, "rorsprackning", dim=dim)
     if kr_m is None:
-        return None, "inget pris för rörspräckning"
-    if led.get("system") == "V":
-        gropar = 2
-    else:
-        gropar = sum(1 for b in (led.get("fran"), led.get("till")) if not b)
-    r = {"per_meter": kr_m, "sprackning": kr_m * L,
-         "serviser": antal_serv * (enkelpris(kost_o, "servis_omkoppling") or 0.0),
-         "gropar": gropar * (enkelpris(kost_o, "sprackningsgrop") or 0.0), "antal_gropar": gropar}
-    r["summa"] = r["sprackning"] + r["serviser"] + r["gropar"]
+        return None, f"inget pris för rörspräckning Ø {dim:g}"
+    gropar = max(1, int(math.ceil(L / GROP_PER_M - 1e-9)))
+    r = {"per_meter": kr_m, "sprackning": kr_m * L, "antal_gropar": gropar,
+         "gropar": gropar * ((kr(kost, "inforingsgrop") or 0.0) + (kr(kost, "maskingrop") or 0.0)),
+         "servisgropar": len(serv) * (kr(kost, "servisgrop") or 0.0),
+         "serviser": sum((kr(kost, "servis_infodring", system=x.get("system")) or 0.0) * _servis_m(x) for x in serv)}
+    r["summa"] = r["sprackning"] + r["gropar"] + r["servisgropar"] + r["serviser"]
     return r, ""
 
 
-def berakna(data: dict, kost_o: list[dict], kost_s: list[dict]) -> list[dict]:
-    """Lägger till kostnad per metod på varje ledning (i data['ledningar'])."""
+def _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx, alla_serv, grupp, metod_for):
+    o, brist, n, beskr = _grav(led, kost, per_id, schakttyp, medlagda)
+    if o is None:
+        return None, brist, n, beskr
+    o["serviser"] = _servis_helschakt(serv_idx, alla_serv, grupp, metod_for, kost, schakttyp)
+    o["summa"] = o["schakt"] + o["djuptillagg"] + o["aterstallning"] + o["brunnar"] + o["serviser"]
+    return o, brist, n, beskr
+
+
+def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[dict]:
+    """Lägger till kostnaderna på varje ledning (i data['ledningar'])."""
     ledningar = data.get("ledningar", [])
-    per_id = {l.get("id"): l for l in ledningar}
-    brunnar = {b["littera"]: b for b in data.get("brunnar", [])}
-    serviser = defaultdict(list)
-    for s in data.get("serviser", []):
-        if s.get("ledning"):
-            serviser[s["ledning"]].append(s)
     for led in ledningar:
         if not led.get("system"):            # gisdata.json från Exportera GIS-data saknar system
             led["system"] = (led.get("ledningstyp") or "").strip()[:1].upper()
         if not led.get("id"):
             led["id"] = f"{(led.get('lager') or '').split(chr(92))[-1]}/{led.get('oid')}"
-        egna = serviser.get(led.get("id"), [])
-        antal_serv = led.get("antal_serviser") or 0
-        if egna:
-            serv_m = sum(min(s.get("langd_m") or 0.0, SERVIS_OMLAGG_MAX_M) if SERVIS_OMLAGG_MAX_M is not None
-                         else (s.get("langd_m") or 0.0) for s in egna)
-        else:
-            serv_m = led.get("serviser_m") or 0.0
-        led["_serv"] = (serv_m, antal_serv)
+    per_id = {l.get("id"): l for l in ledningar}
+    brunnar = {b["littera"]: b for b in data.get("brunnar", [])}
+    alla_serv = [s for s in data.get("serviser", []) if s.get("ledning") in per_id]
+    for s in alla_serv:
+        s.setdefault("system", per_id[s["ledning"]].get("system"))
+    gmap = servisgravar(alla_serv)
+    medl = defaultdict(list)
+    for i, g in gmap.items():
+        medl[g].append(i)
+    grupp = (gmap, medl)
+    for i, s in enumerate(alla_serv):
+        s["_servisgrav"] = len(medl[gmap[i]])
+    serv_idx = defaultdict(list)
+    for i, s in enumerate(alla_serv):
+        serv_idx[s["ledning"]].append(i)
+
+    def metod_a(s):                           # Alt. lägg om: alla läggs om
+        return "omläggning"
+    for led in ledningar:
+        egna = serv_idx.get(led.get("id"), [])
+        serv = [alla_serv[i] for i in egna]
+        led["_typer"] = {}
+        for t in SCHAKTTYPER:
+            led["_typer"][t] = _omlaggning(led, kost, per_id, t, None, egna, alla_serv, grupp, metod_a)[0]
         led["_omlagg"], led["_omlagg_brist"], led["_grav"], led["_grav_hur"] = \
-            _omlaggning(led, kost_o, per_id, serv_m, antal_serv)
-        led["_strumpa"], led["_strumpa_brist"] = _strumpa(led, kost_s, brunnar, antal_serv)
-        led["_sprack"], led["_sprack_brist"] = _sprackning(led, kost_o, antal_serv)
+            _omlaggning(led, kost, per_id, schakttyp, None, egna, alla_serv, grupp, metod_a)
+        led["_strumpa"], led["_strumpa_brist"] = _infodring(led, kost, brunnar, serv)
+        led["_sprack"], led["_sprack_brist"] = _sprackning(led, kost, serv)
         led["_anm"] = "; ".join(f"{namn}: {led[k + '_brist']}" for namn, k in METODER
                                 if led.get(k + "_brist") and not (k == "_strumpa" and led.get("system") == "V"))
-    alternativ_strumpa(ledningar, per_id, kost_o)
+    alternativ_strumpa(ledningar, per_id, kost, schakttyp, alla_serv, grupp, serv_idx)
+    data["_serviser_kopplade"] = alla_serv
     return ledningar
 
 
-def alternativ_strumpa(ledningar: list[dict], per_id: dict, kost_o: list[dict]) -> None:
+def alternativ_strumpa(ledningar, per_id, kost, schakttyp, alla_serv, grupp, serv_idx) -> None:
     """Metod och kostnad per ledning i alternativet strumpa (_alt_metod, _alt, _alt_grav).
-    Avlopp: strumpa, annars rörspräckning, annars omläggning. Vatten: rörspräckning bara när ingen
+    Avlopp: infodring, annars rörspräckning, annars omläggning. Vatten: rörspräckning bara när ingen
     avloppsledning i samma grav läggs om – annars omläggning tillsammans med den."""
     for led in ledningar:
         if led.get("system") == "V":
@@ -330,12 +416,15 @@ def alternativ_strumpa(ledningar: list[dict], per_id: dict, kost_o: list[dict]) 
         else:
             led["_alt_metod"] = "rörspräckning" if led.get("_sprack") else "omläggning"
     medlagda = {l.get("id") for l in ledningar if l["_alt_metod"] == "omläggning"}
+
+    def metod_b(s):
+        return per_id[s["ledning"]]["_alt_metod"]
     for led in ledningar:
         metod = led["_alt_metod"]
         if metod == "omläggning":
-            serv_m, antal_serv = led["_serv"]
-            o, brist, n, _ = _omlaggning(led, kost_o, per_id, serv_m, antal_serv, medlagda)
-            led["_alt"], led["_alt_brist"], led["_alt_grav"] = o, brist, n
+            o, brist, n, _ = _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx.get(led.get("id"), []),
+                                         alla_serv, grupp, metod_b)
+            led["_alt"], led["_alt_brist"], led["_alt_grav"] = o, (brist if o is None else ""), n
         else:
             led["_alt"], led["_alt_brist"], led["_alt_grav"] = led[METOD_NYCKEL[metod]], "", None
 
@@ -443,8 +532,7 @@ def _altsummor(lista):
             sum(1 for l in lista if not _jamforbar(l))]
 
 
-def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict], kost_s: list[dict],
-                kallor: dict) -> None:
+def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], kallor: dict) -> None:
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
@@ -466,10 +554,13 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict]
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Schaktgrupp",
            "Ledningar i graven (st)", "Samschakt med", "Parallella", "Korsningar",
            "Alt. lägg om (kr)", "Metod alt. strumpa", "Alt. strumpa (kr)", "Anmärkning",
-           "Strumpa (kr)", "Rörspräckning (kr)", "Ledningar i graven alt. strumpa (st)",
-           "Schakt (kr)", "Återställning (kr)", "Serviser omläggning (kr)", "Brunnar (kr)",
-           "Strumpa per meter (kr/m)", "Hattar (kr)", "Framschaktning (kr)",
-           "Rörspräckning per meter (kr/m)", "Serviser rörspräckning (kr)", "Gropar (kr)",
+           "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
+           "Lägg om KC-förstärkning (kr)",
+           "Schakt (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
+           "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Framschaktning (kr)",
+           "Infodring totalt (kr)",
+           "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
+           "Serviser rörspräckning (kr)", "Rörspräckning totalt (kr)", "Ledningar i graven alt. strumpa (st)",
            "Flaggor", "Område", "Lager", "OID", "Del"]
     egna = {_dela_rubrik(k)[0] for k in kol}
     attrkol = [a if a not in egna else a + " (GIS)" for a in attrnamn]
@@ -488,11 +579,13 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict]
                          for p in l.get("parallella") or []) or None,
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
                          for k in l.get("korsningar") or []) or None,
-               _kr(o), l.get("_alt_metod"), _kr(l.get("_alt")), _anmarkning(l),
-               _kr(s), _kr(r), l.get("_alt_grav"),
-               _kr(o, "schakt"), _kr(o, "aterstallning"), _kr(o, "serviser"), _kr(o, "brunnar"),
-               _kr(s, "per_meter"), _kr(s, "hattar"), _kr(s, "framschaktning"),
-               _kr(r, "per_meter"), _kr(r, "serviser"), _kr(r, "gropar"),
+               _kr(o), l.get("_alt_metod"), _kr(l.get("_alt")), _anmarkning(l)] + \
+              [_kr((l.get("_typer") or {}).get(t)) for t in SCHAKTTYPER] + \
+              [_kr(o, "schakt"), _kr(o, "djuptillagg"), _kr(o, "aterstallning"), _kr(o, "brunnar"),
+               _kr(o, "serviser"),
+               _kr(s, "per_meter"), _kr(s, "infodring"), _kr(s, "serviser"), _kr(s, "framschaktning"), _kr(s),
+               _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
+               _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
                ", ".join(l.get("flaggor") or []) or None, l.get("omrade") or None,
                l.get("lager"), l.get("oid"), l.get("del")]
         rad += [(l.get("attribut") or {}).get(a) for a in attrnamn]
@@ -533,11 +626,12 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict]
     # --- Serviser, Parallella, Korsningar, Brunnar, Datakvalitet ----------------------------------
     ws = wb.create_sheet("Serviser")
     rader = [[s.get("id"), s.get("ledning") or "(ingen huvudledning)", s.get("system"), s.get("position_m"),
-              _r(s.get("langd_m")), s.get("dimension"), s.get("material") or None, s.get("ledningstyp") or None,
-              s.get("vg_vid_anslutning"), s.get("djup_vid_anslutning"), s.get("lager"), s.get("oid")]
+              _r(s.get("langd_m")), s.get("_servisgrav"), s.get("dimension"), s.get("material") or None,
+              s.get("ledningstyp") or None, s.get("vg_vid_anslutning"), s.get("djup_vid_anslutning"), s.get("lager"),
+              s.get("oid")]
              for s in data.get("serviser", [])]
-    tabell(ws, ["ID", "Huvudledning", "System", "Läge (m)", "Längd (m)", "Dimension (mm)", "Material", "Ledningstyp",
-                "VG vid anslutning (m)", "Djup vid anslutning (m)", "Lager", "OID"], rader,
+    tabell(ws, ["ID", "Huvudledning", "System", "Läge (m)", "Längd (m)", "Serviser i samma grav (st)", "Dimension (mm)",
+                "Material", "Ledningstyp", "VG vid anslutning (m)", "Djup vid anslutning (m)", "Lager", "OID"], rader,
            format={"Läge": M, "Längd": M, "Djup vid anslutning": M2})
 
     ws = wb.create_sheet("Parallella")
@@ -578,7 +672,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict]
              sorted(data.get("datakvalitet", []), key=lambda q: (q.get("typ") or "", str(q.get("id"))))]
     for l in ledningar:
         if l.get("_omlagg_brist"):
-            rader.append(["ingen omläggningskostnad", l.get("id"), l["_omlagg_brist"]])
+            rader.append(["ingen omläggningskostnad" if not l.get("_omlagg") else "omläggning", l.get("id"),
+                          l["_omlagg_brist"]])
         if l.get("dimension") is None:
             rader.append(["dimension saknas", l.get("id"), ""])
         if l.get("anlaggningsar") is None:
@@ -589,19 +684,17 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost_o: list[dict]
     tabell(ws, ["Typ", "ID", "Beskrivning"], rader, bredder={"Beskrivning": 70, "Typ": 32})
 
     ws = wb.create_sheet("Kostnadsposter")
-    rader = [[k["post"], k["dim_fran"], k["dim_till"], k["djup_fran"], k["djup_till"], k["ledningar"], k["enhet"],
-              k["kr"], k["kommentar"], os.path.basename(kallor["omlaggning"])] for k in kost_o]
-    rader += [[k["post"], k["fran"], k["till"], None, None, None, k["enhet"], k["kr"], k["kommentar"],
-               os.path.basename(kallor["strumpa"])] for k in kost_s]
-    tabell(ws, ["Post", "Dimension från (mm)", "Dimension till (mm)", "Djup från (m)", "Djup till (m)",
-                "Ledningar i graven", "Enhet", "Belopp (kr)", "Kommentar", "Fil"], rader,
-           bredder={"Kommentar": 60}, format={"Belopp": "#,##0.##"})
+    rader = [[k["post"], k["schakttyp"], k["ledningar"], k["storre"], ", ".join(sorted(k["system"] or [])) or None,
+              k["dim_fran"], k["dim_till"], k["enhet"], k["kr"], k["kommentar"]] for k in kost]
+    tabell(ws, ["Post", "Schakttyp", "Ledningar i graven", "Större än 400 mm", "System", "Dimension från (mm)",
+                "Dimension till (mm)", "Enhet", "Belopp (kr)", "Kommentar"], rader,
+           bredder={"Kommentar": 70}, format={"Belopp": "#,##0.##"})
 
-    skriv_sammanfattning(ws_s, data, ledningar, kost_o, kost_s, kallor)
+    skriv_sammanfattning(ws_s, data, ledningar, kost, kallor)
     wb.save(path)
 
 
-def skriv_sammanfattning(ws, data, ledningar, kost_o, kost_s, kallor) -> None:
+def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
     from openpyxl.styles import Font
     KR, M = "#,##0", "#,##0"
     rad = 1
@@ -614,12 +707,18 @@ def skriv_sammanfattning(ws, data, ledningar, kost_o, kost_s, kallor) -> None:
              if p else None),
             ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m" if p.get("vatten_djup_m") is not None else None),
             ("Markhöjd", p.get("markhojd") or "locknivåerna (ingen markhöjd vald)"),
-            ("Strumpinfodring", "spill-, dag- och kombinerade ledningar " + f"{STRUMPA_DIM_MIN}–{STRUMPA_DIM_MAX} mm (inte vatten)"),
-            ("Rörspräckning", f"alla ledningar till och med {SPRACKNING_DIM_MAX} mm"),
-            ("Kostnadsfiler", f"{os.path.basename(kallor['omlaggning'])}, {os.path.basename(kallor['strumpa'])}"),
+            ("Schakttyp", f"{SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
+            ("Infodring", f"spill-, dag- och kombinerade ledningar från {STRUMPA_DIM_MIN} mm, så långt prislistan räcker"
+                          " (inte vatten)"),
+            ("Rörspräckning", f"alla ledningar till och med {SPRACKNING_DIM_MAX} mm; införings- och maskingrop per "
+                              f"påbörjade {GROP_PER_M} m, servisgrop per servis"),
+            ("Djuptillägg", f"per påbörjade {_dk(DJUPTILLAGG_STEG_M)} m djup under {_dk(STANDARDDJUP_M)} m"),
+            ("Serviser", "förnyas i båda alternativen (helschakt eller infodring per meter servisledning)"),
+            ("Kostnadsfil", os.path.basename(kallor["kostnader"])),
             ("Analys", datetime.now().strftime("%Y-%m-%d %H:%M"))]
-    if any("schablon" in (k.get("kommentar") or "").lower() for k in kost_o + kost_s):
-        info.append(("OBS", "kostnadsfilerna innehåller schablonbelopp – byt mot egna priser"))
+    antagna = sorted({k["post"] for k in kost if re.search(r"schablon|antaget", (k.get("kommentar") or "").lower())})
+    if antagna:
+        info.append(("OBS", "antagna belopp/schabloner i kostnadsfilen: " + ", ".join(antagna)))
     for k, v in info:
         if v is None:
             continue
@@ -663,13 +762,21 @@ def skriv_sammanfattning(ws, data, ledningar, kost_o, kost_s, kallor) -> None:
           format={"Längd": M, "Alt. lägg om": KR, "Alt. strumpa": KR, "Strumpas": M, "Rörspräcks": M,
                   "Läggs om": M})
     for t in ("Alt. lägg om: alla ledningar läggs om; ledningar i samma grav delar graven.",
-              "Alt. strumpa: spill/dag strumpas (rörspräcks eller läggs om där strumpa inte går); vatten rörspräcks, "
+              "Alt. strumpa: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
               "men läggs om i samma grav när en avloppsledning i graven läggs om.",
               "Summorna omfattar bara ledningar med kostnad i båda alternativen; övriga står under Utan kostnad "
               "(djup eller dimension saknas – se fliken Datakvalitet)."):
         ws.cell(rad - 1, 1, t).font = Font(italic=True, color="595959")
         rad += 1
     rad += 1
+
+    block("Alt. lägg om per schakttyp", ["System", "Längd (m)"] + [f"{v} (kr)" for v in SCHAKTTYPER.values()] +
+          ["Utan kostnad (st)"],
+          per_system(lambda lista: [langd(lista)] +
+                     [_summa([l for l in lista if all((l.get("_typer") or {}).get(x) for x in SCHAKTTYPER)],
+                             lambda l, t=t: l["_typer"][t]["summa"]) for t in SCHAKTTYPER] +
+                     [sum(1 for l in lista if not all((l.get("_typer") or {}).get(x) for x in SCHAKTTYPER))]),
+          format=dict([("Längd", M)] + [(v, KR) for v in SCHAKTTYPER.values()]))
 
     block("Ledningsnätet", ["System", "Ledningar (st)", "Längd (m)", "Serviser (st)", "Servislängd (m)",
                             "Medeldjup (m)", "I samschakt (%)"],
@@ -721,7 +828,9 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),
             "kostnad_omlaggning": _kr(l.get("_omlagg")), "kostnad_strumpa": _kr(l.get("_strumpa")),
             "kostnad_rorsprackning": _kr(l.get("_sprack")),
-            "alt_lagg_om_kr": _kr(l.get("_omlagg")), "alt_strumpa_metod": l.get("_alt_metod"),
+            "alt_lagg_om_kr": _kr(l.get("_omlagg")),
+            "alt_lagg_om_per_schakttyp": {t: _kr(v) for t, v in (l.get("_typer") or {}).items()},
+            "alt_strumpa_metod": l.get("_alt_metod"),
             "alt_strumpa_kr": _kr(l.get("_alt")), "anmarkning": _anmarkning(l),
         })
     with open(path, "w", encoding="utf-8") as f:
@@ -739,8 +848,9 @@ def main(argv=None) -> int:
                                              " ur ledningsdata.json")
     ap.add_argument("ledningsdata", help="ledningsdata.json från ArcMap-verktyget Ledningsinventering")
     ap.add_argument("-o", "--utdata", help="utdatamapp (standard: samma mapp som ledningsdata.json)")
-    ap.add_argument("--kostnader", default=KOSTNADSFIL_OMLAGGNING, help="kostnadsfil för omläggning och rörspräckning")
-    ap.add_argument("--strumpa", default=KOSTNADSFIL_STRUMPA, help="kostnadsfil för strumpa (kostnader.csv)")
+    ap.add_argument("--kostnader", default=KOSTNADSFIL, help="kostnadsfil (kostnader_inventering.csv)")
+    ap.add_argument("--schakttyp", default=SCHAKTTYP, choices=sorted(SCHAKTTYPER),
+                    help="schakttyp i alternativen (alla redovisas i Sammanfattning)")
     a = ap.parse_args(argv)
 
     with open(a.ledningsdata, encoding="utf-8") as f:
@@ -748,31 +858,29 @@ def main(argv=None) -> int:
     if data.get("kalla") != "inventering.py":
         print("OBS: filen kommer inte från Ledningsinventering – djup, serviser och parallella ledningar saknas"
               " (kör verktyget Ledningsinventering i ArcMap).")
-    for path, namn in ((a.kostnader, "--kostnader"), (a.strumpa, "--strumpa")):
-        if not os.path.isfile(path):
-            print(f"Kostnadsfilen finns inte: {path} ({namn})")
-            return 2
-    kost_o = las_kostnader_omlaggning(a.kostnader)
-    kost_s = las_kostnader(a.strumpa)
+    if not os.path.isfile(a.kostnader):
+        print(f"Kostnadsfilen finns inte: {a.kostnader}")
+        return 2
+    kost = las_kostnader(a.kostnader)
 
-    ledningar = berakna(data, kost_o, kost_s)
+    ledningar = berakna(data, kost, a.schakttyp)
     ut = a.utdata or os.path.dirname(os.path.abspath(a.ledningsdata))
     os.makedirs(ut, exist_ok=True)
     xlsx = os.path.join(ut, UTDATA_XLSX)
-    kallor = {"ledningsdata": os.path.abspath(a.ledningsdata), "omlaggning": a.kostnader, "strumpa": a.strumpa}
+    kallor = {"ledningsdata": os.path.abspath(a.ledningsdata), "kostnader": a.kostnader, "schakttyp": a.schakttyp}
     try:
-        skriv_excel(data, ledningar, xlsx, kost_o, kost_s, kallor)
+        skriv_excel(data, ledningar, xlsx, kost, kallor)
     except PermissionError:
         print(f"Kan inte skriva {xlsx} – är filen öppen i Excel? Stäng den och kör igen.")
         return 1
     skriv_resultat(ledningar, os.path.join(ut, UTDATA_JSON), os.path.abspath(a.ledningsdata))
 
     L = sum(l.get("langd_m") or 0 for l in ledningar)
-    print(f"{len(ledningar)} ledningar, {L:,.0f} m".replace(",", " "))
+    print(f"{len(ledningar)} ledningar, {L:,.0f} m – schakttyp {SCHAKTTYPER[a.schakttyp]}".replace(",", " "))
     jfr = [l for l in ledningar if _jamforbar(l)]
     for namn, k in (("Alt. lägg om", "_omlagg"), ("Alt. strumpa", "_alt")):
-        kr = sum(l[k]["summa"] for l in jfr)
-        print(f"  {namn}: {kr:,.0f} kr".replace(",", " "))
+        belopp = sum(l[k]["summa"] for l in jfr)
+        print(f"  {namn}: {belopp:,.0f} kr".replace(",", " "))
     if len(jfr) < len(ledningar):
         print(f"  ({len(ledningar) - len(jfr)} ledningar saknar kostnad i något alternativ och ingår inte – se Datakvalitet)")
     print(f"Skrev {xlsx}")

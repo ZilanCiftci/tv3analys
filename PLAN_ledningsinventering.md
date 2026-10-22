@@ -2,10 +2,10 @@
 
 Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119), steg 2 (Ledningsinventering →
 `ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap,
-steg 3 (`ledning_analys.py` + `kostnader_omlaggning.csv` med schablonpriser och kolumn för antal ledningar i graven)
+steg 3 (`ledning_analys.py` + `kostnader_inventering.csv` med kalkylverktygets priser)
 är byggt – utan TV-koppling och rekommendation (användaren okt 2026: bara kostnad omläggning mot strumpa;
 vatten infodras inte; ≤ 400 mm kan rörspräckas, tredje metod); verktyget Uppdatera inventeringslager återstår. Besluten F10–F17 står längst ned; F10 (vattenlagrens
-namn) och prislistan i F13 väntar på användaren.
+namn) och prislistan i F13 finns nu (kalkylverktyget, okt 2026, `kostnader_inventering.csv`).
 
 ## Målet, som jag förstår det
 
@@ -108,7 +108,7 @@ direkt i Excel om man bara vill titta).
 **Syfte.** Inventeringsboken och kostnadsjämförelsen. Egen fil med KONFIG överst som `tv3_analys.py`,
 återanvänder dess Excel-hjälpare (`tabell`, enhetsrad, dolda kolumner, klassfärger) och `las_kostnader`.
 
-**Körning.** `python ledning_analys.py ledningsdata.json [-o mapp] [--kostnader kostnader_omlaggning.csv]
+**Körning.** `python ledning_analys.py ledningsdata.json [-o mapp] [--kostnader kostnader_inventering.csv] [--schakttyp …]
 [--karta kartunderlag.json]`.
 
 **`ledningsinventering.xlsx`:**
@@ -126,7 +126,7 @@ direkt i Excel om man bara vill titta).
 - **Datakvalitet** – vg saknas, bakfall, orimlig lutning, servis utan huvudledning, dimension saknas,
   ledning utan brunn i någon ände, år saknas.
 
-**Kostnadsmodell (ny fil `kostnader_omlaggning.csv`, samma format som `kostnader.csv` plus djupkolumner):**
+**Kostnadsmodell (första utkastet – ersatt av kalkylverktygets priser i `kostnader_inventering.csv`, se F13):**
 
 ```
 post;dimension_fran;dimension_till;djup_fran;djup_till;enhet;kr;kommentar
@@ -197,7 +197,7 @@ ledning; `ledning_analys.py` räknar bara kostnaderna för de två alternativen 
 |---|---|---|---|
 | 1 | Exportera område | `.pyt` + `moduler/omrade_export.py` | nytt |
 | 2 | Ledningsinventering | `.pyt` + `moduler/inventering.py` (bygger på gisexport, natverk, Markhojd) | nytt |
-| 3 | `ledning_analys.py` + `kostnader_omlaggning.csv` | repots rot, Python 3 | nytt |
+| 3 | `ledning_analys.py` + `kostnader_inventering.csv` | repots rot, Python 3 | nytt |
 | 4 | Uppdatera inventeringslager | `.pyt`, liten | nytt |
 | 5 | Ledningsprofil | utökning av Projekteringsprofil/`projektering.rita_profil` | utökning |
 | 6 | Planritning per stråk | utökning av Exportera kartor (`kartexport`) | utökning |
@@ -235,8 +235,12 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
   namnen behövs först i steg 2 (fältgissningar för vatten).
 - **F11 Markhöjd.** Ja, det finns en höjdmodell/markhöjder i kartan → djup ur markhöjd − vg.
 - **F12 Parallellt.** c–c < 3 m på minst 60 % av sträckan = samma schakt.
-- **F13 Kostnader.** Djupklasser enligt förslaget. Användaren har en Excel-prisdatabas som tar hänsyn till
-  1, 2 eller 3 ledningar i samma grav; priserna klistras in senare och kostnadsfilen anpassas efter den.
+- **F13 Kostnader.** Priserna ur SVOA:s kalkylverktyg (okt 2026) ligger i `kostnader_inventering.csv`: infodring per
+  dimension, helschakt per meter grav efter antal ledningar (1–3), antal större än 400 mm och schakttyp (ledningschakt,
+  spontsläde, bergschakt, KC-förstärkning), djuptillägg per 1,5 m under 2,5 m, rörspräckning per DN + gropar, serviser per
+  meter (helschakt/infodring). Djupklasserna ersattes av djuptillägget. Antaget (finns inte i verktyget): ensam spill-/dagservis
+  och två serviser i samma grav, ny brunn, återställning (0 – ingår i schaktpriset?). Att stämma av: 3 ledningar med en
+  större ledning är billigare än 2 ledningar med en större i alla schakttyper.
 - **F14 Sträcka.** Brunn→brunn, eller till ledningsände utan brunn (servis, T-rörsanslutning). Fristående
   från TV3-filmningarna (TV-klassen kopplas bara på när den finns).
 - **F15 Profil.** Per stråk, A3 liggande, högst 300 m per sida, alla parallella ledningsslag i samma profil.
