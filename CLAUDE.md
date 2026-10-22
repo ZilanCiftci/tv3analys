@@ -1129,6 +1129,20 @@ dubblett i två lager, okopplad VFOR, ledningsände avlopp, förval i dialogen) 
 Användarens skärmbild (okt 2026, "jag ser inte mina lokala lager i listorna"): rullistorna följde TOC-ordningen, så grupperna
 Lokalt Vatten/Lokalt Avlopp hamnade under INSAR, Vatten m.fl. `_ordning_lokala_forst(kartlager, slag)` sätter filterlistan per
 parameter: lokala lager av rätt slag (`_lokalt_slag`) först, övriga lokala, sist kartans övriga lager.
+**Vattenledningar klipps vid områdesgränsen** (okt 2026, användaren: "vattenledningar klipps till polygonerna – kan sträcka sig
+flera 100 m utanför; avlopp inte, brunn till brunn"): `gisexport.bygg_data(..., klipp_lager, klipp_omrade, brunnar_i_omrade)`:
+ledningar i `klipp_lager` får `geom.intersect(klipp_omrade, 2)` (projiceras till ledningarnas SR), helt utanför hoppas, kortade
+får attr/post `klippt_m` (objektets längd utanför), logg "N ledningar klippta …"; multipart blir egna bitar med fria ändar.
+inventering `inventera(..., klipp_vatten=True)`: med omradeslager och vattenlager → `omrade_export._polygoner`/`_union`, brunnar
+läses utan områdesbegränsning (`brunnar_i_omrade=False`), serviser/anordningar begränsas bara för V-lager (`_lagersystem`) och bara
+när vattnet klipps; parametrar `vatten_klippt_vid_omrade`; CSV-kolumn klippt_m. .pyt: param `klipp_vatten` (GPBoolean, True,
+Inställningar), omradeslager föreslås ur export_info.json bredvid gdb:n (när json_ut föreslås), varning när klipp utan område,
+`_ladda_modul('omrade_export')` före inventering. ledning_analys: dold kolumn "Klippt vid områdesgränsen (m)". omrade_export:
+`ANDBRUNN_AVSTAND_M` 2 – linjelagren exporteras först (`_geometrityp`), avloppets punktlager (`_ar_avlopp`) får dessutom
+`WITHIN_A_DISTANCE` 2 m från exporterade avloppsledningar (`ADD_TO_SELECTION`, loggat) så ändbrunnar utanför området följer med.
+Låtsas-arcpy: Geometry.length/intersect (flerdelad)/`delar`, SelectLayerByLocation WITHIN_A_DISTANCE + ADD_TO_SELECTION.
+Test: test_inventering test_klipp_vatten (V1 200 → 150 m, V2 ut och in → två 10 m-bitar, SSL2 hel till B4 utanför, SSL3 helt
+utanför bort, VSE9 utanför bort, SERV4 utanför med, förslag ur export_info.json), test_omrade (SNB2 ändbrunn utanför med).
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning

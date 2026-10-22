@@ -38,6 +38,9 @@ INFOFIL = 'export_info.json'
 LAGERSUFFIX = ' (lokal)'        # namn i kartan pa de lokala lagren
 TMP_OMRADE = 'in_memory/tv3_omrade'
 TMP_LAGER = 'tv3_omrade_export_tmp'
+ANDBRUNN_AVSTAND_M = 2.0        # avloppets punktlager (brunnar, ledningsandar) inom detta fran en exporterad
+                                # avloppsledning tas med aven utanfor omradet - ledningen ska ga brunn till
+                                # brunn aven nar den korsar gransen; None stanger av
 
 _AO = {'\u00e5': 'a', '\u00e4': 'a', '\u00f6': 'o', '\u00c5': 'A', '\u00c4': 'A', '\u00d6': 'O',
        '\u00e9': 'e', '\u00fc': 'u'}
@@ -98,6 +101,20 @@ def _polygoner(lyr, namnfalt=None, bara_valda=True):
     return ut
 
 
+def _ar_avlopp(lyr):
+    """Avloppslager: i gruppen Avlopp eller med namn 'A ...' (SVOA)."""
+    kort = txt(getattr(lyr, 'name', '') or '').strip().lower()
+    langt = txt(getattr(lyr, 'longName', '') or '').strip().lower()
+    return kort.startswith('a ') or langt.startswith('avlopp')
+
+
+def _geometrityp(namn):
+    try:
+        return txt(getattr(arcpy.Describe(kalla(hitta_lager(namn))[0]), 'shapeType', '') or '')
+    except Exception:
+        return ''
+
+
 def _union(geometrier):
     u = None
     for g in geometrier:
@@ -154,6 +171,9 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
     tagna = set()
     resultat = []
     hoppade = []
+    # linjelagren forst, sa att avloppsbrunnarna vid ledningarnas andar kan hamtas efterat
+    lager = sorted(lager, key=lambda n: 0 if _geometrityp(n) == 'Polyline' else 1)
+    avlopp_linjer = []
     sr_namn = ''
     mxd = _mxd() if lagg_i_kartan else None
     df = None
@@ -188,6 +208,15 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
                 _tillfalligt_lager(lyr, src, dq, lagernamn)
                 arcpy.SelectLayerByLocation_management(TMP_LAGER, 'INTERSECT', TMP_OMRADE)
                 antal = int(arcpy.GetCount_management(TMP_LAGER).getOutput(0))
+                if ANDBRUNN_AVSTAND_M and geometri == 'Point' and avlopp_linjer and _ar_avlopp(lyr):
+                    for fc in avlopp_linjer:
+                        arcpy.SelectLayerByLocation_management(TMP_LAGER, 'WITHIN_A_DISTANCE', fc,
+                                                               '%s Meters' % ANDBRUNN_AVSTAND_M, 'ADD_TO_SELECTION')
+                    fler = int(arcpy.GetCount_management(TMP_LAGER).getOutput(0)) - antal
+                    if fler:
+                        logg('  %s: %d utanfor omradet vid avloppsledningar som korsar gransen tas med'
+                             % (lagernamn, fler))
+                    antal += fler
                 if antal == 0:
                     logg('  %s: inga objekt inom omradet' % lagernamn)
                     arcpy.Delete_management(TMP_LAGER)
@@ -210,6 +239,8 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
                 if FALT_KALLA not in befintliga:
                     arcpy.AddField_management(ut_fc, FALT_KALLA, 'TEXT', field_length=100, field_alias='Kallager')
                 korsar = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)
+                if geometri == 'Polyline' and _ar_avlopp(lyr):
+                    avlopp_linjer.append(ut_fc)
                 logg('  %s: %d objekt -> %s%s' % (lagernamn, antal, fc_namn,
                                                    (' (%d korsar omradesgransen)' % korsar) if korsar else ''))
                 resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),

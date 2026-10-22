@@ -279,12 +279,16 @@ class Omraden(object):
 def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000',
-              duf_lager=None, duf_falt=None, ren_falt=None, botten_falt=None, alla_falt=False):
+              duf_lager=None, duf_falt=None, ren_falt=None, botten_falt=None, alla_falt=False,
+              klipp_lager=None, klipp_omrade=None, brunnar_i_omrade=True):
     """Bygger gisdata i minnet: (data, hjalp). data ar JSON-strukturen (brunnar, ledningar ...) dar
     varje ledningspost dessutom har '_pts' (bitens punkter [(x, y, None)]) - exportera() tar bort dem
     fore skrivningen, ledningsinventeringen anvander dem. hjalp = {'graf', 'sr', 'led_lager',
     'brunn_lager', 'omraden'}. alla_falt=True ger 'attribut' (alla ovriga falt) pa ledningar och brunnar,
-    botten_falt ger brunnarnas 'bottenniva'."""
+    botten_falt ger brunnarnas 'bottenniva'. klipp_lager (lagernamn, langa) klipps mot polygonen
+    klipp_omrade (t.ex. vattenledningar mot inventeringsomradet); klippta poster far 'klippt_m'.
+    brunnar_i_omrade=False laser alla brunnar (aven utanfor omradet, sa att ledningar som korsar
+    gransen behaller sina andbrunnar) - omradet begransar da bara ledningarna."""
     if not float(tolerans) > 0:
         raise RuntimeError('Toleransen maste vara storre an 0 m')
     if isinstance(ledningslager, (TEXTTYP, bytes)):
@@ -310,7 +314,8 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
         logg('Laser driftomraden')
         omraden = Omraden(hitta_lager(duf_lager), duf_falt, sr)
     logg('Laser brunnar (%s)' % tid())
-    brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade, botten_falt, alla_falt)
+    brunnar = las_brunnar(brunn_lager, brunn_id, lock_falt, typ_falt, sr, omrade if brunnar_i_omrade else None,
+                          botten_falt, alla_falt)
     logg('  %d brunnar totalt (%s)' % (len(brunnar), tid()))
     if omraden is not None:
         for b in brunnar:
@@ -323,6 +328,15 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
     original = {}       # (lager, oid) -> [[punkter per del]]
     attr = {}           # (lager, oid) -> dict
     n_led = n_bitar = 0
+    klipp_namn = set(txt(n) for n in (klipp_lager or [])) if klipp_omrade is not None else set()
+    if klipp_namn:
+        try:
+            if _sr_namn(klipp_omrade) not in ('', txt(getattr(sr, 'name', ''))):
+                klipp_omrade = klipp_omrade.projectAs(sr)
+        except Exception:
+            pass
+    n_klippt = n_utanfor = 0
+    klippt_m = 0.0
     for lyr in led_lager:
         namn = txt(getattr(lyr, 'longName', None) or getattr(lyr, 'name', lyr))   # langt namn: tva lager kan heta lika
         falt = _faltnamn(lyr)
@@ -348,6 +362,23 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
                 if geom is None:
                     continue
                 v = dict(zip(lasfalt[2:], rad[2:]))
+                kortad = 0.0
+                if namn in klipp_namn:
+                    try:
+                        L0 = geom.length
+                        g2 = geom.intersect(klipp_omrade, 2)
+                    except Exception as e:
+                        logg('  OBS kunde inte klippa %s/%s mot omradet (%s) - hela ledningen tas med'
+                             % (namn, oid, txt(e)))
+                        L0, g2 = 0.0, geom
+                    if g2 is None or not g2.length > 0:
+                        n_utanfor += 1
+                        continue
+                    if g2.length < L0 - 0.01:
+                        kortad = L0 - g2.length
+                        n_klippt += 1
+                        klippt_m += kortad
+                    geom = g2
                 attr[(namn, oid)] = {
                     'vg_fran': _tal(v.get(f_vg1)) if f_vg1 else None,
                     'vg_till': _tal(v.get(f_vg2)) if f_vg2 else None,
@@ -358,6 +389,8 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
                     'anlaggningsar': _heltal(v.get(f_ar)) if f_ar else None,
                     'renoveringsar': _heltal(v.get(f_ren)) if f_ren else None,
                 }
+                if kortad:
+                    attr[(namn, oid)]['klippt_m'] = round(kortad, 2)
                 if alla_falt:
                     attr[(namn, oid)]['attribut'] = dict((f, _json_varde(v.get(f))) for f in ovriga)
                 delar = []
@@ -376,6 +409,9 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
     if omrade is not None:
         arcpy.Delete_management('lyr_gis_omr')
     logg('  %d ledningar, %d bitar mellan brunnar/andar (%s)' % (n_led, n_bitar, tid()))
+    if klipp_namn:
+        logg('  %d ledningar klippta vid omradesgransen (%.0f m utanfor togs bort), %d helt utanfor'
+             % (n_klippt, klippt_m, n_utanfor))
 
     # Bitarna -> ledningsstrackor. Varje bit finns tva ganger i grafen (bada riktningar);
     # ta den som lagrats i ritad riktning (fram_ids) och hoppa over nollbitar.
@@ -427,6 +463,8 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
             }
             if alla_falt:
                 post['attribut'] = at.get('attribut', {})
+            if at.get('klippt_m'):
+                post['klippt_m'] = at['klippt_m']      # objektets langd utanfor omradet (hela objektet)
             if omraden is not None:
                 mitt = _punkt_vid(pts, _langd(pts) / 2.0)
                 post['omrade'] = omraden.omrade(mitt[0], mitt[1])
