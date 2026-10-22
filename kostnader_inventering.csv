@@ -1,0 +1,102 @@
+# Kostnadsposter för ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma eller heltal.
+# Belopp ur SVOA:s kalkylverktyg (okt 2026) där inget annat sägs; rader märkta ANTAGET/SCHABLON finns inte i verktyget.
+# Rubrikraden styr kolumnordningen. Tom cell = gäller alla.
+#   schakttyp  ledningschakt | spontslade | bergschakt | kc  (helschakt; vilken som räknas väljs med --schakttyp)
+#   ledningar  antal ledningar i samma grav (1–3)
+#   storre     antal ledningar i graven som är större än 400 mm (rader för 2–3 ledningar)
+#   system     V vatten, S spill, D dag, K kombinerat (flera med komma)
+#   dimension  för 1 ledning: ledningens dimension; för 2–3 ledningar: största dimensionen i graven (mm)
+post;schakttyp;ledningar;storre;system;dimension_fran;dimension_till;enhet;kr;kommentar
+infodring;;;;;0;250;m;3100;Renovering av ledning Ø 100–250
+infodring;;;;;251;400;m;5100;Renovering av ledning Ø 300–400
+infodring;;;;;401;460;m;5600;Renovering av ledning Ø 460
+infodring;;;;;461;500;m;7000;Renovering av ledning Ø 500
+infodring;;;;;501;600;m;7600;Renovering av ledning Ø 600
+infodring;;;;;601;700;m;8600;Renovering av ledning Ø 700
+infodring;;;;;701;800;m;9100;Renovering av ledning Ø 800
+infodring;;;;;801;900;m;9600;Renovering av ledning Ø 900
+servis_infodring;;;;V;;;m;14697;Dricksvattenservis infodring – servisledning schaktfritt
+servis_infodring;;;;S,K;;;m;22464;Spillvattenservis infodring – servisledning schaktfritt (kombinerat som spill)
+servis_infodring;;;;D;;;m;22464;Dagvattenservis infodring – servisledning schaktfritt
+schakt;ledningschakt;1;;;0;350;m;19000;Svoa 1 ledning upp till Ø 350 ledningschakt
+schakt;ledningschakt;1;;;351;400;m;23200;Svoa 1 ledning Ø 400 ledningschakt
+schakt;ledningschakt;1;;;401;600;m;28200;Svoa 1 ledning Ø 600 ledningschakt
+schakt;ledningschakt;1;;;601;800;m;39445;Svoa 1 ledning Ø 800 ledningschakt
+schakt;ledningschakt;1;;;801;1000;m;60260;Svoa 1 ledning Ø 1000 ledningschakt
+schakt;ledningschakt;1;;;1001;1200;m;67160;Svoa 1 ledning Ø 1200 ledningschakt
+schakt;ledningschakt;1;;;1201;1400;m;75325;Svoa 1 ledning Ø 1400 ledningschakt
+schakt;ledningschakt;2;0;;0;400;m;23600;Svoa 2 ledningar upp till Ø 400 ledningschakt
+schakt;ledningschakt;2;1;;401;700;m;63260;Svoa 2 ledningar en större ledning Ø 700 ledningschakt
+schakt;ledningschakt;2;2;;401;700;m;71260;Svoa 2 ledningar två större ledningar Ø 700 ledningschakt
+schakt;ledningschakt;3;0;;0;400;m;26200;Svoa 3 ledningar upp till Ø 400 ledningschakt
+schakt;ledningschakt;3;1;;401;700;m;34200;Svoa 3 ledningar en större ledning Ø 700 ledningschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;ledningschakt;3;2;;401;700;m;66260;Svoa 3 ledningar två större ledningar Ø 700 ledningschakt
+schakt;ledningschakt;3;3;;401;700;m;74260;Svoa 3 ledningar tre större ledningar Ø 700 ledningschakt
+schakt;spontslade;1;;;0;350;m;24000;Svoa 1 ledning upp till Ø 350 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;351;400;m;28200;Svoa 1 ledning Ø 400 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;401;600;m;33300;Svoa 1 ledning Ø 600 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;601;800;m;45195;Svoa 1 ledning Ø 800 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;801;1000;m;66010;Svoa 1 ledning Ø 1000 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;1001;1200;m;73025;Svoa 1 ledning Ø 1200 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;1;;;1201;1400;m;81075;Svoa 1 ledning Ø 1400 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;2;0;;0;400;m;28600;Svoa 2 ledningar upp till Ø 400 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;2;1;;401;1000;m;69010;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;2;2;;401;1000;m;77010;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;3;0;;0;400;m;31300;Svoa 3 ledningar upp till Ø 400 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;3;1;;401;700;m;39300;Svoa 3 ledningar en större ledning Ø 700 ledningschakt med spontbox, spontkassett djup 2,6 – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;spontslade;3;2;;401;1000;m;80010;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;spontslade;3;3;;401;1000;m;88010;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
+schakt;bergschakt;1;;;0;350;m;26500;Svoa 1 ledning upp till Ø 350 ledningschakt bergschakt
+schakt;bergschakt;1;;;351;400;m;32500;Svoa 1 ledning Ø 400 ledningschakt bergschakt
+schakt;bergschakt;1;;;401;600;m;39500;Svoa 1 ledning Ø 600 ledningschakt bergschakt
+schakt;bergschakt;1;;;601;800;m;55200;Svoa 1 ledning Ø 800 ledningschakt bergschakt
+schakt;bergschakt;1;;;801;1000;m;84295;Svoa 1 ledning Ø 1000 ledningschakt bergschakt
+schakt;bergschakt;1;;;1001;1200;m;94070;Svoa 1 ledning Ø 1200 ledningschakt bergschakt
+schakt;bergschakt;1;;;1201;1400;m;105455;Svoa 1 ledning Ø 1400 ledningschakt bergschakt
+schakt;bergschakt;2;0;;0;400;m;33000;Svoa 2 ledningar upp till Ø 400 ledningschakt bergschakt
+schakt;bergschakt;2;1;;401;1000;m;87295;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt bergschakt
+schakt;bergschakt;2;2;;401;1000;m;95295;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt bergschakt
+schakt;bergschakt;3;0;;0;400;m;36700;Svoa 3 ledningar upp till Ø 400 ledningschakt bergschakt
+schakt;bergschakt;3;1;;401;700;m;44700;Svoa 3 ledningar en större ledning Ø 700 ledningschakt bergschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;bergschakt;3;2;;401;1000;m;98295;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt bergschakt
+schakt;bergschakt;3;3;;401;1000;m;106295;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt bergschakt
+schakt;kc;1;;;0;350;m;25000;Svoa 1 ledning upp till Ø 350 ledningschakt med KC-förstärkning
+schakt;kc;1;;;351;400;m;29200;Svoa 1 ledning Ø 400 ledningschakt med KC-förstärkning
+schakt;kc;1;;;401;600;m;34300;Svoa 1 ledning Ø 600 ledningschakt med KC-förstärkning
+schakt;kc;1;;;601;800;m;46345;Svoa 1 ledning Ø 800 ledningschakt med KC-förstärkning
+schakt;kc;1;;;801;1000;m;67160;Svoa 1 ledning Ø 1000 ledningschakt med KC-förstärkning
+schakt;kc;1;;;1001;1200;m;74175;Svoa 1 ledning Ø 1200 ledningschakt med KC-förstärkning
+schakt;kc;1;;;1201;1400;m;82225;Svoa 1 ledning Ø 1400 ledningschakt med KC-förstärkning
+schakt;kc;2;0;;0;400;m;29600;Svoa 2 ledningar upp till Ø 400 ledningschakt med KC-förstärkning
+schakt;kc;2;1;;401;1000;m;70160;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt med KC-förstärkning
+schakt;kc;2;2;;401;1000;m;78160;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
+schakt;kc;3;0;;0;400;m;32300;Svoa 3 ledningar upp till Ø 400 ledningschakt med KC-förstärkning
+schakt;kc;3;1;;401;700;m;40300;Svoa 3 ledningar en större ledning Ø 700 ledningschakt med KC-förstärkning – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;kc;3;2;;401;1000;m;81160;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
+schakt;kc;3;3;;401;1000;m;89160;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
+djuptillagg;;;;;0;600;m;3750;Tillägg för schaktdjup plus 1,5 m upp till Ø 600 (standarddjup 2,5 m) – per påbörjade 1,5 m
+djuptillagg;;;;;601;9999;m;7500;Tillägg för schaktdjup plus 1,5 m över Ø 600
+servis_helschakt;;1;;V;;;m;14697;Dricksvattenservis helschakt
+servis_helschakt;;1;;S,D,K;;;m;14697;ANTAGET – ensam spill-/dagvattenservis i helschakt saknas i kalkylverktyget, satt som dricksvattenservis
+servis_helschakt;;2;;;;;m;22464;ANTAGET – två servisledningar i samma grav saknas i kalkylverktyget, satt som komplett servis
+servis_helschakt;;3;;;;;m;22464;Komplett servis 3 ledningar – servisledning helschakt
+servis_tillagg;bergschakt;;;;;;m;5000;Tillägg för bergschakt i serviser
+servis_tillagg;spontslade;;;;;;m;7500;Tillägg för spontkassett i serviser
+rorsprackning;;;;;0;100;m;2300;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 100
+rorsprackning;;;;;101;110;m;2800;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 110
+rorsprackning;;;;;111;160;m;3300;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 160
+rorsprackning;;;;;161;200;m;3800;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 200
+rorsprackning;;;;;201;250;m;4400;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 250
+rorsprackning;;;;;251;315;m;5300;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 315
+rorsprackning;;;;;316;355;m;6600;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 355
+rorsprackning;;;;;356;400;m;7100;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 400
+inforingsgrop;;;;;;;st;31433;Införingsgrop – jordschakt, en grop per 50 m ledning
+maskingrop;;;;;;;st;87313;Maskingrop (draggrop) – jordschakt, en grop per 50 m ledning
+servisgrop;;;;;;;st;23749;Servisgrop – en per servis (ventilgropar räknas inte, ventiler finns inte i underlaget)
+brunn_ny;;;;;;;st;60000;SCHABLON – ny brunn vid omläggning, en halv per brunnsände (finns inte i kalkylverktyget)
+aterstallning;;;;;;;m;0;ANTAGET ingå i schaktpriset – ange kr per meter grav om återställning ska läggas till
+framschaktning;;;;;;;st;60000;Ur kostnader.csv: framschakta brunn vid infodring när båda ändbrunnarna är tillsyns-/rensbrunnar
+ny_brunn;;;;;;;st;45000;Ur kostnader.csv: ny nedstigningsbrunn i den framschaktade brunnen
+# Används inte automatiskt (kalkylverktyget, för referens):
+#   Tillägg för tillfällig spont typ berlinerspont en sida 4 400 kr/m, två sidor 8 800 kr/m (rörgrav 2,5 m, spontdjup 4 m)
+#   Rörspräckning vatten DN Ø 100–250 3 700 kr/m och Ø 300–400 5 900 kr/m (per DN-raderna ovan används i stället)

@@ -1025,7 +1025,7 @@ inte att infodra; ≤ 400 går att rörspräcka"): `ledning_analys.py` (Python 3
 `ledningsinventering.xlsx` + `ledningsresultat.json` (version 2; standard i JSON-filens mapp). **Ingen TV-koppling, ingen
 rekommendation/kvot** (togs bort: `--karta`, `tv_index`, `rekommendation`, REK_FARG). Importerar `las_text`, `las_kostnader`,
 `pris` ur tv3_analys; egen `tabell()` (rubrik + enhetsrad, format per rubrik, dolda kolumner med outline, `rad_start` för block
-i Sammanfattning). `kostnader_omlaggning.csv` (schabloner): post;dimension_fran;dimension_till;djup_fran;djup_till;ledningar;
+i Sammanfattning). `kostnader_omlaggning.csv` (schabloner, ersatt av kostnader_inventering.csv – se nedan): post;dimension_fran;dimension_till;djup_fran;djup_till;ledningar;
 enhet;kr;kommentar, rubrikraden styr ordningen (`las_kostnader_omlaggning`); schakt kr/m grav per dimension 0–300/301–600/
 601–1200 × djup 0–2/2–3/3–4/>4, `samschakt_faktor` 0,4, aterstallning 3 500, servis_omkoppling 35 000, servis_ledning 4 000,
 brunn_ny 60 000, rorsprackning 5 000 (≤ 200)/6 500 (201–400) kr/m, sprackningsgrop 40 000/st. `_djuprad`: största
@@ -1056,6 +1056,35 @@ S1 3 i graven, D1 2, K1 ensam, S3 djup saknas, V1 vatten rörspräcks 1 080 000 
 läggs om i alt. strumpa och V1 läggs om med den i en grav om 2 (D1 strumpas och räknas inte), framschaktning vid STB,
 dimension 600/1500, rader för 2 ledningar, jämförbara summor (S3 utanför), flikar, dolda kolumner, gisdata utan system).
 Handledning 7.15. Kvar i steg 3: ArcMap-verktyget Uppdatera inventeringslager (läser ledningsresultat.json).
+**Kalkylverktygets priser** (okt 2026, användaren klistrade in SVOA:s kalkylverktyg): `kostnader_omlaggning.csv` ersatt av
+`kostnader_inventering.csv` (kolumner post;schakttyp;ledningar;storre;system;dimension_fran;dimension_till;enhet;kr;kommentar,
+`las_kostnader` + `hitta(kost, post, dim, schakttyp, system, ledningar, storre)` där tom cell gäller alla, `kr()`);
+ledning_analys läser inte längre kostnader.csv (`--strumpa` borttagen). Poster: infodring Ø ≤250 3 100, 251–400 5 100, 460 5 600,
+500 7 000, 600 7 600, 700 8 600, 800 9 100, 900 9 600 kr/m; servis_infodring V 14 697, S/K/D 22 464 kr/m; schakt 4 typer
+(`SCHAKTTYPER` ledningschakt/spontslade/bergschakt/kc) × 1 ledning (≤350, 400, 600 … 1400) + 2–3 ledningar med `storre` =
+antal > `STORRE_DIM` 400 (0: dim 0–400; ≥1: 401–700 resp. 401–1000 enligt verktygets text) – 56 rader; djuptillagg 3 750 (≤600)/
+7 500 kr/m per påbörjade `DJUPTILLAGG_STEG_M` 1,5 under `STANDARDDJUP_M` 2,5 (`_antal_djuptillagg`, medel över profilpunkter,
+vatten 1,7 → 0, saknat djup → 0 + anmärkning "djup saknas – inget djuptillägg", kostnaden räknas ändå); servis_helschakt 1 V
+14 697, 1 S/D/K 14 697 (ANTAGET), 2 22 464 (ANTAGET), 3 22 464 (komplett servis); servis_tillagg bergschakt 5 000/spontslade 7 500
+kr/m; rorsprackning per DN ≤100 2 300, 110 2 800, 160 3 300, 200 3 800, 250 4 400, 315 5 300, 355 6 600, 400 7 100; inforingsgrop
+31 433 + maskingrop 87 313 per påbörjade `GROP_PER_M` 50 m (minst 1); servisgrop 23 749 per servis (ventilgropar räknas inte);
+brunn_ny 60 000 SCHABLON; aterstallning 0 ANTAGET; framschaktning 60 000 + ny_brunn 45 000 ur kostnader.csv. `_grav(led, kost,
+per_id, schakttyp, medlagda)`: n = ledningar_i_grav, i graven = ledningen + de n−1 partnerna med störst andel, storre/dmax ur
+dem, `gravpris` / n × L + djuptillägg / n + återställning / n + brunnar; `servisgravar(serviser)`: union-find på serviser vars
+båda ändar ligger inom `SERVIS_GRAV_AVSTAND_M` 3 (i någon riktning, rutnät), `_servis_helschakt` delar servisgravens pris lika
+mellan de serviser i gruppen vars huvudledning läggs om i alternativet (+ servis_tillagg per schakttyp); `_infodring` =
+infodring × L + servis_infodring × servislängd (+ framschaktning); `_sprackning` = rorsprackning × L + gropar + servisgropar +
+servis_infodring × servislängd; serviser förnyas alltså i båda alternativen. `berakna(data, kost, schakttyp)`: `_typer` = alt.
+lägg om för alla fyra schakttyper, `_omlagg` = vald (`SCHAKTTYP`/`--schakttyp`), alt. strumpa som förut med vald typ.
+`STRUMPA_DIM_MAX` borttagen (prislistan avgör: "inget infodringspris för Ø 1000"). Excel: info-rader om schakttyp, infodring,
+rörspräckning, djuptillägg, serviser och OBS-rad med poster märkta ANTAGET/SCHABLON; nytt block "Alt. lägg om per schakttyp";
+Ledningar dolda kolumner Lägg om per schakttyp, Schakt, Djuptillägg, Återställning, Brunnar, Serviser helschakt, Infodring …,
+Rörspräckning …, Gropar, Servisgropar; Serviser-fliken "Serviser i samma grav (st)" (`_servisgrav`); Kostnadsposter med alla
+kolumner. JSON `alt_lagg_om_per_schakttyp`. Test: scratchpad/test_ledning_analys.py (prislista, handräknade S1 1 205 303 /
+S2 1 545 076 / K1 970 000 / V1 2 360 000 resp. rörspräckt 1 134 984, servisgrav V+S → komplett servis delad, S1 Ø 950 med
+spontsläde → läggs om i alt. strumpa och V1 med den, inget pris för 3 ledningar med en Ø 950, `--schakttyp kc`, gisdata).
+Att stämma av med användaren: 3 ledningar med en större ledning (34 200) billigare än 2 ledningar med en större (63 260) i alla
+schakttyper; ensam spill-/dagservis i helschakt; återställning; ny brunn.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
