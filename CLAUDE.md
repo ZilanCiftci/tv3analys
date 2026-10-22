@@ -1151,6 +1151,7 @@ Raster gav ERROR 999999): projektering `markhojd(lager_eller_lista, …)` → `M
 markhojd multiValue (`_lagerlista`). Låtsas-arcpy: `RASTER`/`skapa_raster`, Describe för raster, RasterToNumPyArray.
 Test: test_inventering test_flera_raster (fyra rutor 110 × 50 m, z = 23 − 0,005x → djup 3,0 över rutgränserna).
 Projekteringsprofil tar fortfarande ett markhöjdslager.
+**Punktlager bland ledningarna** (okt 2026, användarens körning: "TypeError: 'geoprocessing point object' object is not iterable" i gisexport.bygg_data – A Ledningsände avlopp (lokal) och V Ledningsände (lokal) var valda bland lednings-/vattenlagren): `gisexport.geometrityp(lyr)`; `bygg_data` hoppar över lager som inte är Polyline ("OBS hoppar over … Point-lager, inte ledningar"), likaså `inventering._las_serviser`. Dialogen varnade redan (`_kolla_geometri`). Test: test_inventering test_punktlager_bland_ledningar.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning

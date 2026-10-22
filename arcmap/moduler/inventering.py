@@ -174,6 +174,10 @@ def _las_serviser(servislager, omrade, dim_falt, mat_falt, ledntyp_falt, id_falt
     ut = []
     for lyr in servislager:
         namn = _lagernamn(lyr)
+        typ = gisexport.geometrityp(lyr)
+        if typ and typ != 'Polyline':
+            logg('  OBS hoppar over servislagret "%s": %s-lager, inte ledningar' % (namn, typ))
+            continue
         falt = _faltnamn(lyr)
 
         def f(onskat):
