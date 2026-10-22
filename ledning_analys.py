@@ -69,6 +69,8 @@ FRAMSCHAKTA_TB = True             # infodring: båda ändbrunnarna tillsyns-/ren
 BRUNNSTYP_TILLSYN = r"TB|RB"      # brunnstyp (t.ex. WellFunction STB/SRB) som räknas som tillsyns-/rensbrunn
 VENTILGROP_KATEGORIER = ("ventil", "brandpost")   # rörspräckning: en ventilgrop per sådan anordning på ledningen
                                                   # (servisventiler ligger i servisgropen)
+DIMENSION_UR_GRANNE = True        # saknad dimension antas lika med uppströms ledning av samma system
+DIMENSION_NEDSTROMS_RESERV = True # ... och nedströms ledning när ingen uppströms har dimension
 ANORDNING_NAMN = {"ventil": "Ventiler", "brandpost": "Brandposter", "servisventil": "Servisventiler",
                   "ledningsande": "Ledningsändar", "anordning": "Övriga anordningar"}
 
@@ -375,6 +377,75 @@ def _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx, alla_serv, gru
     return o, brist, n, beskr
 
 
+def _nod(led: dict, ande: str):
+    """Nyckel för ledningens ände: brunnens littera, annars den fria ändens koordinat."""
+    namn = led.get(ande)
+    if namn:
+        return namn
+    xy = led.get(ande + "_xy")
+    return ("xy", round(xy[0], 1), round(xy[1], 1)) if xy and xy[0] is not None else None
+
+
+def _upp_ned(led: dict):
+    """(uppströms ände, nedströms ände) – ur vattengången, annars ritad riktning."""
+    a, b = _nod(led, "fran"), _nod(led, "till")
+    vf, vt = led.get("vg_fran"), led.get("vg_till")
+    if vf is not None and vt is not None and vt > vf:
+        return b, a
+    return a, b
+
+
+def anta_dimensioner(ledningar: list[dict]) -> int:
+    """Ledningar utan dimension får uppströms ledningens (samma system, ansluter i den uppströms änden;
+    flera -> den största). Kedjor fylls steg för steg uppifrån. Utan uppströms dimension tas nedströms
+    ledningens (DIMENSION_NEDSTROMS_RESERV). Sätter dimension_antagen = {fran, riktning, dimension}."""
+    saknas = [l for l in ledningar if l.get("dimension") is None]
+    if not DIMENSION_UR_GRANNE or not saknas:
+        return 0
+    slut_i = defaultdict(list)     # nod -> ledningar vars nedströms ände ligger där
+    start_i = defaultdict(list)    # nod -> ledningar vars uppströms ände ligger där
+    riktn = {}
+    for l in ledningar:
+        u, n = _upp_ned(l)
+        riktn[id(l)] = (u, n)
+        if n is not None:
+            slut_i[(l.get("system"), n)].append(l)
+        if u is not None:
+            start_i[(l.get("system"), u)].append(l)
+    antal = 0
+    steg = [("uppströms", lambda l: slut_i.get((l.get("system"), riktn[id(l)][0]), []))]
+    if DIMENSION_NEDSTROMS_RESERV:
+        steg.append(("nedströms", lambda l: start_i.get((l.get("system"), riktn[id(l)][1]), [])))
+    for riktning, grannar in steg:
+        andrat = True
+        while andrat:
+            andrat = False
+            for l in saknas:
+                if l.get("dimension") is not None:
+                    continue
+                kand = [q for q in grannar(l) if q is not l and q.get("dimension") is not None]
+                if not kand:
+                    continue
+                q = max(kand, key=lambda x: x["dimension"])
+                l["dimension"] = q["dimension"]
+                kalla = (q.get("dimension_antagen") or {}).get("ursprung") or q.get("id")
+                l["dimension_antagen"] = {"fran": q.get("id"), "riktning": riktning, "dimension": q["dimension"],
+                                          "ursprung": kalla}
+                antal += 1
+                andrat = True
+    return antal
+
+
+def _dim_text(l: dict) -> str | None:
+    a = l.get("dimension_antagen")
+    if not a:
+        return None
+    t = f"dimension saknas i GIS – Ø {a['dimension']:g} antagen från {a['riktning']} ledning {a['fran']}"
+    if a.get("ursprung") and a["ursprung"] != a["fran"]:
+        t += f" (ursprungligen {a['ursprung']})"
+    return t
+
+
 def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[dict]:
     """Lägger till kostnaderna på varje ledning (i data['ledningar'])."""
     ledningar = data.get("ledningar", [])
@@ -383,6 +454,7 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
             led["system"] = (led.get("ledningstyp") or "").strip()[:1].upper()
         if not led.get("id"):
             led["id"] = f"{(led.get('lager') or '').split(chr(92))[-1]}/{led.get('oid')}"
+    data["_antagna_dim"] = anta_dimensioner(ledningar)
     per_id = {l.get("id"): l for l in ledningar}
     brunnar = {b["littera"]: b for b in data.get("brunnar", [])}
     alla_serv = [s for s in data.get("serviser", []) if s.get("ledning") in per_id]
@@ -527,7 +599,7 @@ def _kr(d: dict | None, k: str = "summa"):
 
 
 def _anmarkning(l: dict) -> str | None:
-    delar = [x for x in (l.get("_alt_motiv"), l.get("_anm"),
+    delar = [x for x in (_dim_text(l), l.get("_alt_motiv"), l.get("_anm"),
                          ("alt. strumpa: " + l["_alt_brist"]) if l.get("_alt_brist") else None) if x]
     return "; ".join(delar) or None
 
@@ -711,7 +783,10 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
             rader.append(["ingen omläggningskostnad" if not l.get("_omlagg") else "omläggning", l.get("id"),
                           l["_omlagg_brist"]])
         if l.get("dimension") is None:
-            rader.append(["dimension saknas", l.get("id"), ""])
+            rader.append(["dimension saknas", l.get("id"), "ingen ledning uppströms eller nedströms med dimension"
+                          if DIMENSION_UR_GRANNE else ""])
+        elif l.get("dimension_antagen"):
+            rader.append(["dimension antagen", l.get("id"), _dim_text(l)])
         if l.get("anlaggningsar") is None:
             rader.append(["anläggningsår saknas", l.get("id"), ""])
         if not l.get("fran") or not l.get("till"):
@@ -750,6 +825,9 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
                               f"påbörjade {GROP_PER_M} m, servisgrop per servis, ventilgrop per "
                               f"{' och '.join(VENTILGROP_KATEGORIER)} på ledningen"),
             ("Djuptillägg", f"per påbörjade {_dk(DJUPTILLAGG_STEG_M)} m djup under {_dk(STANDARDDJUP_M)} m"),
+            ("Saknad dimension", (f"{data.get('_antagna_dim', 0)} ledningar har fått uppströms ledningens dimension"
+                                  + (" (nedströms när ingen finns uppströms)" if DIMENSION_NEDSTROMS_RESERV else "")
+                                  + " – se Anmärkning") if DIMENSION_UR_GRANNE else None),
             ("Serviser", "förnyas i båda alternativen (helschakt eller infodring per meter servisledning)"),
             ("Kostnadsfil", os.path.basename(kallor["kostnader"])),
             ("Analys", datetime.now().strftime("%Y-%m-%d %H:%M"))]
@@ -865,6 +943,7 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
         poster.append({
             "id": l.get("id"), "lager": l.get("lager"), "oid": l.get("oid"), "del": l.get("del"),
             "fran": l.get("fran"), "till": l.get("till"), "system": l.get("system"),
+            "dimension": l.get("dimension"), "dimension_antagen": l.get("dimension_antagen"),
             "langd_m": l.get("langd_m"), "djup_medel": l.get("djup_medel"), "djupklass": l.get("djupklass"),
             "antal_serviser": l.get("antal_serviser"), "serviser_m": l.get("serviser_m"),
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),
@@ -920,6 +999,10 @@ def main(argv=None) -> int:
 
     L = sum(l.get("langd_m") or 0 for l in ledningar)
     print(f"{len(ledningar)} ledningar, {L:,.0f} m – schakttyp {SCHAKTTYPER[a.schakttyp]}".replace(",", " "))
+    if data.get("_antagna_dim"):
+        kvar = sum(1 for l in ledningar if l.get("dimension") is None)
+        print(f"  {data['_antagna_dim']} ledningar utan dimension fick grannledningens dimension"
+              + (f" ({kvar} saknar fortfarande)" if kvar else ""))
     jfr = [l for l in ledningar if _jamforbar(l)]
     for namn, k in (("Alt. lägg om", "_omlagg"), ("Alt. strumpa", "_alt")):
         belopp = sum(l[k]["summa"] for l in jfr)
