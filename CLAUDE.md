@@ -986,7 +986,13 @@ cannot be updated outside an edit session [V_Brunn]" i UpdateCursor – SVOA:s g
 med CopyFeatures. `_fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)`: provar utan session, vid "edit session" i felet
 `arcpy.da.Editor(gdb)` startEditing(False, False)/startOperation/…/stopEditing(True) (loggas), annars OBS och tomma fält
 (exporten fortsätter). Låtsas-arcpy: `DATA[...]['kraver_edit']` följer med CopyFeatures, `da.Editor`, `EDIT` {aktiv,
-sparade, kan_inte}; test_omrade.py test_klasstillagg.
+sparade, kan_inte}; test_omrade.py test_klasstillagg. Andra körningen (samma dag): "ERROR 000358: Invalid expression
+sde_geopipe.GNG.pipeSewerWellP.Status NOT in (5, 6) AND …ChamberID IS NOT null" i MakeFeatureLayer för "A Platsgjutenbrunn"
+(lager med join i kartan – definitionsfrågan har tabellprefix som datakällan ensam inte förstår). `_tillfalligt_lager(lyr,
+src, dq, lagernamn)`: src + dq → src + `_utan_tabellprefix(dq)` → lagerobjektet självt (join + dq följer med), loggat;
+varje lager i loopen ligger i try/except: fel → "OBS hoppar over", post med `fel` i export_info.json, `hoppade` summeras
+sist (ett trasigt lager stoppade förut hela exporten efter 10 min). Låtsas-arcpy: MakeFeatureLayer kastar 000358 för
+prefix/okänt fält och tar lagerobjekt; test_koppling.
 
 **Ledningsinventering** (okt 2026, steg 2 i PLAN_ledningsinventering.md, oprövat i riktig ArcMap): `arcmap/moduler/inventering.py`
 `inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager, vattenlager, markhojd, z_falt, lock_falt, botten_falt,
