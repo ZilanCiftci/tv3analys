@@ -1311,8 +1311,7 @@ class ListaFalt(object):
 
     def execute(self, parameters, messages):
         _minne_spara(self, parameters)
-        import lista_falt
-        reload(lista_falt)
+        lista_falt = _ladda_modul('lista_falt')   # letar upp mappen moduler som ovriga verktyg
         lista_falt.RADER = int(parameters[1].value or 2000)
         lista_falt.lista(parameters[0].valueAsText, _lagerlista(parameters[2]))
         return

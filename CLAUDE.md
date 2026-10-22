@@ -1085,6 +1085,10 @@ S2 1 545 076 / K1 970 000 / V1 2 360 000 resp. rörspräckt 1 134 984, servisgra
 spontsläde → läggs om i alt. strumpa och V1 med den, inget pris för 3 ledningar med en Ø 950, `--schakttyp kc`, gisdata).
 Att stämma av med användaren: 3 ledningar med en större ledning (34 200) billigare än 2 ledningar med en större (63 260) i alla
 schakttyper; ensam spill-/dagservis i helschakt; återställning; ny brunn.
+**Lista fält: "ImportError: No module named lista_falt"** (okt 2026, användarens körning i ArcMap): `ListaFalt.execute` gjorde
+`import lista_falt` direkt i stället för `_ladda_modul('lista_falt')`, så modulmappen lades aldrig i sys.path när ArcMap
+återställt den (samma orsak som skapa_ledningslager-felet tidigare). Rättat; alla verktyg laddar nu modulerna via
+`_ladda_modul`. Test: scratchpad/test_listafalt.py (moduler borttagen ur sys.path – föll med gamla koden).
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
