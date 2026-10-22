@@ -446,6 +446,37 @@ def _dim_text(l: dict) -> str | None:
     return t
 
 
+def _djupklass(djup: float, granser) -> str:
+    forra = 0.0
+    for g in granser:
+        if djup < g:
+            return f"{forra:g}–{g:g}"
+        forra = g
+    return f"> {forra:g}"
+
+
+def vatten_djup_till_botten(data: dict) -> int:
+    """Äldre ledningsdata.json (före okt 2026) har vattenledningarnas schablondjup till rörets centrum;
+    räknas om till botten (+ dimension/2) som avloppets djup till vattengången. Antal omräknade."""
+    p = data.get("parametrar") or {}
+    if p.get("vatten_djup_till") == "botten" or p.get("vatten_djup_m") is None:
+        return 0
+    granser = p.get("djupklasser") or (2.0, 3.0, 4.0)
+    n = 0
+    for led in data.get("ledningar", []):
+        if led.get("system") == "V" and led.get("djup_kalla") == "schablon" and led.get("dimension"):
+            r = led["dimension"] / 2000.0
+            for k in ("djup_medel", "djup_min", "djup_max"):
+                if led.get(k) is not None:
+                    led[k] = round(led[k] + r, 2)
+            if led.get("djup_medel") is not None:
+                led["djupklass"] = _djupklass(led["djup_medel"], granser)
+            n += 1
+    p["vatten_djup_till"] = "botten"
+    data["parametrar"] = p
+    return n
+
+
 def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[dict]:
     """Lägger till kostnaderna på varje ledning (i data['ledningar'])."""
     ledningar = data.get("ledningar", [])
@@ -454,6 +485,7 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
             led["system"] = (led.get("ledningstyp") or "").strip()[:1].upper()
         if not led.get("id"):
             led["id"] = f"{(led.get('lager') or '').split(chr(92))[-1]}/{led.get('oid')}"
+    vatten_djup_till_botten(data)
     data["_antagna_dim"] = anta_dimensioner(ledningar)
     per_id = {l.get("id"): l for l in ledningar}
     brunnar = {b["littera"]: b for b in data.get("brunnar", [])}
@@ -816,7 +848,7 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
             ("Koordinatsystem", data.get("koordinatsystem")), ("Höjdsystem", data.get("hojdsystem")),
             ("Parallellt (c–c, andel)", f"{_dk(p.get('parallell_avstand_m'))} m, {round(100 * (p.get('parallell_andel') or 0))} %"
              if p else None),
-            ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m" if p.get("vatten_djup_m") is not None else None),
+            ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m (djupet räknas till rörets botten: + dimension/2)" if p.get("vatten_djup_m") is not None else None),
             ("Markhöjd", p.get("markhojd") or "locknivåerna (ingen markhöjd vald)"),
             ("Schakttyp", f"{SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
             ("Infodring", f"spill-, dag- och kombinerade ledningar från {STRUMPA_DIM_MIN} mm, så långt prislistan räcker"
