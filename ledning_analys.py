@@ -93,7 +93,8 @@ DOLDA_LEDNINGAR = [
     "Lägg om efter djup", "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
     "Schakt", "Gravdjup", "Slagen spont", "Spont", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
     "Infodring", "Infodring per meter", "Serviser infodring", "Hattar", "Framschaktning", "Infodring totalt",
-    "Servisventiler", "Övriga anordningar",
+    "Servisventiler", "Ledningsändar", "Övriga anordningar", "Schaktlängd", "Schaktsätt efter djup",
+    "Slagen spont efter djup", "Spont efter djup",
     "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
     "Rörspräckning totalt", "Ledningar i graven alt. schaktfritt", "Område", "Lager", "OID", "Del",
     "Klippt vid områdesgränsen",
@@ -647,6 +648,62 @@ def _dela_rubrik(k: str) -> tuple[str, str]:
     return (m.group(1), m.group(2)) if m else (k, "")
 
 
+def _formel(v) -> bool:
+    return isinstance(v, str) and v.startswith("=")
+
+
+class Kolumner:
+    """Områden i en flik för formler: k("Längd") -> 'Ledningar'!$E$3:$E$187 (rubrik utan enhet)."""
+
+    def __init__(self, blad: str, kolumner: list[str], forsta: int, antal: int):
+        from openpyxl.utils import get_column_letter, quote_sheetname
+        self.blad, self.forsta, self.sista = quote_sheetname(blad), forsta, forsta + max(antal, 1) - 1
+        self.bokstav = {}
+        for i, k in enumerate(kolumner, 1):
+            self.bokstav.setdefault(_dela_rubrik(k)[0], get_column_letter(i))
+
+    def __call__(self, namn: str) -> str:
+        b = self.bokstav[namn]
+        return f"{self.blad}!${b}${self.forsta}:${b}${self.sista}"
+
+    def cell(self, namn: str, rad: int) -> str:
+        """Cell på samma rad i samma flik (radformler)."""
+        return f"{self.bokstav[namn]}{rad}"
+
+
+EJ_TOM = '"<>"'
+
+
+def _txt(v) -> str:
+    """Värde i en formel: tal som tal, tomt som "=" (villkoret tom cell i SUMIFS/COUNTIFS), annars text."""
+    if v is None or v == "":
+        return '"="'
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return '"' + str(v).replace('"', '""') + '"'
+
+
+def _lika(omrade: str, v) -> str:
+    """SUMPRODUCT-villkor: cellen är exakt v (tomt = tom cell)."""
+    return f'--({omrade}={_txt(v) if v not in (None, "") else chr(34) * 2})'
+
+
+def _sumifs(summa: str, krit: list) -> str:
+    """=SUMIFS över summaområdet med villkoren [(område, värde i formeln)], utan villkor SUM."""
+    if not krit:
+        return f"SUM({summa})"
+    return "SUMIFS(" + summa + "," + ",".join(f"{r},{v}" for r, v in krit) + ")"
+
+
+def _countifs(alla: str, krit: list) -> str:
+    """Antal rader med villkoren; utan villkor COUNTA över en kolumn som alltid är ifylld."""
+    if not krit:
+        return f"COUNTA({alla})"
+    return "COUNTIFS(" + ",".join(f"{r},{v}" for r, v in krit) + ")"
+
+
 def tabell(ws, kolumner: list[str], rader: list[list], bredder: dict | None = None, dolda=None,
            format: dict | None = None, rad_start: int = 1) -> int:
     """Rubrikrad + enhetsrad ("Längd (m)" -> rubrik Längd, enhet m) + data, som i tv3_analys.
@@ -675,7 +732,7 @@ def tabell(ws, kolumner: list[str], rader: list[list], bredder: dict | None = No
         for ci, v in enumerate(rad, 1):
             c = ws.cell(start + ri, ci, v)
             c.border = kant
-            if fmt.get(ci) and isinstance(v, (int, float)):
+            if fmt.get(ci) and (isinstance(v, (int, float)) or _formel(v)):
                 c.number_format = fmt[ci]
     if rad_start == 1:
         ws.freeze_panes = f"A{start}"
@@ -683,8 +740,8 @@ def tabell(ws, kolumner: list[str], rader: list[list], bredder: dict | None = No
     for i, kol in enumerate(kolumner, 1):
         b = (bredder or {}).get(namn[i - 1])
         if b is None:
-            langsta = max((len(str(rd[i - 1])) for rd in rader[:300] if i - 1 < len(rd) and rd[i - 1] is not None),
-                          default=0)
+            langsta = max((len(str(rd[i - 1])) for rd in rader[:300]
+                           if i - 1 < len(rd) and rd[i - 1] is not None and not _formel(rd[i - 1])), default=0)
             b = min(40, max(8, langsta + 2, len(namn[i - 1]) + 2, len(enheter[i - 1]) + 2))
         bokstav = get_column_letter(i)
         if (ws.column_dimensions[bokstav].width or 0) < b:
@@ -732,21 +789,26 @@ def schaktlangd(lista: list[dict]) -> float:
     längden ligger i samschakt, i genomsnitt med m = 1 + Σ andel / s ledningar; bidraget blir
     L × (1 − s) + L × s / m. Två lika långa parallella ledningar ger en längd, en 100 m och en 50 m
     längs halva den ger 100 m."""
+    return sum(schaktandelar(lista))
+
+
+def schaktandelar(lista: list[dict]) -> list[float]:
+    """Varje lednings del av schaktlängden (se schaktlangd), i listans ordning."""
     if lista and all(l.get("schakt_langd_m") is not None for l in lista):
-        return sum(l["schakt_langd_m"] for l in lista)      # räknat punkt för punkt i Ledningsinventering
+        return [l["schakt_langd_m"] for l in lista]       # räknat punkt för punkt i Ledningsinventering
     ids = {l.get("id") for l in lista}
-    summa = 0.0
+    ut = []
     for l in lista:
         L = l.get("langd_m") or 0.0
         a = sum(p.get("andel") or 0.0 for p in l.get("parallella") or []
                 if p.get("samschakt") and p.get("ledning") in ids)
         if a <= 0:
-            summa += L
+            ut.append(L)
             continue
         andel = min(1.0, a)
         m = 1.0 + a / andel
-        summa += L * (1.0 - andel) + L * andel / m
-    return summa
+        ut.append(L * (1.0 - andel) + L * andel / m)
+    return ut
 
 
 def _jamforbar(l: dict) -> bool:
@@ -763,6 +825,48 @@ def _altsummor(lista):
             sum(1 for l in lista if l.get("_alt_metod") == "rörspräckning"),
             sum(1 for l in lista if l.get("_alt_metod") == "omläggning"),
             sum(1 for l in lista if not _jamforbar(l))]
+
+
+def _radformler(rad: list, kol: list[str], K: Kolumner, nr: int, l: dict) -> None:
+    """Radtotalerna i fliken Ledningar som formler av delposterna på samma rad – ändras ett pris eller en
+    delpost i Excel räknas totalen och summorna i Sammanfattning om. Tomma celler (ingen kostnad) lämnas tomma."""
+    plats = {_dela_rubrik(k)[0]: i for i, k in enumerate(kol)}
+
+    def c(namn):
+        return K.cell(namn, nr)
+
+    def satt(namn, formel):
+        if rad[plats[namn]] is not None:
+            rad[plats[namn]] = "=" + formel
+    satt("Infodring", f"{c('Infodring per meter')}*{c('Längd')}")
+    satt("Infodring totalt", "+".join(c(x) for x in ("Infodring", "Serviser infodring", "Framschaktning")))
+    satt("Rörspräckning", f"{c('Rörspräckning per meter')}*{c('Längd')}")
+    satt("Rörspräckning totalt", "+".join(c(x) for x in ("Rörspräckning", "Gropar", "Servisgropar", "Ventilgropar",
+                                                         "Serviser rörspräckning")))
+    satt("Alt. lägg om", "+".join(c(x) for x in ("Schakt", "Spont", "Djuptillägg", "Återställning", "Brunnar",
+                                                 "Serviser helschakt")))
+    alt = l.get("_alt")
+    if alt is not None and alt is l.get("_strumpa"):
+        satt("Alt. schaktfritt", c("Infodring totalt"))
+    elif alt is not None and alt is l.get("_sprack"):
+        satt("Alt. schaktfritt", c("Rörspräckning totalt"))
+
+
+def _jamforbar_krit(K: Kolumner) -> list:
+    """Villkoren för _jamforbar: kostnad i båda alternativen."""
+    return [(K("Alt. lägg om"), EJ_TOM), (K("Alt. schaktfritt"), EJ_TOM)]
+
+
+def _gruppformler(K: Kolumner, krit: list) -> list[str]:
+    """[ledningar (st), längd, schaktlängd, alt. lägg om, alt. schaktfritt, strumpas, rörspräcks, läggs om,
+    utan kostnad] som formler över raderna i Ledningar som uppfyller villkoren."""
+    jfr = krit + _jamforbar_krit(K)
+    antal = _countifs(K("ID"), krit)
+    return ["=" + antal, "=" + _sumifs(K("Längd"), krit), "=" + _sumifs(K("Schaktlängd"), krit),
+            "=" + _sumifs(K("Alt. lägg om"), jfr), "=" + _sumifs(K("Alt. schaktfritt"), jfr)] + \
+           ["=" + _countifs(K("ID"), krit + [(K("Metod alt. schaktfritt"), _txt(m))])
+            for m in ("strumpa", "rörspräckning", "omläggning")] + \
+           [f"={antal}-{_countifs(K('ID'), jfr)}"]
 
 
 def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], kallor: dict) -> None:
@@ -785,11 +889,11 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Material", "Ledningstyp", "Anläggningsår", "Renoveringsår", "VG från (m)", "VG till (m)", "Lutning (‰)", "Lutning GIS (‰)",
            "Djup medel (m)", "Djup min (m)", "Djup max (m)", "Djupklass (m)", "Djupkälla", "Täckning min (m)",
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
-           "Brandposter (st)", "Servisventiler (st)", "Övriga anordningar (st)", "Schaktgrupp",
-           "Ledningar i graven (st)", "Samschakt med", "Parallella", "Korsningar",
+           "Brandposter (st)", "Servisventiler (st)", "Ledningsändar (st)", "Övriga anordningar (st)", "Schaktgrupp",
+           "Ledningar i graven (st)", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
            "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
-           "Lägg om KC-förstärkning (kr)",
+           "Lägg om KC-förstärkning (kr)", "Schaktsätt efter djup", "Slagen spont efter djup (m²)", "Spont efter djup (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
            "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Hattar (st)", "Framschaktning (kr)",
            "Infodring totalt (kr)",
@@ -803,11 +907,20 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     for x in data.get("_serviser_kopplade") or []:
         if _hatt(x):
             hattar[x.get("ledning")] += 1
+    grupper = defaultdict(list)
+    for l in ledningar:
+        grupper[l.get("schaktgrupp")].append(l)
+    schaktdel = {}
+    for lista in grupper.values():
+        for l, v in zip(lista, schaktandelar(lista)):
+            schaktdel[id(l)] = v
     ordn = sorted(ledningar, key=lambda l: ("SDKV".find(l.get("system") or "?") % 9, str(l.get("id"))))
-    for l in ordn:
+    K = Kolumner("Ledningar", kol, 3, len(ordn))
+    for nr, l in enumerate(ordn, 3):
         o, s, r = l.get("_omlagg"), l.get("_strumpa"), l.get("_sprack")
+        dj = (l.get("_typer") or {}).get(SCHAKTTYP_DJUP)
         rad = [l.get("id"), l.get("system"), l.get("fran") or "(fri ände)", l.get("till") or "(fri ände)",
-               _r(l.get("langd_m")), l.get("dimension"),
+               _r(l.get("langd_m"), 3), l.get("dimension"),
                (f"{l['dimension_antagen']['riktning']} {l['dimension_antagen']['fran']}"
                 if l.get("dimension_antagen") else None),
                l.get("material"), l.get("ledningstyp"),
@@ -816,8 +929,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                l.get("djup_max"), l.get("djupklass") or None, l.get("djup_kalla") or None, l.get("tackning_min"),
                l.get("djup_start"), l.get("djup_slut"), l.get("antal_serviser"), _r(l.get("serviser_m")),
                _anordningar(l, "ventil"), _anordningar(l, "brandpost"), _anordningar(l, "servisventil"),
-               _anordningar(l, ("ledningsande", "anordning")),
-               l.get("schaktgrupp"), l.get("_grav"), ", ".join(l.get("schakt_ledningar") or []) or None,
+               _anordningar(l, "ledningsande"), _anordningar(l, "anordning"),
+               l.get("schaktgrupp"), l.get("_grav"), _r(schaktdel.get(id(l)), 2), ", ".join(l.get("schakt_ledningar") or []) or None,
                ", ".join(f"{p['ledning']} ({p['system']}, {round(100 * (p.get('andel') or 0))} %)"
                          for p in l.get("parallella") or []) or None,
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
@@ -825,6 +938,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                _kr(o), SCHAKTSATT_NAMN.get((o or {}).get("schaktsatt")), l.get("_alt_metod"), _kr(l.get("_alt")),
                _anmarkning(l)] + \
               [_kr((l.get("_typer") or {}).get(t)) for t in ALLA_SCHAKTTYPER] + \
+              [SCHAKTSATT_NAMN.get((dj or {}).get("schaktsatt")), _r((dj or {}).get("spont_m2")) or None,
+               _kr(dj, "spont") or None] + \
               [_kr(o, "schakt"), _r((o or {}).get("gravdjup"), 2), _r((o or {}).get("spont_m2")) or None,
                _kr(o, "spont") or None, _kr(o, "djuptillagg"), _kr(o, "aterstallning"), _kr(o, "brunnar"),
                _kr(o, "serviser"),
@@ -836,6 +951,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                l.get("lager"), l.get("oid"), l.get("del"),
                l.get("klippt_m") or (l.get("attribut") or {}).get("KLIPPT_M") or None]
         rad += [(l.get("attribut") or {}).get(a) for a in attrnamn]
+        _radformler(rad, kol, K, nr, l)
         rader.append(rad)
     format_ = {"Längd": M, "VG från": "0.000", "VG till": "0.000", "Lutning": P, "Lutning GIS": P, "Djup medel": M2,
                "Djup min": M2, "Djup max": M2, "Täckning min": M2, "Djup start": M2, "Djup slut": M2,
@@ -843,28 +959,26 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     for k in kol:
         if _dela_rubrik(k)[1] in ("kr", "kr/m"):
             format_[_dela_rubrik(k)[0]] = KR
+    format_["Schaktlängd"] = M
+    format_["Slagen spont efter djup"] = M
     tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14},
            dolda=DOLDA_LEDNINGAR + attrkol, format=format_)
 
-    # --- Kostnad per schaktgrupp ----------------------------------------------------------------
-    grupper = defaultdict(list)
-    for l in ledningar:
-        grupper[l.get("schaktgrupp")].append(l)
+    # --- Kostnad per schaktgrupp (formler mot fliken Ledningar) ----------------------------------
     ws = wb.create_sheet("Kostnad per schaktgrupp")
     kol = ["Schaktgrupp", "System", "Ledningar (st)", "Ledningar", "Längd (m)", "Schaktlängd (m)", "Alt. lägg om (kr)",
            "Alt. schaktfritt (kr)", "Strumpas (st)", "Rörspräcks (st)", "Läggs om (st)", "Utan kostnad (st)"]
     rader = []
+
+    def grupprad(namn_, lista, krit, ids):
+        f = _gruppformler(K, krit)
+        rader.append([namn_, "+".join(sorted({l.get("system") or "?" for l in lista})), f[0], ids] + f[1:])
     for g in sorted(k for k in grupper if k is not None):
-        lista = grupper[g]
-        rader.append([g, "+".join(sorted({l.get("system") or "?" for l in lista})), len(lista),
-                      ", ".join(str(l.get("id")) for l in lista), _r(sum(l.get("langd_m") or 0 for l in lista)),
-                      _r(schaktlangd(lista))] + _altsummor(lista))
-    for namn_, lista in (("utan samschakt", grupper.get(None, [])), ("totalt", ledningar)):
-        if lista:
-            sl = schaktlangd(lista) if namn_ == "utan samschakt" else \
-                sum(schaktlangd(v) for v in grupper.values())
-            rader.append([namn_, "+".join(sorted({l.get("system") or "?" for l in lista})), len(lista), None,
-                          _r(sum(l.get("langd_m") or 0 for l in lista)), _r(sl)] + _altsummor(lista))
+        grupprad(g, grupper[g], [(K("Schaktgrupp"), _txt(g))], ", ".join(str(l.get("id")) for l in grupper[g]))
+    if grupper.get(None):
+        grupprad("utan samschakt", grupper[None], [(K("Schaktgrupp"), _txt(None))], None)
+    if ledningar:
+        grupprad("totalt", ledningar, [], None)
     start = tabell(ws, kol, rader, bredder={"Ledningar": 40},
                    format={"Längd": M, "Schaktlängd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR})
     ws.cell(start + len(rader) + 1, 1, "Schaktlängd: schaktets längd när alla ledningar i gruppen läggs om – delar "
@@ -946,7 +1060,9 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
         if not l.get("fran") or not l.get("till"):
             if l.get("system") != "V":
                 rader.append(["ledning utan brunn i någon ände", l.get("id"), "fri ände (servis, T-rör eller fel i GIS)"])
-    tabell(ws, ["Typ", "ID", "Beskrivning"], rader, bredder={"Beskrivning": 70, "Typ": 32})
+    dq_start = tabell(ws, ["Typ", "ID", "Beskrivning"], rader, bredder={"Beskrivning": 70, "Typ": 32})
+    DQ = Kolumner("Datakvalitet", ["Typ", "ID", "Beskrivning"], dq_start, len(rader))
+    dq_typer = sorted({r[0] for r in rader if r[0]})
 
     ws = wb.create_sheet("Kostnadsposter")
     rader = [[k["post"], k["schakttyp"], k["ledningar"], k["storre"], ", ".join(sorted(k["system"] or [])) or None,
@@ -955,11 +1071,14 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                 "Dimension till (mm)", "Enhet", "Belopp (kr)", "Kommentar"], rader,
            bredder={"Kommentar": 70}, format={"Belopp": "#,##0.##"})
 
-    skriv_sammanfattning(ws_s, data, ledningar, kost, kallor)
+    skriv_sammanfattning(ws_s, data, ledningar, kost, kallor, K, DQ, dq_typer)
+    wb.calculation.fullCalcOnLoad = True           # summorna är formler – räkna när filen öppnas
     wb.save(path)
 
 
-def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
+def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kolumner, dq_typer: list) -> None:
+    """Sammanfattningen. Alla tal i blocken är formler mot flikarna Ledningar och Datakvalitet (SUMIFS/COUNTIFS),
+    så att de följer med när något ändras där."""
     from openpyxl.styles import Font
     KR, M = "#,##0", "#,##0"
     rad = 1
@@ -1012,99 +1131,115 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
         rad = start + len(rader) + 2
 
     system = sorted({l.get("system") or "" for l in ledningar}, key=lambda s: "SDKV".find(s) % 9)
+    L, ID, SYS = K("Längd"), K("ID"), K("System")
+    JFR = _jamforbar_krit(K)
 
-    def langd(lista):
-        return round(sum(l.get("langd_m") or 0 for l in lista))
+    def f(x):
+        return "=" + x
 
-    def medeldjup(lista):
-        v = [(l["djup_medel"], l.get("langd_m") or 0) for l in lista if l.get("djup_medel") is not None]
-        tot = sum(w for _, w in v)
-        return round(sum(d * w for d, w in v) / tot, 2) if tot else None
-
-    def per_system(f):
+    def per_system(formler):
+        """En rad per system + Alla; formler(villkor) får [(System-området, systemet)] eller [] för Alla."""
         ut = []
-        for s in system + ["alla"]:
-            lista = [l for l in ledningar if s == "alla" or (l.get("system") or "") == s]
-            ut.append([SYSTEM_NAMN.get(s, s) if s != "alla" else "Alla"] + f(lista))
+        for s_ in system + [None]:
+            krit = [(SYS, _txt(s_))] if s_ is not None else []
+            ut.append([SYSTEM_NAMN.get(s_, s_) if s_ is not None else "Alla"] + formler(krit))
         return ut
+
+    def utan_kostnad(krit, villkor):
+        return f(f"{_countifs(ID, krit)}-{_countifs(ID, krit + villkor)}")
 
     block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om (kr)", "Alt. schaktfritt (kr)",
                                      "Strumpas (m)", "Rörspräcks (m)", "Läggs om (m)", "Utan kostnad (st)"],
-          per_system(lambda lista: [langd(lista),
-                                    _summa([l for l in lista if _jamforbar(l)], lambda l: l["_omlagg"]["summa"]),
-                                    _summa([l for l in lista if _jamforbar(l)], lambda l: l["_alt"]["summa"]),
-                                    langd([l for l in lista if l.get("_alt_metod") == "strumpa"]),
-                                    langd([l for l in lista if l.get("_alt_metod") == "rörspräckning"]),
-                                    langd([l for l in lista if l.get("_alt_metod") == "omläggning"]),
-                                    sum(1 for l in lista if not _jamforbar(l))]),
+          per_system(lambda krit: [f(_sumifs(L, krit)), f(_sumifs(K("Alt. lägg om"), krit + JFR)),
+                                   f(_sumifs(K("Alt. schaktfritt"), krit + JFR))] +
+                     [f(_sumifs(L, krit + [(K("Metod alt. schaktfritt"), _txt(m))]))
+                      for m in ("strumpa", "rörspräckning", "omläggning")] +
+                     [utan_kostnad(krit, JFR)]),
           format={"Längd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR, "Strumpas": M, "Rörspräcks": M,
                   "Läggs om": M})
     for t in ("Alt. lägg om: alla ledningar läggs om; ledningar i samma grav delar graven.",
               "Alt. schaktfritt: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
               "men läggs om i samma grav när en avloppsledning i graven läggs om.",
               "Summorna omfattar bara ledningar med kostnad i båda alternativen; övriga står under Utan kostnad "
-              "(djup eller dimension saknas – se fliken Datakvalitet)."):
+              "(djup eller dimension saknas – se fliken Datakvalitet).",
+              "Talen är formler mot fliken Ledningar – ändras en kostnad där räknas sammanfattningen om."):
         ws.cell(rad - 1, 1, t).font = Font(italic=True, color="595959")
         rad += 1
     rad += 1
 
+    typkol = [_dela_rubrik(k)[0] for k in ("Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)",
+                                           "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
+                                           "Lägg om KC-förstärkning (kr)")]
+    alla_typer = [(K(t), EJ_TOM) for t in typkol]
     block("Alt. lägg om per schakttyp", ["System", "Längd (m)"] + [f"{v} (kr)" for v in ALLA_SCHAKTTYPER.values()] +
           ["Utan kostnad (st)"],
-          per_system(lambda lista: [langd(lista)] +
-                     [_summa([l for l in lista if all((l.get("_typer") or {}).get(x) for x in ALLA_SCHAKTTYPER)],
-                             lambda l, t=t: l["_typer"][t]["summa"]) for t in ALLA_SCHAKTTYPER] +
-                     [sum(1 for l in lista if not all((l.get("_typer") or {}).get(x) for x in ALLA_SCHAKTTYPER))]),
+          per_system(lambda krit: [f(_sumifs(L, krit))] + [f(_sumifs(K(t), krit + alla_typer)) for t in typkol] +
+                     [utan_kostnad(krit, alla_typer)]),
           format=dict([("Längd", M)] + [(v, KR) for v in ALLA_SCHAKTTYPER.values()]))
 
     def satt_rader():
         rader_ = []
         for k, namn in SCHAKTSATT_NAMN.items():
-            lista = [l for l in ledningar if (l.get("_typer") or {}).get(SCHAKTTYP_DJUP)
-                     and l["_typer"][SCHAKTTYP_DJUP].get("schaktsatt") == k]
-            if lista:
-                rader_.append([namn, len(lista), langd(lista),
-                               round(sum(l["_typer"][SCHAKTTYP_DJUP]["spont_m2"] for l in lista)),
-                               _summa(lista, lambda l: l["_typer"][SCHAKTTYP_DJUP]["spont"]),
-                               _summa(lista, lambda l: l["_typer"][SCHAKTTYP_DJUP]["summa"])])
+            if not any((l.get("_typer") or {}).get(SCHAKTTYP_DJUP)
+                       and l["_typer"][SCHAKTTYP_DJUP].get("schaktsatt") == k for l in ledningar):
+                continue
+            krit = [(K("Schaktsätt efter djup"), _txt(namn))]
+            rader_.append([namn, f(_countifs(ID, krit)), f(_sumifs(L, krit)),
+                           f(_sumifs(K("Slagen spont efter djup"), krit)), f(_sumifs(K("Spont efter djup"), krit)),
+                           f(_sumifs(K("Lägg om efter djup"), krit))])
         return rader_
     block("Alt. lägg om efter djup – schaktsätt", ["Schaktsätt", "Ledningar (st)", "Längd (m)", "Slagen spont (m²)",
                                                    "Spont (kr)", "Alt. lägg om efter djup (kr)"], satt_rader(),
           format={"Längd": M, "Slagen spont": M, "Spont": KR, "Alt. lägg om efter djup": KR})
 
+    def medeldjup(krit):
+        D = K("Djup medel")
+        villkor = [f"--({SYS}={krit[0][1] if krit[0][1] != _txt(None) else chr(34) * 2})"] if krit else []
+        taljare = "SUMPRODUCT(" + ",".join(villkor + [D, L]) + ")"
+        return f(f'IFERROR({taljare}/{_sumifs(L, krit + [(D, EJ_TOM)])},"")')
+
     block("Ledningsnätet", ["System", "Ledningar (st)", "Längd (m)", "Serviser (st)", "Servislängd (m)",
                             "Medeldjup (m)", "I samschakt (%)"],
-          per_system(lambda lista: [len(lista), langd(lista), sum(l.get("antal_serviser") or 0 for l in lista),
-                                    round(sum(l.get("serviser_m") or 0 for l in lista)), medeldjup(lista),
-                                    round(100 * langd([l for l in lista if l.get("schaktgrupp")]) / langd(lista))
-                                    if langd(lista) else None]),
-          format={"Längd": M, "Servislängd": M, "Medeldjup": "0.00"})
+          per_system(lambda krit: [f(_countifs(ID, krit)), f(_sumifs(L, krit)), f(_sumifs(K("Serviser"), krit)),
+                                   f(_sumifs(K("Servislängd"), krit)), medeldjup(krit),
+                                   f(f'IFERROR(100*{_sumifs(L, krit + [(K("Schaktgrupp"), EJ_TOM)])}'
+                                     f'/{_sumifs(L, krit)},"")')]),
+          format={"Längd": M, "Servislängd": M, "Medeldjup": "0.00", "Serviser": M, "I samschakt": "0"})
 
     if data.get("anordningar"):
         kat = [k for k in ANORDNING_NAMN if any(a.get("kategori") == k for a in data["anordningar"])]
         block("Anordningar (se fliken Anordningar)", ["System"] + [f"{ANORDNING_NAMN[k]} (st)" for k in kat],
-              per_system(lambda lista: [sum(_anordningar(l, k) or 0 for l in lista) for k in kat]))
+              per_system(lambda krit: [f(_sumifs(K(ANORDNING_NAMN[k]), krit)) for k in kat]))
 
-    def fordelning(titel, nyckel, rubrik, sortering=None):
-        tab = defaultdict(float)
-        for l in ledningar:
-            tab[(l.get("system") or "", nyckel(l))] += l.get("langd_m") or 0
-        rader = [[SYSTEM_NAMN.get(s, s), k if k not in (None, "") else "(saknas)", round(v)]
-                 for (s, k), v in sorted(tab.items(), key=lambda x: ("SDKV".find(x[0][0]) % 9,
-                                                                       sortering(x[0][1]) if sortering else str(x[0][1])))]
+    def fordelning(titel, nyckel, rubrik, villkor, sortering=None):
+        """Längd per system och nyckel; villkor(nyckel) ger SUMPRODUCT-villkoren på fliken Ledningar (exakt
+        jämförelse, så att text som "> 4" inte tolkas som ett villkor)."""
+        nycklar = {(l.get("system") or "", nyckel(l)) for l in ledningar}
+        rader = [[SYSTEM_NAMN.get(s_, s_), k if k not in (None, "") else "(saknas)",
+                  f("SUMPRODUCT(" + ",".join([_lika(SYS, s_)] + villkor(k) + [L]) + ")")]
+                 for (s_, k) in sorted(nycklar, key=lambda x: ("SDKV".find(x[0]) % 9,
+                                                              sortering(x[1]) if sortering else str(x[1])))]
         block(titel, ["System", rubrik, "Längd (m)"], rader, format={"Längd": M})
 
-    fordelning("Material", lambda l: l.get("material"), "Material")
-    fordelning("Dimension", lambda l: l.get("dimension"), "Dimension (mm)",
+    def lika(kolumn):
+        return lambda k: [_lika(K(kolumn), k)]
+
+    def decennium(k):
+        AR = K("Anläggningsår")
+        if k is None:
+            return [f'--({AR}="")']
+        d = int(k[:4])
+        return [f'--({AR}<>"")', f"--({AR}>={d})", f"--({AR}<{d + 10})"]
+
+    fordelning("Material", lambda l: l.get("material"), "Material", lika("Material"))
+    fordelning("Dimension", lambda l: l.get("dimension"), "Dimension (mm)", lika("Dimension"),
                lambda v: (v is None, v if isinstance(v, (int, float)) else 0))
     fordelning("Anläggningsdecennium", lambda l: f"{l['anlaggningsar'] // 10 * 10}-tal" if l.get("anlaggningsar") else None,
-               "Decennium", lambda v: (v is None, str(v)))
-    fordelning("Djupklass", lambda l: l.get("djupklass") or None, "Djupklass (m)",
+               "Decennium", decennium, lambda v: (v is None, str(v)))
+    fordelning("Djupklass", lambda l: l.get("djupklass") or None, "Djupklass (m)", lika("Djupklass"),
                lambda v: (v is None, str(v).replace(">", "9")))
 
-    tab = defaultdict(int)
-    for q in data.get("datakvalitet", []):
-        tab[q.get("typ")] += 1
-    rader = [[k, v] for k, v in sorted(tab.items())]
+    rader = [[t, f(f"COUNTIF({DQ('Typ')},{_txt(t)})")] for t in dq_typer]
     if rader:
         block("Datakvalitet (se fliken Datakvalitet)", ["Typ", "Antal"], rader)
     ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width or 0, 28)
