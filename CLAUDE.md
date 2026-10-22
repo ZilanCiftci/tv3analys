@@ -1143,6 +1143,14 @@ Inställningar), omradeslager föreslås ur export_info.json bredvid gdb:n (när
 Låtsas-arcpy: Geometry.length/intersect (flerdelad)/`delar`, SelectLayerByLocation WITHIN_A_DISTANCE + ADD_TO_SELECTION.
 Test: test_inventering test_klipp_vatten (V1 200 → 150 m, V2 ut och in → två 10 m-bitar, SSL2 hel till B4 utanför, SSL3 helt
 utanför bort, VSE9 utanför bort, SERV4 utanför med, förslag ur export_info.json), test_omrade (SNB2 ändbrunn utanför med).
+**Flera markhöjdsraster** (okt 2026, användaren: "markhöjder som ett flertal geotif-filer … välja 4 stycken"; Mosaic To New
+Raster gav ERROR 999999): projektering `markhojd(lager_eller_lista, …)` → `Markhojd` för ett lager, annars `FleraMarkhojder`
+(första källan med värde i punkten, i vald ordning); `Markhojd` för raster sparar `ext` och svarar None utanför rastret
+(annars GetCellValue per punkt), `_las_raster` hoppar rutor helt utanför sträckans bbox. inventering använder
+`projektering.markhojd(_lista(markhojd), …)`, `parametrar.markhojd` = namnen med '; '. .pyt Ledningsinventering: param
+markhojd multiValue (`_lagerlista`). Låtsas-arcpy: `RASTER`/`skapa_raster`, Describe för raster, RasterToNumPyArray.
+Test: test_inventering test_flera_raster (fyra rutor 110 × 50 m, z = 23 − 0,005x → djup 3,0 över rutgränserna).
+Projekteringsprofil tar fortfarande ett markhöjdslager.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning
