@@ -291,8 +291,11 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
 
 
 def _utan_tabellprefix(dq):
-    """sde_geopipe.GNG.pipeSewerWellP.Status -> Status (falt i en kopplad tabell, join)."""
-    return re.sub(r"\b(?:[A-Za-z_]\w*\.)+([A-Za-z_]\w*)\b", r"\1", dq)
+    """sde_geopipe.GNG.pipeSewerWellP.Status -> Status (falt i en kopplad tabell, join). Text inom
+    apostrofer ('Gata.Nord') lamnas orord."""
+    delar = re.split(r"('(?:[^']|'')*')", dq)
+    return ''.join(d if d.startswith("'") else re.sub(r"\b(?:[A-Za-z_]\w*\.)+([A-Za-z_]\w*)\b", r"\1", d)
+                   for d in delar)
 
 
 def _tillfalligt_lager(lyr, src, dq, lagernamn):
@@ -310,6 +313,15 @@ def _tillfalligt_lager(lyr, src, dq, lagernamn):
             arcpy.Delete_management(TMP_LAGER)
         except Exception:
             pass
+        urval = None
+        if kalla_ is lyr:
+            # ett lager i kartan med urval ger bara de valda objekten - urvalet tas bort under tiden
+            try:
+                urval = list(lyr.getSelectionSet() or [])
+                if urval:
+                    lyr.setSelectionSet('NEW', [])
+            except Exception:
+                urval = None
         try:
             if fraga:
                 arcpy.MakeFeatureLayer_management(kalla_, TMP_LAGER, fraga)
@@ -318,6 +330,12 @@ def _tillfalligt_lager(lyr, src, dq, lagernamn):
         except Exception as e:
             fel.append(txt(e).strip().split('\n')[0])
             continue
+        finally:
+            if urval:
+                try:
+                    lyr.setSelectionSet('NEW', urval)
+                except Exception:
+                    pass
         if hur:
             logg('  %s: definitionsfragan gick inte att anvanda direkt - %s' % (lagernamn, hur))
         return

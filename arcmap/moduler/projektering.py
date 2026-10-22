@@ -173,6 +173,12 @@ def _rasterlager_i_kartan(namn):
 
 
 _PROJ_CACHE = {}
+AFFIN_TOL_M = 0.02          # storsta tillatna fel nar projiceringen ersatts av en linjar transformation
+
+
+def _affin(f, x, y):
+    x0, y0, X0, Y0, a, b, c, d = f
+    return X0 + a * (x - x0) + b * (y - y0), Y0 + c * (x - x0) + d * (y - y0)
 
 
 def _srn(sr):
@@ -204,6 +210,7 @@ class Markhojd(object):
         self.n = 0
         self.sr = sr                             # ledningarnas koordinatsystem (x, y i hojd())
         self.sr_kalla = None                     # satts nar kallan har ett annat koordinatsystem
+        self.affin = None                        # linjar transformation ledningar -> kalla over straket
         src = _rasterlager_i_kartan(lager)       # rasterlager i kartan hittas fore featurelager
         dq = None
         if src is None:
@@ -226,6 +233,7 @@ class Markhojd(object):
             logg('  markhojd ur raster %s' % txt(getattr(d, 'name', src)))
             self._satt_sr(d)
             if bbox is not None:
+                self._anpassa_affin(bbox)
                 self._las_raster(d, self._bbox_i_kallan(bbox))
             return
         if txt(getattr(d, 'shapeType', '')) == 'Multipoint':
@@ -272,15 +280,49 @@ class Markhojd(object):
             self.sr_kalla = rsr
             logg('  rastret ar i %s, ledningarna i %s - punkterna projiceras' % (_srn(rsr), _srn(self.sr)))
 
-    def _till_kallan(self, x, y):
-        if self.sr_kalla is None:
-            return x, y
-        nyckel = (_srn(self.sr_kalla), round(x, 3), round(y, 3))
+    def _exakt(self, x, y):
+        nyckel = (_srn(self.sr), _srn(self.sr_kalla), round(x, 3), round(y, 3))
         v = _PROJ_CACHE.get(nyckel)
         if v is None:
             q = arcpy.PointGeometry(arcpy.Point(x, y), self.sr).projectAs(self.sr_kalla).firstPoint
             v = _PROJ_CACHE[nyckel] = (q.X, q.Y)
         return v
+
+    def _anpassa_affin(self, bbox):
+        """Over ett strak pa nagra km ar skillnaden mellan tva SWEREF-projektioner i praktiken linjar:
+        transformationen anpassas till tre horn av bbox och kontrolleras i sex punkter till
+        (AFFIN_TOL_M). Da projiceras inte varje provpunkt for sig (ett arcpy-anrop per meter ledning)."""
+        if self.sr_kalla is None:
+            return
+        x0, y0, x1, y1 = bbox
+        m = self.sokradie + 10.0
+        x0, y0, x1, y1 = x0 - m, y0 - m, x1 + m, y1 + m
+        try:
+            p00, p10, p01 = self._exakt(x0, y0), self._exakt(x1, y0), self._exakt(x0, y1)
+            a = [(p10[0] - p00[0]) / (x1 - x0), (p01[0] - p00[0]) / (y1 - y0),
+                 (p10[1] - p00[1]) / (x1 - x0), (p01[1] - p00[1]) / (y1 - y0)]
+            f = (x0, y0, p00[0], p00[1], a[0], a[1], a[2], a[3])
+            fel = 0.0
+            for x in (x0, (x0 + x1) / 2.0, x1):
+                for y in (y0, (y0 + y1) / 2.0, y1):
+                    e = self._exakt(x, y)
+                    g = _affin(f, x, y)
+                    fel = max(fel, abs(e[0] - g[0]), abs(e[1] - g[1]))
+        except Exception as e:
+            logg('  projiceras punkt for punkt (%s)' % txt(e))
+            return
+        if fel <= AFFIN_TOL_M:
+            self.affin = f
+        else:
+            logg('  straket ar for stort for en linjar transformation (%.2f m) - punkterna projiceras en och en'
+                 ' (langsamt)' % fel)
+
+    def _till_kallan(self, x, y):
+        if self.sr_kalla is None:
+            return x, y
+        if self.affin is not None:
+            return _affin(self.affin, x, y)
+        return self._exakt(x, y)
 
     def _bbox_i_kallan(self, bbox):
         if self.sr_kalla is None:
