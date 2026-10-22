@@ -1,7 +1,8 @@
 ﻿# Kostnadsposter för ledning_analys.py (PLAN_ledningsinventering.md steg 3). Semikolon, decimalkomma eller heltal.
 # Belopp ur SVOA:s kalkylverktyg (okt 2026) där inget annat sägs; rader märkta ANTAGET/SCHABLON finns inte i verktyget.
 # Rubrikraden styr kolumnordningen. Tom cell = gäller alla.
-#   schakttyp  ledningschakt | spontslade | bergschakt | kc  (helschakt; vilken som räknas väljs med --schakttyp)
+#   schakttyp  ledningschakt | spontslade | bergschakt | kc  (helschakt; vilken som räknas väljs med --schakttyp;
+#              standard 'djup': ledningschakt < 2 m, spontslade 2–3 m, ledningschakt + slagen_spont från 3 m)
 #   ledningar  antal ledningar i samma grav (1–3)
 #   storre     antal ledningar i graven som är större än 400 mm (rader för 2–3 ledningar)
 #   system     V vatten, S spill, D dag, K kombinerat (flera med komma)
@@ -96,6 +97,7 @@ servisgrop;;;;;;;st;23749;Servisgrop & ventilgrop vid rörspräckning – en per
 ventilgrop;;;;;;;st;23749;Servisgrop & ventilgrop vid rörspräckning – en per ventil och brandpost på ledningen (ur inventeringens anordningar)
 brunn_ny;;;;;;;st;60000;SCHABLON (godkänd okt 2026) – ny brunn vid omläggning, en halv per brunnsände (finns inte i kalkylverktyget)
 aterstallning;;;;;;;m;0;ANTAGET (godkänt okt 2026) ingå i schaktpriset – ange kr per meter grav om återställning ska läggas till
+slagen_spont;;;;;;;m2;3500;ANTAGET (användaren okt 2026, ca-pris) – slagen spont per m² spontvägg vid schakttyp djup: båda sidor av graven, höjd = medeldjup + 3 m
 framschaktning;;;;;;;st;60000;Ur kostnader.csv: framschakta brunn vid infodring när båda ändbrunnarna är tillsyns-/rensbrunnar
 ny_brunn;;;;;;;st;45000;Ur kostnader.csv: ny nedstigningsbrunn i den framschaktade brunnen
 # Används inte automatiskt (kalkylverktyget, för referens):
