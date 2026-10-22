@@ -229,6 +229,18 @@ def _lokala_av_slag(kartlager, slag):
     return [langt for langt, l in kartlager if _lokalt_slag(langt, l) == slag]
 
 
+def _ordning_lokala_forst(kartlager, slag):
+    """Rullistans ordning i Ledningsinventering: lokala lager av ratt slag forst, sedan ovriga lokala
+    lager och sist kartans ovriga lager (i innehallsforteckningens ordning inom varje grupp)."""
+    def nyckel(par):
+        langt, l = par
+        s = _lokalt_slag(langt, l)
+        if s == slag:
+            return 0
+        return 1 if l.name.strip().lower().endswith(LOKAL_SUFFIX) else 2
+    return [langt for langt, l in sorted(kartlager, key=nyckel)]
+
+
 def _lagerparam(displayName, name, multi, kartlager, parameterType='Required'):
     """Rullista (GPString) med kartans lager. Fri text tillats ocksa, t.ex. en sokvag."""
     p = arcpy.Parameter(displayName=displayName, name=name, datatype='GPString',
@@ -1672,6 +1684,11 @@ class Ledningsinventering(object):
         servis = _lagerparam('Servislager (valfritt)', 'servislager', True, kartlager, 'Optional')
         anordning = _lagerparam('Ventiler, brandposter och andra anordningar (punktlager, valfritt)',
                                 'anordningslager', True, kartlager, 'Optional')
+        # de lokala lagren fran Exportera omrade overst i listorna (annars langt ner under kartans grupper)
+        for param, slag in ((ledning, 'avlopp'), (vatten, 'vatten'), (brunn, 'brunn'), (servis, 'servis'),
+                            (anordning, 'anordning')):
+            if kartlager:
+                _filter(param, _ordning_lokala_forst(kartlager, slag))
         brunn_id = arcpy.Parameter(
             displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
             datatype='GPString', parameterType='Required', direction='Input')
