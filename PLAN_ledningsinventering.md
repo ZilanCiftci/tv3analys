@@ -230,9 +230,13 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
 
 ## Beslut och frågor (F10–F17)
 
-- **F10 Lager.** Öppen: vattenlagrens namn och fält kommer när användaren sitter vid ArcMap (kör *Lista
-  fält* på dem). Exportera område förväljer alla featurelager under grupperna *Avlopp* och *Vatten*, så
-  namnen behövs först i steg 2 (fältgissningar för vatten).
+- **F10 Lager.** Klar okt 2026 (kartans_falt2.txt): vatten V Huvudledning (PipeType VHL) och V Ledning (ej VHL)
+  (VDL …), V Servis (VSE, VBPL = brandpostledning), V Brunn/V Platsgjuten brunnspunkt (CoverLevel), punktlager
+  V Ventil (ej servisventil) (ValveFunction VAV/VTV), V Servisventil (VSeV), V Brandpost (HydrantType VBP; samma
+  featureklass som V Brandpost Avstängningskarta), V Anordning (ApplianceType VRED/VTapp/VFOR/VSL/VDF/VSKA),
+  V Ledningsände (PipeEndType), A Ledningsände avlopp, Serviskopplingspunkter (används inte). Vattenledningarna
+  saknar nivåer (LevelFrom/LevelTo tomma) → schablondjup. Inventeringen tar anordningarna per ledning och
+  rörspräckningen räknar en ventilgrop per ventil och brandpost.
 - **F11 Markhöjd.** Ja, det finns en höjdmodell/markhöjder i kartan → djup ur markhöjd − vg.
 - **F12 Parallellt.** c–c < 3 m på minst 60 % av sträckan = samma schakt.
 - **F13 Kostnader.** Priserna ur SVOA:s kalkylverktyg (okt 2026) ligger i `kostnader_inventering.csv`: infodring per

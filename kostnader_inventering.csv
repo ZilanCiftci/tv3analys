@@ -92,7 +92,8 @@ rorsprackning;;;;;316;355;m;6600;1 ledning rörspräckning i distributionslednin
 rorsprackning;;;;;356;400;m;7100;1 ledning rörspräckning i distributionsledning inkl. utrustning, DN Ø 400
 inforingsgrop;;;;;;;st;31433;Införingsgrop – jordschakt, en grop per 50 m ledning
 maskingrop;;;;;;;st;87313;Maskingrop (draggrop) – jordschakt, en grop per 50 m ledning
-servisgrop;;;;;;;st;23749;Servisgrop – en per servis (ventilgropar räknas inte, ventiler finns inte i underlaget)
+servisgrop;;;;;;;st;23749;Servisgrop & ventilgrop vid rörspräckning – en per servis
+ventilgrop;;;;;;;st;23749;Servisgrop & ventilgrop vid rörspräckning – en per ventil och brandpost på ledningen (ur inventeringens anordningar)
 brunn_ny;;;;;;;st;60000;SCHABLON (godkänd okt 2026) – ny brunn vid omläggning, en halv per brunnsände (finns inte i kalkylverktyget)
 aterstallning;;;;;;;m;0;ANTAGET (godkänt okt 2026) ingå i schaktpriset – ange kr per meter grav om återställning ska läggas till
 framschaktning;;;;;;;st;60000;Ur kostnader.csv: framschakta brunn vid infodring när båda ändbrunnarna är tillsyns-/rensbrunnar

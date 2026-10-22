@@ -1095,6 +1095,26 @@ vattenlagren (ventiler, brandposter, övriga anordningar).
 `import lista_falt` direkt i stället för `_ladda_modul('lista_falt')`, så modulmappen lades aldrig i sys.path när ArcMap
 återställt den (samma orsak som skapa_ledningslager-felet tidigare). Rättat; alla verktyg laddar nu modulerna via
 `_ladda_modul`. Test: scratchpad/test_listafalt.py (moduler borttagen ur sys.path – föll med gamla koden).
+**Ventiler, brandposter och anordningar i inventeringen** (okt 2026, användarens Lista fält-utdata kartans_falt2.txt med
+vattenlagren, se PLAN F10): inventering.py `inventera(..., anordningslager, anordning_radie=3.0)`: `_las_anordningar` (punktlager;
+`_kategori(lagernamn, typ)` = typkod i `ANORDNING_TYPKODER` (VSEV → servisventil), annars nyckelord i lagernamnet efter att
+"(ej …)" strukits – "V Ventil (ej servisventil)" är ventil – i `ANORDNING_KATEGORIER` servisventil/ventil/brandpost/ledningsande,
+annars 'anordning'; typfält första av `ANORDNING_TYPFALT` ValveFunction/HydrantType/ApplianceType/PipeEndType, dimension ur
+`ANORDNING_DIMFALT`; samma id i flera lager räknas en gang – V Brandpost + Avstängningskarta), `_lagersystem` (V-prefix/gruppen
+Vatten → V, A → avlopp), `_koppla_anordningar` (närmaste ledning av rätt slag inom radien; `ANORDNING_VIA_SERVIS` servisventil/
+brandpost via servis/brandpostledning när den ligger närmare: `via_servis`, position = servisens anslutning); per ledning
+`anordningar` [id] och `anordningar_antal` {kategori: n}; toppfält `anordningar`, sammanfattning anordningar/_kopplade/
+_per_kategori, datakvalitet "anordning utan ledning", CSV `_anordningar.csv`. .pyt: param `anordningslager` (multi) och
+`anordning_radie` (Inställningar); förvalen byggda om: `_lokalt_slag(langt, l)` klassar lokala lager på namn (V-prefix/Vatten →
+vatten, servis utan ventil, brunn, ventil/brandpost/anordning/ledningsände, kopplingspunkt/område → inget) och rättar med
+geometrin (`_lokala_lager` borttagen – "V Huvudledning (lokal)" hamnade bland avloppsledningarna och "V Servisventil (lokal)"
+bland serviserna); STANDARD_VATTEN V Huvudledning/V Ledning (ej VHL), STANDARD_BRUNN_INV (+ V Brunn, V Platsgjuten brunnspunkt),
+STANDARD_SERVIS_INV (A + V Servis), STANDARD_ANORDNING. ledning_analys: `VENTILGROP_KATEGORIER` (ventil, brandpost) →
+`_sprackning` ventilgropar × post `ventilgrop` (23 749, "Servisgrop & ventilgrop"; reserv servisgrop), dolda kolumner
+Servisventiler/Övriga anordningar/Ventilgropar, synliga Ventiler/Brandposter (st), flik **Anordningar**, Sammanfattning-block
+Anordningar, JSON `anordningar_antal`. Byte av ventiler/brandposter vid omläggning räknas inte (inget pris). Test:
+scratchpad/test_inventering.py test_anordningar (ventil 2,6 m från SSL1 men på V1, servisventil och brandpost via servis,
+dubblett i två lager, okopplad VFOR, ledningsände avlopp, förval i dialogen) och test_ledning_analys.py test_anordningar.
 **Planerade verktyg (okt 2026):** `PLAN_verktyg.md` i repots rot – svackkarta, uppströmsanalys,
 åtgärdspaket/kostnad, PowerPoint – med användarens beslut F1–F7 (rensbrunn = tillsynsbrunn,
 lagning manuell i meter kr/m, ingen automatisk brytpunkt mot schakt, schablonpriser, överbryggning

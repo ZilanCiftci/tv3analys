@@ -34,6 +34,7 @@ Testas utan ArcMap med en latsas-arcpy (scratchpad/test_inventering.py).
 from __future__ import unicode_literals
 
 import os
+import re
 import datetime
 
 import arcpy
@@ -252,7 +253,7 @@ def _kategori(lagernamn, typ):
     kod = _text(typ).upper()
     if kod in ANORDNING_TYPKODER:
         return ANORDNING_TYPKODER[kod]
-    n = txt(lagernamn).lower()
+    n = re.sub(r'\(\s*(ej|ej\.|inte|utan)\s[^)]*\)', '', txt(lagernamn).lower())   # "V Ventil (ej servisventil)"
     for kat, ord_ in ANORDNING_KATEGORIER:
         if any(o in n for o in ord_):
             return kat

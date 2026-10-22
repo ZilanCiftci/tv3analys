@@ -112,7 +112,12 @@ STANDARD_VG_TILL = ['LevelTo', 'VG_NED', 'VG_TILL', 'VATTENGANG_NED', 'VGNED']
 STANDARD_BOTTENNIVA = ['BottomLevel', 'BOTTENNIVA', 'BOTTEN_NIVA', 'BOTTENHOJD', 'Z_BOTTEN']
 STANDARD_LUTNING = ['Slope', 'LUTNING', 'FALL', 'LUTNING_PROMILLE']
 STANDARD_LEDNING_ID = ['EntityID', 'LEDN_ID', 'LEDNINGSID', 'ID', 'OBJEKTID']
-STANDARD_VATTEN = ['V Ledning', 'Vattenledning', 'V Ledningar']
+STANDARD_VATTEN = ['V Huvudledning', 'V Ledning (ej VHL)', 'V Ledning', 'Vattenledning', 'V Ledningar']
+# Ledningsinventering: brunnar och serviser for bade avlopp och vatten, samt anordningar (punktlager)
+STANDARD_BRUNN_INV = STANDARD_BRUNN + ['V Brunn', 'V Platsgjuten brunnspunkt']
+STANDARD_SERVIS_INV = ['A Servis', 'V Servis']
+STANDARD_ANORDNING = ['V Ventil (ej servisventil)', 'V Servisventil', 'V Brandpost', 'V Anordning',
+                      'V Lednings\u00e4nde', 'A Lednings\u00e4nde avlopp']
 STANDARD_LEDNINGSDATA = 'ledningsdata.json'   # Ledningsinventering, foreslas bredvid den lokala gdb:n
 LOKAL_SUFFIX = ' (lokal)'                     # lager som Exportera omrade lagt i kartan
 
@@ -186,17 +191,42 @@ def _va_lager(kartlager):
     return ut
 
 
-def _lokala_lager(kartlager, nyckelord, utan=()):
-    """Langa namn for lager som Exportera omrade skapat (namn med LOKAL_SUFFIX) och som innehaller
-    nagot av nyckelorden men inget av 'utan' - forval i Ledningsinventering."""
-    ut = []
-    for langt, l in kartlager:
-        n = l.name.strip().lower()
-        if not n.endswith(LOKAL_SUFFIX):
-            continue
-        if any(k.lower() in n for k in nyckelord) and not any(k.lower() in n for k in utan):
-            ut.append(langt)
-    return ut
+def _lokalt_slag(langt, l):
+    """Vad ett lager fran Exportera omrade (namn med LOKAL_SUFFIX) innehaller: 'avlopp', 'vatten'
+    (ledningar), 'servis', 'brunn', 'anordning' (ventiler, brandposter, ledningsandar ...) eller ''.
+    Namnet avgor (SVOA: V-/A-prefix eller gruppen Vatten), geometrin rattar."""
+    n = l.name.strip().lower()
+    if not n.endswith(LOKAL_SUFFIX):
+        return ''
+    n = n[:-len(LOKAL_SUFFIX)].strip()
+    try:
+        geom = arcpy.Describe(l.dataSource).shapeType
+    except Exception:
+        geom = ''
+    vatten = n.startswith('v ') or langt.strip().lower().startswith('vatten')
+    if 'kopplingspunkt' in n or 'omr\u00e5de' in n or 'omrade' in n:
+        slag = ''
+    elif 'servis' in n and 'ventil' not in n:
+        slag = 'servis'
+    elif 'brunn' in n:
+        slag = 'brunn'
+    elif any(k in n for k in ('ventil', 'brandpost', 'anordning', 'lednings\u00e4nde', 'ledningsande')):
+        slag = 'anordning'
+    elif 'ledning' in n:
+        slag = 'vatten' if vatten else 'avlopp'
+    else:
+        slag = ''
+    if geom == 'Point' and slag in ('avlopp', 'vatten', 'servis'):
+        slag = 'anordning'
+    elif geom == 'Polyline' and slag in ('brunn', 'anordning'):
+        slag = ''
+    elif geom and geom not in ('Point', 'Polyline'):
+        slag = ''
+    return slag
+
+
+def _lokala_av_slag(kartlager, slag):
+    return [langt for langt, l in kartlager if _lokalt_slag(langt, l) == slag]
 
 
 def _lagerparam(displayName, name, multi, kartlager, parameterType='Required'):
@@ -1623,7 +1653,8 @@ class Ledningsinventering(object):
         self.description = (
             'Inventerar ledningsn\u00e4tet (helst de lokala lagren fr\u00e5n Exportera omr\u00e5de): en post per '
             'ledningsstr\u00e4cka brunn-brunn med alla f\u00e4lt, lutning ur vatteng\u00e5ngarna, djup ur markh\u00f6jd '
-            '(h\u00f6jdmodell eller punktlager) minus vatteng\u00e5ng, serviser (antal och l\u00e4ngd), parallella '
+            '(h\u00f6jdmodell eller punktlager) minus vatteng\u00e5ng, serviser (antal och l\u00e4ngd), ventiler, '
+            'brandposter och andra anordningar per ledning, parallella '
             'ledningar och samschakt-grupper, korsningar och brunnar. Skriver ledningsdata.json + CSV-filer; '
             'ledning_analys.py g\u00f6r Excel och kostnadskalkyl av filen. Vattenledningar f\u00e5r schablondjup.')
         self.canRunInBackground = False
@@ -1639,6 +1670,8 @@ class Ledningsinventering(object):
                              True, kartlager, 'Optional')
         brunn = _lagerparam('Brunnslager (alla lager d\u00e4r brunnar kan ligga)', 'brunnslager', True, kartlager)
         servis = _lagerparam('Servislager (valfritt)', 'servislager', True, kartlager, 'Optional')
+        anordning = _lagerparam('Ventiler, brandposter och andra anordningar (punktlager, valfritt)',
+                                'anordningslager', True, kartlager, 'Optional')
         brunn_id = arcpy.Parameter(
             displayName='F\u00e4lt med brunnsbeteckning i brunnslagren', name='brunn_id',
             datatype='GPString', parameterType='Required', direction='Input')
@@ -1687,6 +1720,7 @@ class Ledningsinventering(object):
                         'parallell_andel', 60, 'GPLong')
         intervall = tal('Provt\u00e4thet l\u00e4ngs ledningen (m)', 'intervall', 1.0)
         v_djup = tal('Vattenledningar: djup till r\u00f6rets centrum (m)', 'vatten_djup', 1.7)
+        a_radie = tal('Anordningar: st\u00f6rsta avst\u00e5nd till ledning eller servis (m)', 'anordning_radie', 3.0)
         omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
                              False, kartlager, 'Optional')
         omrade.category = K_INST
@@ -1695,21 +1729,23 @@ class Ledningsinventering(object):
             datatype='GPString', parameterType='Required', direction='Input', category=K_INST)
         hojdsystem.value = 'RH2000'
 
-        params = _minne_fyll(self, [ledning, vatten, brunn, servis, brunn_id, json_ut,
+        params = _minne_fyll(self, [ledning, vatten, brunn, servis, brunn_id, json_ut, anordning,
                                     lock, botten, btyp, vg_fran, vg_till, dim, mat, ltyp, ar, ren, lut, lid,
                                     mark, z_falt, sokradie,
-                                    tolerans, par_avst, par_andel, intervall, v_djup, omrade, hojdsystem])
+                                    tolerans, par_avst, par_andel, intervall, v_djup, a_radie, omrade,
+                                    hojdsystem])
         # forval: de lokala lagren fran Exportera omrade, annars kartans vanliga lager
         if not ledning.valueAsText:
-            _satt_varden(ledning, _lokala_lager(kartlager, ['ledning'], ['servis', 'v ledning', 'vatten'])
-                         or _langa_namn(STANDARD_LEDNING, kartlager))
+            _satt_varden(ledning, _lokala_av_slag(kartlager, 'avlopp') or _langa_namn(STANDARD_LEDNING, kartlager))
         if not vatten.valueAsText:
-            _satt_varden(vatten, _lokala_lager(kartlager, ['v ledning', 'vatten'], ['servis'])
-                         or _langa_namn(STANDARD_VATTEN, kartlager))
+            _satt_varden(vatten, _lokala_av_slag(kartlager, 'vatten') or _langa_namn(STANDARD_VATTEN, kartlager))
         if not brunn.valueAsText:
-            _satt_varden(brunn, _lokala_lager(kartlager, ['brunn']) or _langa_namn(STANDARD_BRUNN, kartlager))
+            _satt_varden(brunn, _lokala_av_slag(kartlager, 'brunn') or _langa_namn(STANDARD_BRUNN_INV, kartlager))
         if not servis.valueAsText:
-            _satt_varden(servis, _lokala_lager(kartlager, ['servis']) or _langa_namn(STANDARD_SERVIS, kartlager))
+            _satt_varden(servis, _lokala_av_slag(kartlager, 'servis') or _langa_namn(STANDARD_SERVIS_INV, kartlager))
+        if not anordning.valueAsText:
+            _satt_varden(anordning, _lokala_av_slag(kartlager, 'anordning')
+                         or _langa_namn(STANDARD_ANORDNING, kartlager))
         return params
 
     def isLicensed(self):
@@ -1761,8 +1797,9 @@ class Ledningsinventering(object):
         _kolla_geometri(P['vattenlager'], ('Polyline',), 'Vattenledningar')
         _kolla_geometri(P['servislager'], ('Polyline',), 'Servislager')
         _kolla_geometri(P['brunnslager'], ('Point',), 'Brunnslager')
+        _kolla_geometri(P['anordningslager'], ('Point',), 'Anordningar')
         _kolla_geometri(P['omradeslager'], ('Polygon',), 'Omr\u00e5deslagret')
-        for namn in ('tolerans', 'parallell_avstand', 'intervall', 'sokradie'):
+        for namn in ('tolerans', 'parallell_avstand', 'intervall', 'sokradie', 'anordning_radie'):
             if P[namn].value is not None and not P[namn].value > 0:
                 P[namn].setErrorMessage('St\u00f6rre \u00e4n 0')
         if P['parallell_andel'].value is not None and not (1 <= P['parallell_andel'].value <= 100):
@@ -1801,8 +1838,10 @@ class Ledningsinventering(object):
             tolerans=float(P['tolerans'].value), parallell_avstand=float(P['parallell_avstand'].value),
             parallell_andel=float(P['parallell_andel'].value) / 100.0, intervall=float(P['intervall'].value),
             vatten_djup=float(P['vatten_djup'].value), sokradie=float(P['sokradie'].value),
-            hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'))
+            hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'),
+            anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value))
         arcpy.AddMessage('Klart: %(ledningar)d ledningar, %(brunnar)d brunnar, %(serviser_kopplade)d av %(serviser)d '
-                         'serviser kopplade, %(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
+                         'serviser kopplade, %(anordningar_kopplade)d av %(anordningar)d anordningar kopplade, '
+                         '%(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
                          '%(korsningar)d korsningar' % r)
         return
