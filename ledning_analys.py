@@ -6,8 +6,10 @@ ledning_analys.py – inventeringsbok och kostnad lägga om mot strumpa (PLAN_le
 Läser ledningsdata.json från ArcMap-verktyget Ledningsinventering och räknar två alternativ för hela nätet:
 
   Alt. lägg om  – alla ledningar läggs om i helschakt; ledningar i samma grav delar graven (pris per meter
-                  grav efter antal ledningar, antal större än 400 mm och schakttyp). Räknas för alla fyra
-                  schakttyperna (ledningschakt, med spontsläde, bergschakt, KC-förstärkning).
+                  grav efter antal ledningar, antal större än 400 mm och schakttyp). Standard är schakttypen
+                  djup: gravens medeldjup under 2 m ledningschakt, 2–3 m spontlåda (spontsläde), från 3 m
+                  ledningschakt + slagen spont på båda sidor (medeldjup + 3 m, kr/m²). Räknas även för de fyra
+                  fasta schakttyperna (ledningschakt, med spontsläde, bergschakt, KC-förstärkning).
   Alt. strumpa  – spill-, dag- och kombinerade ledningar infodras (rörspräcks om infodring inte går och
                   dimensionen tillåter, annars läggs de om). Vattenledningar rörspräcks – men bara när
                   avloppsledningarna i samma grav också klaras utan schakt; läggs någon av dem om, läggs
@@ -54,7 +56,15 @@ UTDATA_JSON = "ledningsresultat.json"
 
 SCHAKTTYPER = {"ledningschakt": "Ledningschakt", "spontslade": "Med spontsläde",
                "bergschakt": "Bergschakt", "kc": "KC-förstärkning"}
-SCHAKTTYP = "ledningschakt"       # schakttypen i Alt. lägg om och Alt. strumpa (övriga redovisas också)
+SCHAKTTYP_DJUP = "djup"           # schakttyp efter ledningens djup (spontlåda, slagen spont) – se nedan
+ALLA_SCHAKTTYPER = {SCHAKTTYP_DJUP: "Efter djup – spont", **SCHAKTTYPER}
+SCHAKTTYP = SCHAKTTYP_DJUP        # schakttypen i Alt. lägg om och Alt. strumpa (övriga redovisas också)
+SPONTLADA_FRAN_M = 2.0            # schakttyp djup: grav från detta medeldjup (m) -> spontsläde/spontlåda (prisraderna)
+SLAGEN_SPONT_FRAN_M = 3.0         # ... från detta medeldjup -> ledningschakt + slagen spont (post slagen_spont, kr/m²)
+SPONT_NEDSLAGNING_M = 3.0         # slagen spont: höjd = gravens medeldjup + detta (m)
+SPONT_SIDOR = 2                   # slagen spont på båda sidor av graven
+SCHAKTSATT_NAMN = {"ledningschakt": "Ledningschakt", "spontlada": "Spontlåda", "slagen_spont": "Slagen spont",
+                   "djup_saknas": "Djup saknas (ledningschakt)"}
 STORRE_DIM = 400                  # ledningar över detta (mm) räknas som "större" i grav med 2–3 ledningar
 MAX_LEDNINGAR_I_GRAV = 3          # prislistan har 1–3 ledningar i samma grav
 STANDARDDJUP_M = 2.5              # schaktpriset gäller till detta djup (vattengång) ...
@@ -78,8 +88,8 @@ ANORDNING_NAMN = {"ventil": "Ventiler", "brandpost": "Brandposter", "servisventi
 DOLDA_LEDNINGAR = [
     "Ledningstyp", "Renoveringsår", "VG från", "VG till", "Lutning GIS", "Djup min", "Djup max", "Djupkälla",
     "Täckning min", "Djup start", "Djup slut", "Samschakt med", "Parallella", "Korsningar",
-    "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
-    "Schakt", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
+    "Lägg om efter djup", "Lägg om ledningschakt", "Lägg om med spontsläde", "Lägg om bergschakt", "Lägg om KC-förstärkning",
+    "Schakt", "Gravdjup", "Slagen spont", "Spont", "Djuptillägg", "Återställning", "Brunnar", "Serviser helschakt",
     "Infodring", "Infodring per meter", "Serviser infodring", "Framschaktning", "Infodring totalt",
     "Servisventiler", "Övriga anordningar",
     "Rörspräckning", "Rörspräckning per meter", "Gropar", "Servisgropar", "Ventilgropar", "Serviser rörspräckning",
@@ -219,8 +229,21 @@ def _antal_djuptillagg(djup: float) -> int:
     return int(math.ceil((djup - STANDARDDJUP_M) / DJUPTILLAGG_STEG_M - 1e-9))
 
 
+def schaktsatt(djup: float | None) -> str:
+    """Schakttyp djup: ledningschakt, spontlåda eller slagen spont efter gravens medeldjup."""
+    if djup is None:
+        return "djup_saknas"
+    if djup >= SLAGEN_SPONT_FRAN_M:
+        return "slagen_spont"
+    if djup >= SPONTLADA_FRAN_M:
+        return "spontlada"
+    return "ledningschakt"
+
+
 def _grav(led, kost, per_id, schakttyp, medlagda=None):
-    """Huvudledningens del av graven: ({schakt, djuptillagg, aterstallning, brunnar}, brist, n, beskrivning)."""
+    """Huvudledningens del av graven: ({schakt, djuptillagg, aterstallning, brunnar, spont, schaktsatt,
+    pris_typ}, brist, n, beskrivning). Schakttyp djup: gravens medeldjup (djupaste ledningen i graven)
+    avgör schaktsättet; slagen spont = SPONT_SIDOR × (medeldjup + SPONT_NEDSLAGNING_M) × längd m²."""
     L = led.get("langd_m") or 0.0
     system = led.get("system") or ""
     n = ledningar_i_grav(led, per_id, medlagda)
@@ -230,11 +253,24 @@ def _grav(led, kost, per_id, schakttyp, medlagda=None):
         return None, "dimension saknas" + ("" if led.get("dimension") is None else " på ledning i samma grav"), n, ""
     dmax = max(dims)
     storre = sum(1 for d in dims if d > STORRE_DIM)
-    pris_m = gravpris(kost, schakttyp, n, storre, dmax)
+    satt, gdjup, pris_typ = None, None, schakttyp
+    if schakttyp == SCHAKTTYP_DJUP:
+        djupen_g = [q.get("djup_medel") for q in i_grav if q.get("djup_medel") is not None]
+        gdjup = max(djupen_g) if djupen_g else None
+        satt = schaktsatt(gdjup)
+        pris_typ = "spontslade" if satt == "spontlada" else "ledningschakt"
+    pris_m = gravpris(kost, pris_typ, n, storre, dmax)
     beskr = f"{n} ledning{'ar' if n > 1 else ''}" + (f", {storre} större" if n > 1 else "") + f", Ø {dmax:g}"
     if pris_m is None:
-        return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(schakttyp, schakttyp)})", n, beskr
-    o = {"schakt": pris_m / n * L}
+        return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(pris_typ, pris_typ)})", n, beskr
+    o = {"schakt": pris_m / n * L, "spont": 0.0, "spont_m2": 0.0, "schaktsatt": satt, "pris_typ": pris_typ,
+         "gravdjup": gdjup}
+    if satt == "slagen_spont":
+        m2 = SPONT_SIDOR * (gdjup + SPONT_NEDSLAGNING_M) * L / n
+        pris_m2 = kr(kost, "slagen_spont")
+        if pris_m2 is None:
+            return None, "pris för slagen spont saknas i kostnadsfilen", n, beskr
+        o["spont_m2"], o["spont"] = m2, m2 * pris_m2
     # Djuptillägg per påbörjade DJUPTILLAGG_STEG_M under STANDARDDJUP_M, medel över profilens punkter
     tillagg_m = kr(kost, "djuptillagg", dim=dmax) or 0.0
     djupen = _djup_punkter(led) if system != "V" else []
@@ -246,6 +282,8 @@ def _grav(led, kost, per_id, schakttyp, medlagda=None):
     andar = sum(0.5 for b in (led.get("fran"), led.get("till")) if b) if system != "V" else 0.0
     o["brunnar"] = andar * (kr(kost, "brunn_ny") or 0.0)
     brist = "" if djupen or system == "V" else "djup saknas – inget djuptillägg"
+    if satt == "djup_saknas":
+        brist = "djup saknas – ingen spont, inget djuptillägg"
     return o, brist, n, beskr
 
 
@@ -372,8 +410,8 @@ def _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx, alla_serv, gru
     o, brist, n, beskr = _grav(led, kost, per_id, schakttyp, medlagda)
     if o is None:
         return None, brist, n, beskr
-    o["serviser"] = _servis_helschakt(serv_idx, alla_serv, grupp, metod_for, kost, schakttyp)
-    o["summa"] = o["schakt"] + o["djuptillagg"] + o["aterstallning"] + o["brunnar"] + o["serviser"]
+    o["serviser"] = _servis_helschakt(serv_idx, alla_serv, grupp, metod_for, kost, o["pris_typ"])
+    o["summa"] = o["schakt"] + o["spont"] + o["djuptillagg"] + o["aterstallning"] + o["brunnar"] + o["serviser"]
     return o, brist, n, beskr
 
 
@@ -530,7 +568,7 @@ def berakna(data: dict, kost: list[dict], schakttyp: str = SCHAKTTYP) -> list[di
         egna = serv_idx.get(led.get("id"), [])
         serv = [alla_serv[i] for i in egna]
         led["_typer"] = {}
-        for t in SCHAKTTYPER:
+        for t in ALLA_SCHAKTTYPER:
             led["_typer"][t] = _omlaggning(led, kost, per_id, t, None, egna, alla_serv, grupp, metod_a)[0]
         led["_omlagg"], led["_omlagg_brist"], led["_grav"], led["_grav_hur"] = \
             _omlaggning(led, kost, per_id, schakttyp, None, egna, alla_serv, grupp, metod_a)
@@ -701,10 +739,10 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Samschakt med", "Parallella", "Korsningar",
-           "Alt. lägg om (kr)", "Metod alt. strumpa", "Alt. strumpa (kr)", "Anmärkning",
-           "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
+           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. strumpa", "Alt. strumpa (kr)", "Anmärkning",
+           "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)",
-           "Schakt (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
+           "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
            "Infodring per meter (kr/m)", "Infodring (kr)", "Serviser infodring (kr)", "Framschaktning (kr)",
            "Infodring totalt (kr)",
            "Rörspräckning per meter (kr/m)", "Rörspräckning (kr)", "Gropar (kr)", "Servisgropar (kr)",
@@ -732,9 +770,11 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                          for p in l.get("parallella") or []) or None,
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
                          for k in l.get("korsningar") or []) or None,
-               _kr(o), l.get("_alt_metod"), _kr(l.get("_alt")), _anmarkning(l)] + \
-              [_kr((l.get("_typer") or {}).get(t)) for t in SCHAKTTYPER] + \
-              [_kr(o, "schakt"), _kr(o, "djuptillagg"), _kr(o, "aterstallning"), _kr(o, "brunnar"),
+               _kr(o), SCHAKTSATT_NAMN.get((o or {}).get("schaktsatt")), l.get("_alt_metod"), _kr(l.get("_alt")),
+               _anmarkning(l)] + \
+              [_kr((l.get("_typer") or {}).get(t)) for t in ALLA_SCHAKTTYPER] + \
+              [_kr(o, "schakt"), _r((o or {}).get("gravdjup"), 2), _r((o or {}).get("spont_m2")) or None,
+               _kr(o, "spont") or None, _kr(o, "djuptillagg"), _kr(o, "aterstallning"), _kr(o, "brunnar"),
                _kr(o, "serviser"),
                _kr(s, "per_meter"), _kr(s, "infodring"), _kr(s, "serviser"), _kr(s, "framschaktning"), _kr(s),
                _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
@@ -874,7 +914,12 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
              if p else None),
             ("Vatten, djup till centrum", f"{_dk(p.get('vatten_djup_m'))} m (djupet räknas till rörets botten: + dimension/2)" if p.get("vatten_djup_m") is not None else None),
             ("Markhöjd", p.get("markhojd") or "locknivåerna (ingen markhöjd vald)"),
-            ("Schakttyp", f"{SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
+            ("Schakttyp", f"{ALLA_SCHAKTTYPER.get(kallor['schakttyp'], kallor['schakttyp'])} (alla typer i tabellen nedan)"),
+            ("Schakt efter djup", f"gravens medeldjup under {_dk(SPONTLADA_FRAN_M)} m ledningschakt, "
+                                  f"{_dk(SPONTLADA_FRAN_M)}–{_dk(SLAGEN_SPONT_FRAN_M)} m spontlåda (spontsläde), från "
+                                  f"{_dk(SLAGEN_SPONT_FRAN_M)} m ledningschakt + slagen spont på {SPONT_SIDOR} sidor, "
+                                  f"höjd medeldjup + {_dk(SPONT_NEDSLAGNING_M)} m"
+             if kallor["schakttyp"] == SCHAKTTYP_DJUP else None),
             ("Infodring", f"spill-, dag- och kombinerade ledningar från {STRUMPA_DIM_MIN} mm, så långt prislistan räcker"
                           " (inte vatten)"),
             ("Rörspräckning", f"alla ledningar till och med {SPRACKNING_DIM_MAX} mm; införings- och maskingrop per "
@@ -941,13 +986,28 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor) -> None:
         rad += 1
     rad += 1
 
-    block("Alt. lägg om per schakttyp", ["System", "Längd (m)"] + [f"{v} (kr)" for v in SCHAKTTYPER.values()] +
+    block("Alt. lägg om per schakttyp", ["System", "Längd (m)"] + [f"{v} (kr)" for v in ALLA_SCHAKTTYPER.values()] +
           ["Utan kostnad (st)"],
           per_system(lambda lista: [langd(lista)] +
-                     [_summa([l for l in lista if all((l.get("_typer") or {}).get(x) for x in SCHAKTTYPER)],
-                             lambda l, t=t: l["_typer"][t]["summa"]) for t in SCHAKTTYPER] +
-                     [sum(1 for l in lista if not all((l.get("_typer") or {}).get(x) for x in SCHAKTTYPER))]),
-          format=dict([("Längd", M)] + [(v, KR) for v in SCHAKTTYPER.values()]))
+                     [_summa([l for l in lista if all((l.get("_typer") or {}).get(x) for x in ALLA_SCHAKTTYPER)],
+                             lambda l, t=t: l["_typer"][t]["summa"]) for t in ALLA_SCHAKTTYPER] +
+                     [sum(1 for l in lista if not all((l.get("_typer") or {}).get(x) for x in ALLA_SCHAKTTYPER))]),
+          format=dict([("Längd", M)] + [(v, KR) for v in ALLA_SCHAKTTYPER.values()]))
+
+    def satt_rader():
+        rader_ = []
+        for k, namn in SCHAKTSATT_NAMN.items():
+            lista = [l for l in ledningar if (l.get("_typer") or {}).get(SCHAKTTYP_DJUP)
+                     and l["_typer"][SCHAKTTYP_DJUP].get("schaktsatt") == k]
+            if lista:
+                rader_.append([namn, len(lista), langd(lista),
+                               round(sum(l["_typer"][SCHAKTTYP_DJUP]["spont_m2"] for l in lista)),
+                               _summa(lista, lambda l: l["_typer"][SCHAKTTYP_DJUP]["spont"]),
+                               _summa(lista, lambda l: l["_typer"][SCHAKTTYP_DJUP]["summa"])])
+        return rader_
+    block("Alt. lägg om efter djup – schaktsätt", ["Schaktsätt", "Ledningar (st)", "Längd (m)", "Slagen spont (m²)",
+                                                   "Spont (kr)", "Alt. lägg om efter djup (kr)"], satt_rader(),
+          format={"Längd": M, "Slagen spont": M, "Spont": KR, "Alt. lägg om efter djup": KR})
 
     block("Ledningsnätet", ["System", "Ledningar (st)", "Längd (m)", "Serviser (st)", "Servislängd (m)",
                             "Medeldjup (m)", "I samschakt (%)"],
@@ -1028,7 +1088,7 @@ def main(argv=None) -> int:
     ap.add_argument("ledningsdata", help="ledningsdata.json från ArcMap-verktyget Ledningsinventering")
     ap.add_argument("-o", "--utdata", help="utdatamapp (standard: samma mapp som ledningsdata.json)")
     ap.add_argument("--kostnader", default=KOSTNADSFIL, help="kostnadsfil (kostnader_inventering.csv)")
-    ap.add_argument("--schakttyp", default=SCHAKTTYP, choices=sorted(SCHAKTTYPER),
+    ap.add_argument("--schakttyp", default=SCHAKTTYP, choices=sorted(ALLA_SCHAKTTYPER),
                     help="schakttyp i alternativen (alla redovisas i Sammanfattning)")
     a = ap.parse_args(argv)
 
@@ -1055,7 +1115,7 @@ def main(argv=None) -> int:
     skriv_resultat(ledningar, os.path.join(ut, UTDATA_JSON), os.path.abspath(a.ledningsdata))
 
     L = sum(l.get("langd_m") or 0 for l in ledningar)
-    print(f"{len(ledningar)} ledningar, {L:,.0f} m – schakttyp {SCHAKTTYPER[a.schakttyp]}".replace(",", " "))
+    print(f"{len(ledningar)} ledningar, {L:,.0f} m – schakttyp {ALLA_SCHAKTTYPER[a.schakttyp]}".replace(",", " "))
     if data.get("_antagna_dim"):
         kvar = sum(1 for l in ledningar if l.get("dimension") is None)
         print(f"  {data['_antagna_dim']} ledningar utan dimension fick grannledningens dimension"
