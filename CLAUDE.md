@@ -981,7 +981,12 @@ longName börjar med `STANDARD_VA_GRUPPER` Avlopp/Vatten, annars lednings-/brunn
 (höjdmodell finns; parallellt = c–c < 3 m på ≥ 60 %; prisdatabas i Excel med 1/2/3 ledningar i graven kommer; brunn→brunn
 eller ledningsände; A3-mallar finns; vatten djup till centrum 1,7 m); F10 vattenlagrens namn väntar. Test:
 scratchpad/test_omrade.py med scratchpad/latsas/arcpy (ringpolygoner, urval, buffert, dq, omkörning, .pyt-laddning med
-execute). Handledning 7.13.
+execute). Handledning 7.13. Första körningen i ArcMap (okt 2026, 24 lager, 9 polygoner): "RuntimeError: Objects in this class
+cannot be updated outside an edit session [V_Brunn]" i UpdateCursor – SVOA:s geopipe-klasser har klasstillägg som följer
+med CopyFeatures. `_fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)`: provar utan session, vid "edit session" i felet
+`arcpy.da.Editor(gdb)` startEditing(False, False)/startOperation/…/stopEditing(True) (loggas), annars OBS och tomma fält
+(exporten fortsätter). Låtsas-arcpy: `DATA[...]['kraver_edit']` följer med CopyFeatures, `da.Editor`, `EDIT` {aktiv,
+sparade, kan_inte}; test_omrade.py test_klasstillagg.
 
 **Ledningsinventering** (okt 2026, steg 2 i PLAN_ledningsinventering.md, oprövat i riktig ArcMap): `arcmap/moduler/inventering.py`
 `inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager, vattenlager, markhojd, z_falt, lock_falt, botten_falt,

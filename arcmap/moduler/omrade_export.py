@@ -207,15 +207,7 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
                 arcpy.AddField_management(ut_fc, FALT_KORSAR, 'SHORT', field_alias='Korsar omradesgrans')
             if FALT_KALLA not in befintliga:
                 arcpy.AddField_management(ut_fc, FALT_KALLA, 'TEXT', field_length=100, field_alias='Kallager')
-            korsar = 0
-            with arcpy.da.UpdateCursor(ut_fc, ['SHAPE@', FALT_OMRADE, FALT_KORSAR, FALT_KALLA]) as cur:
-                for rad in cur:
-                    g = rad[0]
-                    namn_i = [n for n, p in polys if g is not None and not p.disjoint(g)]
-                    inne = 1 if (g is None or g.within(union)) else 0
-                    if not inne:
-                        korsar += 1
-                    cur.updateRow([g, ';'.join(namn_i)[:254], 0 if inne else 1, lagernamn[:100]])
+            korsar = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)
             logg('  %s: %d objekt -> %s%s' % (lagernamn, antal, fc_namn,
                                                (' (%d korsar omradesgransen)' % korsar) if korsar else ''))
             resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
@@ -252,6 +244,48 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
         except Exception:
             pass
     return info
+
+
+def _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn):
+    """Fyller OMRADE, KORSAR_GRANS och KALLAGER. Returnerar antalet objekt som korsar omradesgransen.
+    SVOA:s featureklasser har ett klasstillagg som foljer med kopian, och da gar de bara att uppdatera i
+    en redigeringssession ("cannot be updated outside an edit session") - da provas en sadan. Gar inte
+    det heller lamnas falten tomma (exporten i sig ar klar) och det loggas."""
+    def skriv():
+        n = 0
+        with arcpy.da.UpdateCursor(ut_fc, ['SHAPE@', FALT_OMRADE, FALT_KORSAR, FALT_KALLA]) as cur:
+            for rad in cur:
+                g = rad[0]
+                namn_i = [nm for nm, p in polys if g is not None and not p.disjoint(g)]
+                inne = 1 if (g is None or g.within(union)) else 0
+                if not inne:
+                    n += 1
+                cur.updateRow([g, ';'.join(namn_i)[:254], 0 if inne else 1, lagernamn[:100]])
+        return n
+    try:
+        return skriv()
+    except RuntimeError as e:
+        if 'edit session' not in txt(e).lower():
+            raise
+    ed = None
+    try:
+        ed = arcpy.da.Editor(gdb)
+        ed.startEditing(False, False)
+        ed.startOperation()
+        n = skriv()
+        ed.stopOperation()
+        ed.stopEditing(True)
+        logg('  %s: falten fylldes i en redigeringssession (klasstillagg i kallan)' % lagernamn)
+        return n
+    except Exception as e:
+        if ed is not None:
+            try:
+                ed.stopEditing(False)
+            except Exception:
+                pass
+        logg('  OBS %s: kunde inte fylla %s/%s/%s (%s) - objekten ar exporterade, falten ar tomma'
+             % (lagernamn, FALT_OMRADE, FALT_KORSAR, FALT_KALLA, txt(e)))
+        return 0
 
 
 def _ta_bort_ur_kartan(mxd, ut_fc):
