@@ -474,7 +474,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         ys = [q[1] for p in ledningar for q in p['_pts']]
         bbox = (min(xs), min(ys), max(xs), max(ys)) if xs else None
         import projektering
-        mark = projektering.markhojd(_lista(markhojd), z_falt, sokradie, omrade, bbox)
+        mark = projektering.markhojd(_lista(markhojd), z_falt, sokradie, omrade, bbox, sr)
     n_mark = n_lock = n_schablon = n_utan = 0
     for p in ledningar:
         pts = p['_pts']

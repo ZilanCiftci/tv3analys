@@ -172,15 +172,38 @@ def _rasterlager_i_kartan(namn):
     return None
 
 
+_PROJ_CACHE = {}
+
+
+def _srn(sr):
+    try:
+        return txt(sr.name) or '?'
+    except Exception:
+        return '?'
+
+
+def _sr_skiljer(a, b):
+    """Sant nar tva koordinatsystem ar kanda och olika (factoryCode, annars namnet)."""
+    if a is None or b is None:
+        return False
+    ka, kb = getattr(a, 'factoryCode', None), getattr(b, 'factoryCode', None)
+    if ka and kb:
+        return ka != kb
+    na, nb = _srn(a), _srn(b)
+    return na not in ('?', 'Unknown') and nb not in ('?', 'Unknown') and na != nb
+
+
 class Markhojd(object):
     """Markhojd ur ett punktlager (IDW av narmaste punkter inom sokradien) eller ett raster
     (cellerna over straket lases in en gang med RasterToNumPyArray; bilinjar interpolation)."""
 
-    def __init__(self, lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None):
+    def __init__(self, lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None, sr=None):
         self.sokradie = float(sokradie)
         self.raster = None
         self.rutnat = {}
         self.n = 0
+        self.sr = sr                             # ledningarnas koordinatsystem (x, y i hojd())
+        self.sr_kalla = None                     # satts nar kallan har ett annat koordinatsystem
         src = _rasterlager_i_kartan(lager)       # rasterlager i kartan hittas fore featurelager
         dq = None
         if src is None:
@@ -201,8 +224,9 @@ class Markhojd(object):
             except Exception:
                 self.ext = None
             logg('  markhojd ur raster %s' % txt(getattr(d, 'name', src)))
+            self._satt_sr(d)
             if bbox is not None:
-                self._las_raster(d, bbox)
+                self._las_raster(d, self._bbox_i_kallan(bbox))
             return
         if txt(getattr(d, 'shapeType', '')) == 'Multipoint':
             raise RuntimeError('Markhojdslagret ar ett multipunktlager - anvand verktyget Markprofil'
@@ -220,7 +244,14 @@ class Markhojd(object):
         else:
             falt = ['SHAPE@XY', 'SHAPE@Z']
             logg('  markhojd ur punkternas Z')
-        with arcpy.da.SearchCursor('lyr_mark_p', falt) as mark:
+        try:
+            rsr = d.spatialReference
+        except Exception:
+            rsr = None
+        kw = {'spatial_reference': self.sr} if (self.sr is not None and _sr_skiljer(self.sr, rsr)) else {}
+        if kw:
+            logg('  markhojdspunkterna projiceras fran %s till %s' % (_srn(rsr), _srn(self.sr)))
+        with arcpy.da.SearchCursor('lyr_mark_p', falt, **kw) as mark:
             for xy, z in mark:
                 z = _tal(z)
                 if xy and xy[0] is not None and z is not None:
@@ -229,6 +260,34 @@ class Markhojd(object):
                     self.n += 1
         arcpy.Delete_management('lyr_mark_p')
         logg('  %d markhojdspunkter nara straket' % self.n)
+
+    def _satt_sr(self, d):
+        """Kallan i ett annat koordinatsystem an ledningarna (t.ex. Lantmateriets hojdmodell i
+        SWEREF 99 TM och ledningarna i SWEREF 99 18 00): punkterna projiceras i hojd()."""
+        try:
+            rsr = d.spatialReference
+        except Exception:
+            return
+        if self.sr is not None and _sr_skiljer(self.sr, rsr):
+            self.sr_kalla = rsr
+            logg('  rastret ar i %s, ledningarna i %s - punkterna projiceras' % (_srn(rsr), _srn(self.sr)))
+
+    def _till_kallan(self, x, y):
+        if self.sr_kalla is None:
+            return x, y
+        nyckel = (_srn(self.sr_kalla), round(x, 3), round(y, 3))
+        v = _PROJ_CACHE.get(nyckel)
+        if v is None:
+            q = arcpy.PointGeometry(arcpy.Point(x, y), self.sr).projectAs(self.sr_kalla).firstPoint
+            v = _PROJ_CACHE[nyckel] = (q.X, q.Y)
+        return v
+
+    def _bbox_i_kallan(self, bbox):
+        if self.sr_kalla is None:
+            return bbox
+        x0, y0, x1, y1 = bbox
+        horn = [self._till_kallan(x, y) for x in (x0, (x0 + x1) / 2.0, x1) for y in (y0, (y0 + y1) / 2.0, y1)]
+        return (min(h[0] for h in horn), min(h[1] for h in horn), max(h[0] for h in horn), max(h[1] for h in horn))
 
     def _las_raster(self, d, bbox):
         """Laser rastercellerna over straket (bbox + sokradie) till en numpy-array."""
@@ -244,7 +303,10 @@ class Markhojd(object):
             ncols = int(math.ceil((x1 - x0) / cw)) + 1
             nrows = int(math.ceil((y1 - y0) / ch)) + 1
             if x1 <= x0 or y1 <= y0:
-                logg('  rastret ligger utanfor straket')
+                logg('  rastret ligger utanfor straket (raster x %.0f-%.0f y %.0f-%.0f, ledningar x %.0f-%.0f'
+                     ' y %.0f-%.0f%s)' % (float(e.XMin), float(e.XMax), float(e.YMin), float(e.YMax),
+                                          bbox[0], bbox[2], bbox[1], bbox[3],
+                                          '' if self.sr_kalla is not None else ', ' + _srn(getattr(d, 'spatialReference', None))))
                 return
             if ncols <= 0 or nrows <= 0 or ncols * nrows > 25000000:
                 return
@@ -261,6 +323,8 @@ class Markhojd(object):
             self.arr = None
 
     def hojd(self, x, y):
+        if self.raster is not None:
+            x, y = self._till_kallan(x, y)
         ext = getattr(self, 'ext', None)
         if self.raster is not None and ext is not None and not (ext[0] <= x <= ext[2] and ext[1] <= y <= ext[3]):
             return None                          # utanfor rastret (en av flera rutor)
@@ -326,16 +390,18 @@ class FleraMarkhojder(object):
         return None
 
 
-def markhojd(lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None):
-    """Markhojd ur ett lager eller en lista med lager (rasterrutor och/eller punktlager)."""
+def markhojd(lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None, sr=None):
+    """Markhojd ur ett lager eller en lista med lager (rasterrutor och/eller punktlager).
+    sr = ledningarnas koordinatsystem; kallor i ett annat projiceras."""
+    _PROJ_CACHE.clear()
     if isinstance(lager, (list, tuple)):
         lager = [l for l in lager if l]
         if len(lager) == 1:
             lager = lager[0]
         else:
             logg('  %d markhojdslager' % len(lager))
-            return FleraMarkhojder([Markhojd(l, z_falt, sokradie, omrade_lager, bbox) for l in lager])
-    return Markhojd(lager, z_falt, sokradie, omrade_lager, bbox)
+            return FleraMarkhojder([Markhojd(l, z_falt, sokradie, omrade_lager, bbox, sr) for l in lager])
+    return Markhojd(lager, z_falt, sokradie, omrade_lager, bbox, sr)
 
 
 # =====================================================================
@@ -625,7 +691,11 @@ def profil(ledningslager, brunnslager, marklager, ut_mapp, namn='profil', z_falt
     xs_alla = [p[0] for l in ledningar for p in l['pts']]
     ys_alla = [p[1] for l in ledningar for p in l['pts']]
     bbox = (min(xs_alla) - 50, min(ys_alla) - 50, max(xs_alla) + 50, max(ys_alla) + 50)
-    mark = Markhojd(marklager, z_falt, sokradie, omrade_lager=led_kalla, bbox=bbox) if marklager else None
+    try:
+        led_sr = arcpy.Describe(kalla(led)[0]).spatialReference
+    except Exception:
+        led_sr = None
+    mark = Markhojd(marklager, z_falt, sokradie, omrade_lager=led_kalla, bbox=bbox, sr=led_sr) if marklager else None
 
     ut_filer = []
     for s in strak:
