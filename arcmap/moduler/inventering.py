@@ -469,8 +469,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         xs = [q[0] for p in ledningar for q in p['_pts']]
         ys = [q[1] for p in ledningar for q in p['_pts']]
         bbox = (min(xs), min(ys), max(xs), max(ys)) if xs else None
-        from projektering import Markhojd
-        mark = Markhojd(markhojd, z_falt, sokradie, omrade, bbox)
+        import projektering
+        mark = projektering.markhojd(_lista(markhojd), z_falt, sokradie, omrade, bbox)
     n_mark = n_lock = n_schablon = n_utan = 0
     for p in ledningar:
         pts = p['_pts']
@@ -742,7 +742,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
                        'vatten_djup_m': float(vatten_djup), 'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
                        'vatten_klippt_vid_omrade': klipp is not None,
-                       'markhojd': txt(markhojd) if markhojd else None, 'z_falt': z_falt,
+                       'markhojd': '; '.join(txt(m) for m in _lista(markhojd)) if markhojd else None, 'z_falt': z_falt,
                        'djupklasser': list(DJUPKLASSER), 'flack_promille': FLACK_PROMILLE},
         'serviser': serviser,
         'anordningar': anordningar,

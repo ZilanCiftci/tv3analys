@@ -1715,8 +1715,10 @@ class Ledningsinventering(object):
         lid = falt('Ledningar: id-f\u00e4lt (EntityID) - anv\u00e4nds som ledningens namn', 'id_falt')
 
         mark = arcpy.Parameter(
-            displayName='Markh\u00f6jd: h\u00f6jdmodell (raster) eller punktlager (valfritt - annars lockniv\u00e5erna)',
-            name='markhojd', datatype='GPString', parameterType='Optional', direction='Input', category=K_MARK)
+            displayName='Markh\u00f6jd: h\u00f6jdmodell (ett eller flera raster, t.ex. geotif-rutor) eller punktlager '
+                        '(valfritt - annars lockniv\u00e5erna)',
+            name='markhojd', datatype='GPString', parameterType='Optional', direction='Input', category=K_MARK,
+            multiValue=True)
         _filter(mark, _rasterlager() + [langt for langt, l in kartlager])
         z_falt = arcpy.Parameter(
             displayName='Punktlager: f\u00e4lt med h\u00f6jden (tomt = Z i geometrin)', name='z_falt',
@@ -1865,7 +1867,7 @@ class Ledningsinventering(object):
             _lagerlista(P['ledningslager']), _lagerlista(P['brunnslager']), P['brunn_id'].valueAsText,
             P['json_ut'].valueAsText,
             servislager=_lagerlista(P['servislager']), vattenlager=_lagerlista(P['vattenlager']),
-            markhojd=v('markhojd'), z_falt=v('z_falt'),
+            markhojd=_lagerlista(P['markhojd']) or None, z_falt=v('z_falt'),
             lock_falt=v('lock_falt'), botten_falt=v('botten_falt'), typ_falt=v('typ_falt'),
             vg_fran=v('vg_fran'), vg_till=v('vg_till'), dim_falt=v('dim_falt'), mat_falt=v('mat_falt'),
             ledntyp_falt=v('ledntyp_falt'), ar_falt=v('ar_falt'), ren_falt=v('ren_falt'),

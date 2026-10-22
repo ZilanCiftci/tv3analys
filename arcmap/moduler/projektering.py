@@ -195,6 +195,11 @@ class Markhojd(object):
             self.raster = src
             self.cache = {}
             self.arr = None
+            try:
+                e = d.extent
+                self.ext = (float(e.XMin), float(e.YMin), float(e.XMax), float(e.YMax))
+            except Exception:
+                self.ext = None
             logg('  markhojd ur raster %s' % txt(getattr(d, 'name', src)))
             if bbox is not None:
                 self._las_raster(d, bbox)
@@ -238,6 +243,9 @@ class Markhojd(object):
             y1 = min(float(e.YMax), bbox[3] + m)
             ncols = int(math.ceil((x1 - x0) / cw)) + 1
             nrows = int(math.ceil((y1 - y0) / ch)) + 1
+            if x1 <= x0 or y1 <= y0:
+                logg('  rastret ligger utanfor straket')
+                return
             if ncols <= 0 or nrows <= 0 or ncols * nrows > 25000000:
                 return
             arr = arcpy.RasterToNumPyArray(self.raster, arcpy.Point(x0, y0), ncols, nrows,
@@ -253,6 +261,9 @@ class Markhojd(object):
             self.arr = None
 
     def hojd(self, x, y):
+        ext = getattr(self, 'ext', None)
+        if self.raster is not None and ext is not None and not (ext[0] <= x <= ext[2] and ext[1] <= y <= ext[3]):
+            return None                          # utanfor rastret (en av flera rutor)
         if self.raster is not None and getattr(self, 'arr', None) is not None:
             # bilinjar interpolation mellan cellmitterna; rad 0 ar overst (norr)
             fx = (x - self.x0) / self.cw - 0.5
@@ -298,6 +309,33 @@ class Markhojd(object):
             return nara[0][1]
         s = sum(1.0 / d2 for d2, z in nara)
         return sum(z / d2 for d2, z in nara) / s
+
+
+class FleraMarkhojder(object):
+    """Flera markhojdskallor (t.ex. hojdmodellen i fyra geotif-rutor): forsta kallan som har ett
+    varde i punkten anvands, i den ordning de valdes."""
+
+    def __init__(self, kallor):
+        self.kallor = kallor
+
+    def hojd(self, x, y):
+        for k in self.kallor:
+            z = k.hojd(x, y)
+            if z is not None:
+                return z
+        return None
+
+
+def markhojd(lager, z_falt=None, sokradie=5.0, omrade_lager=None, bbox=None):
+    """Markhojd ur ett lager eller en lista med lager (rasterrutor och/eller punktlager)."""
+    if isinstance(lager, (list, tuple)):
+        lager = [l for l in lager if l]
+        if len(lager) == 1:
+            lager = lager[0]
+        else:
+            logg('  %d markhojdslager' % len(lager))
+            return FleraMarkhojder([Markhojd(l, z_falt, sokradie, omrade_lager, bbox) for l in lager])
+    return Markhojd(lager, z_falt, sokradie, omrade_lager, bbox)
 
 
 # =====================================================================
