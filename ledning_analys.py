@@ -780,7 +780,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                _kr(r, "per_meter"), _kr(r, "sprackning"), _kr(r, "gropar"), _kr(r, "servisgropar"),
                _kr(r, "ventilgropar"), _kr(r, "serviser"), _kr(r), l.get("_alt_grav"),
                ", ".join(l.get("flaggor") or []) or None, l.get("omrade") or None,
-               l.get("lager"), l.get("oid"), l.get("del"), l.get("klippt_m")]
+               l.get("lager"), l.get("oid"), l.get("del"),
+               l.get("klippt_m") or (l.get("attribut") or {}).get("KLIPPT_M") or None]
         rad += [(l.get("attribut") or {}).get(a) for a in attrnamn]
         rader.append(rad)
     format_ = {"Längd": M, "VG från": "0.000", "VG till": "0.000", "Lutning": P, "Lutning GIS": P, "Djup medel": M2,

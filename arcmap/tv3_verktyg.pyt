@@ -1579,7 +1579,8 @@ class ExporteraOmrade(object):
         self.description = (
             'Kopierar alla VA-objekt som ber\u00f6r ett eller flera omr\u00e5den (polygoner i ett lager, '
             'valda objekt om n\u00e5gra \u00e4r valda) till en lokal filgeodatabas - ett lager per '
-            'k\u00e4llager med alla f\u00e4lt, hela objekt (inte klippta). Objekten f\u00e5r OMRADE, '
+            'k\u00e4llager med alla f\u00e4lt, hela objekt (vattenledningar klipps vid omr\u00e5desgr\u00e4nsen '
+            'om rutan \u00e4r ikryssad, avloppet aldrig). Objekten f\u00e5r OMRADE, '
             'KORSAR_GRANS och KALLAGER. D\u00e4refter kan Ledningsinventering, profiler och kartor '
             'k\u00f6ras mot de lokala lagren utan kontakt med databasen.')
         self.canRunInBackground = False
@@ -1612,7 +1613,11 @@ class ExporteraOmrade(object):
             displayName='L\u00e4gg de lokala lagren i kartan (med k\u00e4llagrens symbologi)', name='lagg',
             datatype='GPBoolean', parameterType='Optional', direction='Input')
         lagg.value = True
-        params = _minne_fyll(self, [omrade, namnfalt, lager, ut_mapp, gdb_namn, buffert, bara_valda, lagg])
+        klipp = arcpy.Parameter(
+            displayName='Klipp vattenledningarna vid omr\u00e5desgr\u00e4nsen (+ buffert); avloppet klipps inte',
+            name='klipp_vatten', datatype='GPBoolean', parameterType='Optional', direction='Input')
+        klipp.value = True
+        params = _minne_fyll(self, [omrade, namnfalt, lager, ut_mapp, gdb_namn, buffert, bara_valda, lagg, klipp])
         if not lager.valueAsText:
             _satt_varden(lager, _va_lager(kartlager))
         return params
@@ -1655,6 +1660,7 @@ class ExporteraOmrade(object):
             buffert=float(parameters[5].value or 0),
             bara_valda=bool(parameters[6].value),
             lagg_i_kartan=bool(parameters[7].value),
+            klipp_vatten=bool(parameters[8].value) if len(parameters) > 8 else True,
         )
         return
 
