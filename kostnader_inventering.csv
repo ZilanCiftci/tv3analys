@@ -26,12 +26,12 @@ schakt;ledningschakt;1;;;801;1000;m;60260;Svoa 1 ledning Ø 1000 ledningschakt
 schakt;ledningschakt;1;;;1001;1200;m;67160;Svoa 1 ledning Ø 1200 ledningschakt
 schakt;ledningschakt;1;;;1201;1400;m;75325;Svoa 1 ledning Ø 1400 ledningschakt
 schakt;ledningschakt;2;0;;0;400;m;23600;Svoa 2 ledningar upp till Ø 400 ledningschakt
-schakt;ledningschakt;2;1;;401;;m;63260;Svoa 2 ledningar en större ledning Ø 700 och större ledningschakt
-schakt;ledningschakt;2;2;;401;;m;71260;Svoa 2 ledningar två större ledningar Ø 700 och större ledningschakt
+schakt;ledningschakt;2;1;;401;800;m;63260;Svoa 2 ledningar en större ledning Ø 700 ledningschakt (tolkat som större än 400 till Ø 800 – användarens besked okt 2026)
+schakt;ledningschakt;2;2;;401;1000;m;71260;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt (tolkat som Ø 700–1000 som i övriga schakttyper)
 schakt;ledningschakt;3;0;;0;400;m;26200;Svoa 3 ledningar upp till Ø 400 ledningschakt
-schakt;ledningschakt;3;1;;401;;m;34200;Svoa 3 ledningar en större ledning Ø 700 och större ledningschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
-schakt;ledningschakt;3;2;;401;;m;66260;Svoa 3 ledningar två större ledningar Ø 700 och större ledningschakt
-schakt;ledningschakt;3;3;;401;;m;74260;Svoa 3 ledningar tre större ledningar Ø 700 och större ledningschakt
+schakt;ledningschakt;3;1;;401;800;m;34200;Svoa 3 ledningar en större ledning Ø 700 ledningschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget (tolkat som större än 400 till Ø 800 – användarens besked okt 2026)
+schakt;ledningschakt;3;2;;401;1000;m;66260;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt (tolkat som Ø 700–1000 som i övriga schakttyper)
+schakt;ledningschakt;3;3;;401;1000;m;74260;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt (tolkat som Ø 700–1000 som i övriga schakttyper)
 schakt;spontslade;1;;;0;350;m;24000;Svoa 1 ledning upp till Ø 350 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;spontslade;1;;;351;400;m;28200;Svoa 1 ledning Ø 400 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;spontslade;1;;;401;600;m;33300;Svoa 1 ledning Ø 600 ledningschakt med spontbox, spontkassett djup 2,6
@@ -43,7 +43,7 @@ schakt;spontslade;2;0;;0;400;m;28600;Svoa 2 ledningar upp till Ø 400 ledningsch
 schakt;spontslade;2;1;;401;1000;m;69010;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;spontslade;2;2;;401;1000;m;77010;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;spontslade;3;0;;0;400;m;31300;Svoa 3 ledningar upp till Ø 400 ledningschakt med spontbox, spontkassett djup 2,6
-schakt;spontslade;3;1;;401;;m;39300;Svoa 3 ledningar en större ledning Ø 700 och större ledningschakt med spontbox, spontkassett djup 2,6 – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;spontslade;3;1;;401;800;m;39300;Svoa 3 ledningar en större ledning Ø 700 ledningschakt med spontbox, spontkassett djup 2,6 – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget (tolkat som större än 400 till Ø 800 – användarens besked okt 2026)
 schakt;spontslade;3;2;;401;1000;m;80010;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;spontslade;3;3;;401;1000;m;88010;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt med spontbox, spontkassett djup 2,6
 schakt;bergschakt;1;;;0;350;m;26500;Svoa 1 ledning upp till Ø 350 ledningschakt bergschakt
@@ -57,7 +57,7 @@ schakt;bergschakt;2;0;;0;400;m;33000;Svoa 2 ledningar upp till Ø 400 ledningsch
 schakt;bergschakt;2;1;;401;1000;m;87295;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt bergschakt
 schakt;bergschakt;2;2;;401;1000;m;95295;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt bergschakt
 schakt;bergschakt;3;0;;0;400;m;36700;Svoa 3 ledningar upp till Ø 400 ledningschakt bergschakt
-schakt;bergschakt;3;1;;401;;m;44700;Svoa 3 ledningar en större ledning Ø 700 och större ledningschakt bergschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;bergschakt;3;1;;401;800;m;44700;Svoa 3 ledningar en större ledning Ø 700 ledningschakt bergschakt – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget (tolkat som större än 400 till Ø 800 – användarens besked okt 2026)
 schakt;bergschakt;3;2;;401;1000;m;98295;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt bergschakt
 schakt;bergschakt;3;3;;401;1000;m;106295;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt bergschakt
 schakt;kc;1;;;0;350;m;25000;Svoa 1 ledning upp till Ø 350 ledningschakt med KC-förstärkning
@@ -71,7 +71,7 @@ schakt;kc;2;0;;0;400;m;29600;Svoa 2 ledningar upp till Ø 400 ledningschakt med 
 schakt;kc;2;1;;401;1000;m;70160;Svoa 2 ledningar en större ledning Ø 700–1000 ledningschakt med KC-förstärkning
 schakt;kc;2;2;;401;1000;m;78160;Svoa 2 ledningar två större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
 schakt;kc;3;0;;0;400;m;32300;Svoa 3 ledningar upp till Ø 400 ledningschakt med KC-förstärkning
-schakt;kc;3;1;;401;;m;40300;Svoa 3 ledningar en större ledning Ø 700 och större ledningschakt med KC-förstärkning – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget
+schakt;kc;3;1;;401;800;m;40300;Svoa 3 ledningar en större ledning Ø 700 ledningschakt med KC-förstärkning – OBS lägre än 2 ledningar med en större ledning, kontrollera i kalkylverktyget (tolkat som större än 400 till Ø 800 – användarens besked okt 2026)
 schakt;kc;3;2;;401;1000;m;81160;Svoa 3 ledningar två större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
 schakt;kc;3;3;;401;1000;m;89160;Svoa 3 ledningar tre större ledningar Ø 700–1000 ledningschakt med KC-förstärkning
 djuptillagg;;;;;0;600;m;3750;Tillägg för schaktdjup plus 1,5 m upp till Ø 600 (standarddjup 2,5 m) – per påbörjade 1,5 m

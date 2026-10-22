@@ -238,8 +238,8 @@ ArcMap-körning är din del. Handledningen får ett nytt kapitel 9 *Ledningsinve
 - **F13 Kostnader.** Priserna ur SVOA:s kalkylverktyg (okt 2026) ligger i `kostnader_inventering.csv`: infodring per
   dimension, helschakt per meter grav efter antal ledningar (1–3), antal större än 400 mm och schakttyp (ledningschakt,
   spontsläde, bergschakt, KC-förstärkning), djuptillägg per 1,5 m under 2,5 m, rörspräckning per DN + gropar, serviser per
-  meter (helschakt/infodring). Djupklasserna ersattes av djuptillägget. Användarens besked okt 2026: raderna "Ø 700" gäller
-  även större dimensioner (ingen övre gräns); ensam spill-/dagservis i helschakt = komplett servis (spillen ligger djupast);
+  meter (helschakt/infodring). Djupklasserna ersattes av djuptillägget. Användarens besked okt 2026: raden "en större ledning Ø 700" gäller
+  > 400 till Ø 800, två/tre större ledningar Ø 700–1000; ensam spill-/dagservis i helschakt = komplett servis (spillen ligger djupast);
   övriga antaganden (två serviser i samma grav, ny brunn, återställning 0) godkända. Kalkylansvarig kontrollerar varför
   3 ledningar med en större ledning är billigare än 2 ledningar med en större i alla schakttyper (troligen fel i verktyget).
 - **F14 Sträcka.** Brunn→brunn, eller till ledningsände utan brunn (servis, T-rörsanslutning). Fristående

@@ -1083,8 +1083,9 @@ Rörspräckning …, Gropar, Servisgropar; Serviser-fliken "Serviser i samma gra
 kolumner. JSON `alt_lagg_om_per_schakttyp`. Test: scratchpad/test_ledning_analys.py (prislista, handräknade S1 1 205 303 /
 S2 1 545 076 / K1 970 000 / V1 2 360 000 resp. rörspräckt 1 134 984, servisgrav V+S → komplett servis delad, S1 Ø 950 med
 spontsläde → läggs om i alt. strumpa och V1 med den, inget pris för 3 ledningar med en Ø 950, `--schakttyp kc`, gisdata).
-Användarens besked okt 2026: "Ø 700"-raderna (dimension_till 700) har ingen övre gräns ("≥ 700 när det står större än 700";
-8 rader, testet: 2 ledningar en Ø 800 = 63 260, S1 Ø 950 spontsläde 39 300/3); ensam spill-/dagservis i helschakt = komplett
+Användarens besked okt 2026 (rättat samma dag – först "ingen övre gräns"): "en större ledning Ø 700" = 401–800, "två/tre
+större Ø 700" (ledningschakt) = 401–1000 som i övriga schakttyper; testet: 2 ledningar en Ø 800 = 63 260, Ø 900 inget pris,
+S1 Ø 950 spontsläde 3 ledningar → inget schaktpris; ensam spill-/dagservis i helschakt = komplett
 servis 22 464 (spillen djupast); övriga ANTAGET/SCHABLON godkända. Kvar: kalkylansvarig kontrollerar 3 ledningar med en
 större (34 200) < 2 ledningar med en större (63 260) – OBS kvar i kommentaren. Användaren återkommer med Lista fält för
 vattenlagren (ventiler, brandposter, övriga anordningar).
