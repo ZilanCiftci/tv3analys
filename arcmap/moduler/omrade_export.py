@@ -4,8 +4,10 @@ Exportera omrade: kopierar alla VA-objekt som beror ett eller flera omraden (pol
 lager i kartan) till en lokal filgeodatabas, ett featureklass per kallager med alla falt
 (ArcMap 10.x, Python 2.7). Steg 1 i PLAN_ledningsinventering.md.
 
-Hela objekt kopieras (inte klippta) sa att langder, vattengangar och brunnspar forblir riktiga.
-Varje objekt far OMRADE (polygonens namn, flera med ';'), KORSAR_GRANS (1 nar objektet sticker
+Hela objekt kopieras (inte klippta) sa att langder, vattengangar och brunnspar forblir riktiga -
+utom vattenledningarna (V-lager eller gruppen Vatten), som klipps vid omradesgransen (+ buffert) nar
+klipp_vatten ar satt: de kan annars stracka sig hundratals meter utanfor; KLIPPT_M anger hur mycket av
+objektet som togs bort. Avloppet klipps aldrig (brunn till brunn). Varje objekt far OMRADE (polygonens namn, flera med ';'), KORSAR_GRANS (1 nar objektet sticker
 ut ur omradet) och KALLAGER (kallagrets namn). Med buffert > 0 tas aven objekt strax utanfor med
 sa att natet hanger ihop vid gransen. export_info.json i mappen beskriver exporten.
 
@@ -34,6 +36,8 @@ VERSION = 1
 FALT_OMRADE = 'OMRADE'          # polygonens namn (flera med ';')
 FALT_KORSAR = 'KORSAR_GRANS'    # 1 = objektet ligger delvis utanfor omradet
 FALT_KALLA = 'KALLAGER'         # kallagrets namn i kartan
+FALT_KLIPPT = 'KLIPPT_M'        # vattenledningar: meter av objektet utanfor omradet som klipptes bort
+KLIPP_VATTEN = True             # vattenledningar klipps vid omradesgransen (+ buffert)
 INFOFIL = 'export_info.json'
 LAGERSUFFIX = ' (lokal)'        # namn i kartan pa de lokala lagren
 TMP_OMRADE = 'in_memory/tv3_omrade'
@@ -108,6 +112,13 @@ def _ar_avlopp(lyr):
     return kort.startswith('a ') or langt.startswith('avlopp')
 
 
+def _ar_vatten(lyr):
+    """Vattenlager: i gruppen Vatten eller med namn 'V ...' (SVOA)."""
+    kort = txt(getattr(lyr, 'name', '') or '').strip().lower()
+    langt = txt(getattr(lyr, 'longName', '') or '').strip().lower()
+    return kort.startswith('v ') or langt.startswith('vatten')
+
+
 def _geometrityp(namn):
     try:
         return txt(getattr(arcpy.Describe(kalla(hitta_lager(namn))[0]), 'shapeType', '') or '')
@@ -123,7 +134,7 @@ def _union(geometrier):
 
 
 def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', namnfalt=None,
-                     buffert=0.0, bara_valda=True, lagg_i_kartan=True):
+                     buffert=0.0, bara_valda=True, lagg_i_kartan=True, klipp_vatten=None):
     """Kopierar objekten i `lager` (lista med kartans lagernamn) som beror polygonerna i
     `omradeslager` till <ut_mapp>/<gdb_namn>.gdb. Returnerar en sammanfattning (dict), som ocksa
     skrivs till export_info.json i mappen."""
@@ -133,6 +144,8 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
     if not lager:
         raise RuntimeError('Inga lager att exportera')
     buffert = float(buffert or 0)
+    if klipp_vatten is None:
+        klipp_vatten = KLIPP_VATTEN
     ut_mapp = txt(ut_mapp)
     if not os.path.isdir(ut_mapp):
         os.makedirs(ut_mapp)
@@ -238,14 +251,26 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
                     arcpy.AddField_management(ut_fc, FALT_KORSAR, 'SHORT', field_alias='Korsar omradesgrans')
                 if FALT_KALLA not in befintliga:
                     arcpy.AddField_management(ut_fc, FALT_KALLA, 'TEXT', field_length=100, field_alias='Kallager')
-                korsar = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn)
+                klipp = sok if (klipp_vatten and geometri == 'Polyline' and _ar_vatten(lyr)) else None
+                if klipp is not None and FALT_KLIPPT not in befintliga:
+                    arcpy.AddField_management(ut_fc, FALT_KLIPPT, 'DOUBLE', field_alias='Klippt vid omradesgransen (m)')
+                korsar, klippta = _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn, klipp)
+                if klipp is not None:
+                    antal -= klippta['bort']
+                    logg('  %s: %d vattenledningar klippta vid omradesgransen (%.0f m utanfor togs bort)%s'
+                         % (lagernamn, klippta['klippta'], klippta['meter'],
+                            (', %d helt utanfor togs bort' % klippta['bort']) if klippta['bort'] else ''))
                 if geometri == 'Polyline' and _ar_avlopp(lyr):
                     avlopp_linjer.append(ut_fc)
                 logg('  %s: %d objekt -> %s%s' % (lagernamn, antal, fc_namn,
                                                    (' (%d korsar omradesgransen)' % korsar) if korsar else ''))
-                resultat.append({'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
-                                 'kalla': txt(src), 'fc': ut_fc, 'antal': antal, 'korsar_grans': korsar,
-                                 'geometri': geometri})
+                post = {'lager': lagernamn, 'langt_namn': txt(getattr(lyr, 'longName', lagernamn)),
+                        'kalla': txt(src), 'fc': ut_fc, 'antal': antal, 'korsar_grans': korsar,
+                        'geometri': geometri}
+                if klipp is not None:
+                    post['klippt'] = {'ledningar': klippta['klippta'], 'meter': round(klippta['meter'], 1),
+                                      'bort': klippta['bort']}
+                resultat.append(post)
                 if df is not None:
                     _lagg_in(df, ut_fc, lyr, lagernamn)
             except Exception as e:                      # ett trasigt lager ska inte stoppa exporten
@@ -269,6 +294,7 @@ def exportera_omrade(omradeslager, lager, ut_mapp, gdb_namn='omrade_export', nam
         'omradeslager': txt(getattr(omr, 'longName', None) or getattr(omr, 'name', None) or omradeslager),
         'omraden': [n for n, _ in polys],
         'buffert_m': buffert,
+        'vatten_klippt': bool(klipp_vatten),
         'gdb': gdb,
         'koordinatsystem': sr_namn,
         'lager': resultat,
@@ -342,22 +368,60 @@ def _tillfalligt_lager(lyr, src, dq, lagernamn):
     raise RuntimeError('kan inte skapa lagret (%s)' % ' / '.join(fel))
 
 
-def _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn):
-    """Fyller OMRADE, KORSAR_GRANS och KALLAGER. Returnerar antalet objekt som korsar omradesgransen.
+def _i_sr(geom, sr):
+    """Geometrin projicerad till sr nar koordinatsystemen skiljer (omradeslagret kan ha ett annat)."""
+    try:
+        if sr is not None and txt(getattr(geom.spatialReference, 'name', '')) not in ('', txt(sr.name)):
+            return geom.projectAs(sr)
+    except Exception:
+        pass
+    return geom
+
+
+def _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn, klipp=None):
+    """Fyller OMRADE, KORSAR_GRANS och KALLAGER och, med klipp (polygon), klipper linjerna vid den
+    (KLIPPT_M = bortklippt langd, objekt helt utanfor tas bort). Returnerar (antal som korsar
+    omradesgransen, {klippta, meter, bort}).
     SVOA:s featureklasser har ett klasstillagg som foljer med kopian, och da gar de bara att uppdatera i
     en redigeringssession ("cannot be updated outside an edit session") - da provas en sadan. Gar inte
     det heller lamnas falten tomma (exporten i sig ar klar) och det loggas."""
+    try:
+        sr = arcpy.Describe(ut_fc).spatialReference
+    except Exception:
+        sr = None
+    union_ = _i_sr(union, sr)
+    polys_ = [(nm, _i_sr(p, sr)) for nm, p in polys]
+    klipp_ = _i_sr(klipp, sr) if klipp is not None else None
+
     def skriv():
         n = 0
-        with arcpy.da.UpdateCursor(ut_fc, ['SHAPE@', FALT_OMRADE, FALT_KORSAR, FALT_KALLA]) as cur:
+        st = {'klippta': 0, 'meter': 0.0, 'bort': 0}
+        falt = ['SHAPE@', FALT_OMRADE, FALT_KORSAR, FALT_KALLA] + ([FALT_KLIPPT] if klipp_ is not None else [])
+        with arcpy.da.UpdateCursor(ut_fc, falt) as cur:
             for rad in cur:
                 g = rad[0]
-                namn_i = [nm for nm, p in polys if g is not None and not p.disjoint(g)]
-                inne = 1 if (g is None or g.within(union)) else 0
+                namn_i = [nm for nm, p in polys_ if g is not None and not p.disjoint(g)]
+                inne = 1 if (g is None or g.within(union_)) else 0
                 if not inne:
                     n += 1
-                cur.updateRow([g, ';'.join(namn_i)[:254], 0 if inne else 1, lagernamn[:100]])
-        return n
+                ny = [g, ';'.join(namn_i)[:254], 0 if inne else 1, lagernamn[:100]]
+                if klipp_ is not None:
+                    bort_m = 0.0
+                    if g is not None and not inne:
+                        L0 = g.length
+                        g2 = g.intersect(klipp_, 2)
+                        if g2 is None or not g2.length > 0:
+                            cur.deleteRow()
+                            st['bort'] += 1
+                            continue
+                        if g2.length < L0 - 0.01:
+                            bort_m = L0 - g2.length
+                            st['klippta'] += 1
+                            st['meter'] += bort_m
+                            ny[0] = g2
+                    ny.append(round(bort_m, 2))
+                cur.updateRow(ny)
+        return n, st
     try:
         return skriv()
     except RuntimeError as e:
@@ -379,9 +443,10 @@ def _fyll_omradesfalt(ut_fc, gdb, polys, union, lagernamn):
                 ed.stopEditing(False)
             except Exception:
                 pass
-        logg('  OBS %s: kunde inte fylla %s/%s/%s (%s) - objekten ar exporterade, falten ar tomma'
-             % (lagernamn, FALT_OMRADE, FALT_KORSAR, FALT_KALLA, txt(e)))
-        return 0
+        logg('  OBS %s: kunde inte fylla %s/%s/%s (%s) - objekten ar exporterade, falten ar tomma%s'
+             % (lagernamn, FALT_OMRADE, FALT_KORSAR, FALT_KALLA, txt(e),
+                ' och ledningarna INTE klippta' if klipp is not None else ''))
+        return 0, {'klippta': 0, 'meter': 0.0, 'bort': 0}
 
 
 def _ta_bort_ur_kartan(mxd, ut_fc):
