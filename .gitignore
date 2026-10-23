@@ -20,3 +20,6 @@ mp/
 upp*.csv
 rev_*/
 arcmap/senaste_val.json
+# SVOA:s kalkylmall (arbetsmaterial, sprids inte) och de ifyllda kalkylerna
+*[Kk]alkyl*inriktningsbeslut*.xlsx
+kalkyler/
