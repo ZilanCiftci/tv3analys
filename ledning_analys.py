@@ -57,6 +57,7 @@ from tv3_analys import las_text  # noqa: E402
 KOSTNADSFIL = os.path.join(HAR, "kostnader_inventering.csv")   # alla priser (SVOA:s kalkylverktyg okt 2026)
 UTDATA_XLSX = "ledningsinventering.xlsx"
 UTDATA_JSON = "ledningsresultat.json"
+KARTBLAD_CSV = "kartblad.csv"         # från ArcMap-verktyget Kartor för området (bredvid ledningsresultat.json)
 
 SCHAKTTYPER = {"ledningschakt": "Ledningschakt", "spontslade": "Med spontsläde",
                "bergschakt": "Bergschakt", "kc": "KC-förstärkning"}
@@ -538,11 +539,14 @@ def _procent(v) -> float | None:
 
 def _paslag(l: dict, nyckel: str, falt: str) -> float | None:
     """Ledningens procentpåslag: från områdets fält (Ledningsinventering satte l[nyckel]), annars ett fält med
-    samma namn på ledningen."""
+    samma namn på ledningen (shapefil: de första 10 tecknen)."""
     if l.get(nyckel) is not None:
         return _procent(l[nyckel])
+    if not falt:
+        return None
+    namn = {falt.upper(), falt.upper()[:10]}
     attr = l.get("attribut") or {}
-    return _procent(next((v for k, v in attr.items() if falt and str(k).upper() == falt.upper()), None))
+    return _procent(next((v for k, v in attr.items() if str(k).upper() in namn), None))
 
 
 def trafikpaslag(l: dict) -> float | None:
@@ -1000,6 +1004,22 @@ def _radformler(rad: list, kol: list[str], K: Kolumner, nr: int, l: dict) -> Non
         satt("Alt. schaktfritt", c("Infodring totalt"))
     elif alt is not None and alt is l.get("_sprack"):
         satt("Alt. schaktfritt", c("Rörspräckning totalt"))
+    # med påslagen i fliken Investeringskalkyl (samma som dess entreprenad): AFC på helschakt och rörspräckning,
+    # trafiktillägg, provisorier och vintertillägg på allt
+    afc = f"({_ik('material')}+{_ik('arbeten')})"
+    tillagg = f"(1+{c('Trafiktillägg')}+{c('Provisorier')}+{_ik('vinter')})"
+    satt("Alt. lägg om inkl. påslag", f"{c('Alt. lägg om')}*(1+{afc})*{tillagg}")
+    satt("Alt. schaktfritt inkl. påslag",
+         f'{c("Alt. schaktfritt")}*(1+IF({c("Metod alt. schaktfritt")}="strumpa",0,{afc}))*{tillagg}')
+
+
+IK_BLAD = "Investeringskalkyl"
+IK_PARAM = ("risk", "oforutsett", "material", "arbeten", "vinter")   # ordningen i fliken Investeringskalkyl
+
+
+def _ik(nyckel: str) -> str:
+    """Cellen med procentsatsen i fliken Investeringskalkyl (raderna under byggherrekostnaderna)."""
+    return f"'{IK_BLAD}'!$B${7 + len(BYGGHERRE_ANDEL) + IK_PARAM.index(nyckel)}"
 
 
 def _jamforbar_krit(K: Kolumner) -> list:
@@ -1041,8 +1061,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Ledningsändar (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Delad grav (m)", "Grav längs ledningen", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
-           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
-           "Trafiktillägg (%)", "Provisorier (%)",
+           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)",
+           "Alt. lägg om inkl. påslag (kr)", "Alt. schaktfritt inkl. påslag (kr)", "Anmärkning", "Kartblad", "Trafiktillägg (%)", "Provisorier (%)",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)", "Schaktsätt efter djup", "Slagen spont efter djup (m²)", "Spont efter djup (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
@@ -1088,7 +1108,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
                          for k in l.get("korsningar") or []) or None,
                _kr(o), SCHAKTSATT_NAMN.get((o or {}).get("schaktsatt")), l.get("_alt_metod"), _kr(l.get("_alt")),
-               _anmarkning(l), trafikpaslag(l), provisorier(l)] + \
+               _kr(o), _kr(l.get("_alt")), _anmarkning(l), (l.get("_kartblad") or {}).get("kartblad") or None, trafikpaslag(l), provisorier(l)] + \
               [_kr((l.get("_typer") or {}).get(t)) for t in ALLA_SCHAKTTYPER] + \
               [SCHAKTSATT_NAMN.get((dj or {}).get("schaktsatt")), _r((dj or {}).get("spont_m2")) or None,
                _kr(dj, "spont") or None] + \
@@ -1115,8 +1135,10 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
     format_["Delad grav"] = M
     format_["Trafiktillägg"] = format_["Provisorier"] = "0%"
     format_["Slagen spont efter djup"] = M
-    tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14, "Grav längs ledningen": 40},
-           dolda=DOLDA_LEDNINGAR + attrkol, format=format_)
+    forsta = tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14,
+                                                       "Grav längs ledningen": 40, "Kartblad": 12},
+                    dolda=DOLDA_LEDNINGAR + attrkol, format=format_)
+    _kartlankar(ws, kol, ordn, forsta)
 
     # --- Kostnad per schaktgrupp (formler mot fliken Ledningar) ----------------------------------
     ws = wb.create_sheet("Kostnad per schaktgrupp")
@@ -1226,7 +1248,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            bredder={"Kommentar": 70}, format={"Belopp": "#,##0.##"})
 
     skriv_sammanfattning(ws_s, data, ledningar, kost, kallor, K, DQ, dq_typer)
-    skriv_investeringskalkyl(wb.create_sheet("Investeringskalkyl", 1), K)
+    skriv_investeringskalkyl(wb.create_sheet(IK_BLAD, 1), K)
     wb.calculation.fullCalcOnLoad = True           # summorna är formler – räkna när filen öppnas
     wb.save(path)
 
@@ -1299,6 +1321,7 @@ def skriv_investeringskalkyl(ws, K: Kolumner) -> None:
         cell(rad, 2, v, PROC, fyll=gul)
         cell(rad, 3, kommentar, kursiv=True, ram=False)
         param[nyckel] = f"$B${rad}"
+        assert _ik(nyckel).endswith(param[nyckel]), (nyckel, param[nyckel])   # Ledningar pekar på cellerna
 
     # --- sammanställning ------------------------------------------------------------------------
     rad += 2
@@ -1506,20 +1529,24 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kol
     def utan_kostnad(krit, villkor):
         return f(f"{_countifs(ID, krit)}-{_countifs(ID, krit + villkor)}")
 
-    block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om (kr)", "Alt. schaktfritt (kr)",
+    block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om inkl. påslag (kr)",
+                                     "Alt. schaktfritt inkl. påslag (kr)",
                                      "Strumpas (m)", "Rörspräcks (m)", "Läggs om (m)", "Utan kostnad (st)"],
-          per_system(lambda krit: [f(_sumifs(L, krit)), f(_sumifs(K("Alt. lägg om"), krit + JFR)),
-                                   f(_sumifs(K("Alt. schaktfritt"), krit + JFR))] +
+          per_system(lambda krit: [f(_sumifs(L, krit)), f(_sumifs(K("Alt. lägg om inkl. påslag"), krit + JFR)),
+                                   f(_sumifs(K("Alt. schaktfritt inkl. påslag"), krit + JFR))] +
                      [f(_sumifs(L, krit + [(K("Metod alt. schaktfritt"), _txt(m))]))
                       for m in ("strumpa", "rörspräckning", "omläggning")] +
                      [utan_kostnad(krit, JFR)]),
-          format={"Längd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR, "Strumpas": M, "Rörspräcks": M,
-                  "Läggs om": M})
+          format={"Längd": M, "Alt. lägg om inkl. påslag": KR, "Alt. schaktfritt inkl. påslag": KR, "Strumpas": M,
+                  "Rörspräcks": M, "Läggs om": M})
     for t in ("Alt. lägg om: alla ledningar läggs om; ledningar i samma grav delar graven.",
               "Alt. schaktfritt: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
               "men läggs om i samma grav när en avloppsledning i graven läggs om.",
               "Summorna omfattar bara ledningar med kostnad i båda alternativen; övriga står under Utan kostnad "
               "(djup eller dimension saknas – se fliken Datakvalitet).",
+              "Beloppen är entreprenaden med påslagen i fliken Investeringskalkyl (material och SVOA-arbeten på helschakt "
+              "och rörspräckning, trafiktillägg, provisorier och vintertillägg) – samma som dess rad Entreprenad "
+              "inklusive material. Utan påslag: kolumnerna Alt. lägg om och Alt. schaktfritt i fliken Ledningar.",
               "Talen är formler mot fliken Ledningar – ändras en kostnad där räknas sammanfattningen om."):
         ws.cell(rad - 1, 1, t).font = Font(italic=True, color="595959")
         rad += 1
@@ -1608,15 +1635,73 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kol
 # JSON tillbaka till kartan
 # ============================================================================
 
+def las_kartblad(path: str) -> dict:
+    """kartblad.csv från Kartor för området: {ledningens id: {kartblad, karta, schaktgrupp, gruppkarta}}."""
+    rader = [r for r in las_text(path).splitlines() if r.strip()]
+    if not rader:
+        return {}
+    rubrik = [k.strip().lower() for k in rader[0].split(";")]
+    ut = {}
+    for r in rader[1:]:
+        d = dict(zip(rubrik, (v.strip() for v in r.split(";"))))
+        if d.get("id"):
+            ut[d["id"]] = d
+    return ut
+
+
+def koppla_kartblad(ledningar: list[dict], mappar: list[str]) -> str | None:
+    """Lägger kartbladen ur den första kartblad.csv som finns i mapparna på ledningarna (l["_kartblad"])."""
+    for mapp in mappar:
+        path = os.path.join(mapp, KARTBLAD_CSV)
+        if os.path.isfile(path):
+            kb = las_kartblad(path)
+            for l in ledningar:
+                if str(l.get("id")) in kb:
+                    l["_kartblad"] = kb[str(l.get("id"))]
+            return path
+    return None
+
+
+def _kartlankar(ws, kol: list[str], ordn: list[dict], forsta: int) -> None:
+    """Hyperlänkar till kartbladets PDF (kolumnen Kartblad) och schaktgruppens PDF (kolumnen Schaktgrupp)."""
+    from openpyxl.styles import Font
+    namn = [_dela_rubrik(k)[0] for k in kol]
+    for rubrik, nyckel in (("Kartblad", "karta"), ("Schaktgrupp", "gruppkarta")):
+        if rubrik not in namn:
+            continue
+        c = namn.index(rubrik) + 1
+        for i, l in enumerate(ordn):
+            fil = (l.get("_kartblad") or {}).get(nyckel)
+            if fil:
+                cell = ws.cell(forsta + i, c)
+                cell.hyperlink = fil
+                cell.font = Font(color="0563C1", underline="single")
+
+
 def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
+    grupper = defaultdict(list)
+    for l in ledningar:
+        grupper[l.get("schaktgrupp")].append(l)
+    schaktdel = {}
+    for g, lista in grupper.items():
+        if g is None:
+            for l in lista:
+                schaktdel[id(l)] = l.get("schakt_langd_m") if l.get("schakt_langd_m") is not None else l.get("langd_m")
+        else:
+            for l, v in zip(lista, schaktandelar(lista)):
+                schaktdel[id(l)] = v
     poster = []
     for l in ledningar:
+        o = l.get("_omlagg") or {}
         poster.append({
             "id": l.get("id"), "lager": l.get("lager"), "oid": l.get("oid"), "del": l.get("del"),
             "fran": l.get("fran"), "till": l.get("till"), "system": l.get("system"),
+            "ledningstyp": l.get("ledningstyp"), "material": l.get("material"),
             "dimension": l.get("dimension"), "dimension_gis": l.get("dimension_gis"),
             "dimension_antagen": l.get("dimension_antagen"),
-            "langd_m": l.get("langd_m"), "djup_medel": l.get("djup_medel"), "djupklass": l.get("djupklass"),
+            "langd_m": l.get("langd_m"), "schakt_langd_m": _r(schaktdel.get(id(l)), 2),
+            "djup_medel": l.get("djup_medel"), "djupklass": l.get("djupklass"),
+            "schaktsatt": SCHAKTSATT_NAMN.get(o.get("schaktsatt"), o.get("schaktsatt")) if o else None,
             "antal_serviser": l.get("antal_serviser"), "serviser_m": l.get("serviser_m"),
             "schaktgrupp": l.get("schaktgrupp"), "ledningar_i_grav": l.get("_grav"),
             "delad_grav_m": _r((l.get("_omlagg") or {}).get("delad_m")) if l.get("_omlagg") else None,
@@ -1667,6 +1752,7 @@ def main(argv=None) -> int:
     ledningar = berakna(data, kost, a.schakttyp)
     ut = a.utdata or os.path.dirname(os.path.abspath(a.ledningsdata))
     os.makedirs(ut, exist_ok=True)
+    kb = koppla_kartblad(ledningar, [ut, os.path.dirname(os.path.abspath(a.ledningsdata))])
     xlsx = os.path.join(ut, UTDATA_XLSX)
     kallor = {"ledningsdata": os.path.abspath(a.ledningsdata), "kostnader": a.kostnader, "schakttyp": a.schakttyp}
     try:
@@ -1690,8 +1776,15 @@ def main(argv=None) -> int:
         print(f"  ({len(ledningar) - len(jfr)} ledningar saknar kostnad i något alternativ och ingår inte – se Datakvalitet)")
     print(f"Skrev {xlsx}")
     print(f"Skrev {os.path.join(ut, UTDATA_JSON)}")
+    if kb:
+        print(f"  kartblad ur {kb} ({sum(1 for l in ledningar if l.get('_kartblad'))} ledningar)")
     if (a.mall or "").lower() != "nej":
-        import kalkylmall
+        try:
+            import kalkylmall
+        except ImportError as e:
+            print(f"Kalkylerna hoppades över – {e}. Installera med:  python -m pip install --user lxml   "
+                  f"(eller kör med --mall nej)")
+            return 0
         mall = a.mall or kalkylmall.hitta_mall([HAR, os.path.dirname(os.path.abspath(a.ledningsdata))])
         if a.mall and not os.path.isfile(a.mall):
             print(f"Kalkylmallen finns inte: {a.mall}")
