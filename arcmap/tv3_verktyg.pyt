@@ -103,8 +103,8 @@ STANDARD_RENOVERINGSAR = ['RestorationYear', 'RENOVERINGSAR', 'REN_AR', 'RELINAD
 STANDARD_SERVIS = ['A Servis']
 # Exportera omrade: grupper i kartan vars featurelager forvaljs, och gissningar pa namnfaltet i omradeslagret
 STANDARD_VA_GRUPPER = ['Avlopp', 'Vatten']
-STANDARD_TRAFIK = ['TRAFIKPASLAG', 'TRAFIKTILLAGG', 'TRAFIK']      # procentpaslag pa omradena (Ledningsinventering)
-STANDARD_PROVISORIER = ['PROVISORIER', 'PROVISORIUM', 'PROV']
+STANDARD_TRAFIK = ['TRAFIKPASLAG', 'TRAFIKPASL', 'TRAFIKTILLAGG', 'TRAFIKTILL', 'TRAFIK']      # procentpaslag pa omradena (Ledningsinventering)
+STANDARD_PROVISORIER = ['PROVISORIER', 'PROVISORIE', 'PROVISORIUM', 'PROVISORIU', 'PROV']  # shapefil kortar till 10 tecken
 STANDARD_OMRADESNAMN = ['NAMN', 'NAME', 'OMRADE', 'OMR\u00c5DE', 'BETECKNING', 'BENAMNING', 'DRIFTOMR', 'DUF', 'ID']
 LAGERNAMN_BEDOMDA = 'Bedomda ledningar'      # lagernamnet som Skapa ledningslager ger
 STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']

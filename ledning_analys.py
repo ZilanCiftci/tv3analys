@@ -538,11 +538,14 @@ def _procent(v) -> float | None:
 
 def _paslag(l: dict, nyckel: str, falt: str) -> float | None:
     """Ledningens procentpåslag: från områdets fält (Ledningsinventering satte l[nyckel]), annars ett fält med
-    samma namn på ledningen."""
+    samma namn på ledningen (shapefil: de första 10 tecknen)."""
     if l.get(nyckel) is not None:
         return _procent(l[nyckel])
+    if not falt:
+        return None
+    namn = {falt.upper(), falt.upper()[:10]}
     attr = l.get("attribut") or {}
-    return _procent(next((v for k, v in attr.items() if falt and str(k).upper() == falt.upper()), None))
+    return _procent(next((v for k, v in attr.items() if str(k).upper() in namn), None))
 
 
 def trafikpaslag(l: dict) -> float | None:
