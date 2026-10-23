@@ -415,7 +415,8 @@ class Toolbox(object):
         self.alias = 'tv3'
         self.tools = [ListaFalt, SkapaLedningslager, UppdateraBedomning, Etapplager, Markprofil, Uppstroms,
                       ExporteraGisdata, ExporteraKartor, ExporteraKartbild,
-                      SkapaProjekteringslager, Projekteringsprofil, ExporteraOmrade, Ledningsinventering]
+                      SkapaProjekteringslager, Projekteringsprofil, ExporteraOmrade, Ledningsinventering,
+                      UppdateraInventeringslager, KartorForOmradet]
 
 
 class SkapaLedningslager(object):
@@ -1930,4 +1931,235 @@ class Ledningsinventering(object):
                          'serviser kopplade, %(anordningar_kopplade)d av %(anordningar)d anordningar kopplade, '
                          '%(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
                          '%(korsningar)d korsningar' % r)
+        return
+
+
+STANDARD_RESULTAT = 'ledningsresultat.json'   # ledning_analys.py, bredvid ledningsdata.json
+KARTBLAD_LYR = os.path.join(HAR, 'kartblad.lyr')   # valfri symbol for bladgranserna i Kartor for omradet
+
+
+def _forslag_resultat():
+    """ledningsresultat.json bredvid den senaste ledningsdata.json (Ledningsinventering), om den finns."""
+    try:
+        json_ut = _minne_las().get('Ledningsinventering', {}).get('json_ut')
+        if json_ut:
+            p = os.path.join(os.path.dirname(json_ut), STANDARD_RESULTAT)
+            if os.path.isfile(p):
+                return p
+    except Exception:
+        pass
+    return None
+
+
+class UppdateraInventeringslager(object):
+    def __init__(self):
+        self.label = 'Uppdatera inventeringslager (f\u00e4lt ur ledningsresultat.json)'
+        self.category = TS_OMRADE
+        self.description = (
+            'Skriver resultatet fr\u00e5n ledning_analys.py (ledningsresultat.json) till f\u00e4lt p\u00e5 de lokala '
+            'ledningslagren: LEDN_ID, SYS, DIM_MM, LANGD_M, SCHAKT_M, DJUP_MEDEL, DJUPKLASS, SCHAKTGRP, I_GRAV, '
+            'ALT_OMLAGG, ALT_SKFRI, METOD_SKFR, SCHAKTSATT och ANMARKNING. D\u00e4refter kan kartan symboliseras '
+            'p\u00e5 t.ex. schaktgrupp, djupklass eller metod, och Kartor f\u00f6r omr\u00e5det s\u00e4tter etiketter med '
+            'ledningens id. K\u00f6r igen n\u00e4r ledning_analys.py har k\u00f6rts om.')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        res = arcpy.Parameter(
+            displayName='ledningsresultat.json (fr\u00e5n ledning_analys.py)', name='resultat', datatype='DEFile',
+            parameterType='Required', direction='Input')
+        _filter(res, ['json'])
+        params = _minne_fyll(self, [res])
+        if not res.valueAsText:
+            res.value = _forslag_resultat()
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateMessages(self, parameters):
+        p = parameters[0]
+        if p.valueAsText and not os.path.isfile(p.valueAsText):
+            p.setErrorMessage('Filen finns inte')
+        return
+
+    def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
+        _ladda_modul('skapa_ledningslager')
+        m = _ladda_modul('inventeringslager')
+        m.uppdatera(parameters[0].valueAsText)
+        try:
+            arcpy.RefreshActiveView()
+        except Exception:
+            pass
+        return
+
+
+class KartorForOmradet(object):
+    def __init__(self):
+        self.label = 'Kartor f\u00f6r omr\u00e5det (PDF)'
+        self.category = TS_OMRADE
+        self.description = (
+            'PDF-kartor ur ledningsinventeringen: en omr\u00e5deskarta per polygon i den st\u00f6rsta skala d\u00e4r '
+            'omr\u00e5det ryms p\u00e5 sidan, med en informationsruta (ledningsl\u00e4ngd per ledningstyp, totalt och '
+            'schaktl\u00e4ngd); en karta per schaktgrupp med gruppens ledningar markerade; och kartblad - '
+            'omr\u00e5det uppdelat i blad i fast skala med ledningarnas id som etiketter. Bladnumren skrivs till '
+            'ledningarna (KARTBLAD, KARTA, GRUPPKARTA) och till kartblad.csv, som ledning_analys.py l\u00e4gger i '
+            'Excel. V\u00e4lj en liggande och en st\u00e5ende mall s\u00e5 v\u00e4ljs orienteringen per karta. Ett '
+            'textelement med namnet INFO i mallen best\u00e4mmer var informationsrutan hamnar; utan det l\u00e4ggs '
+            'den till h\u00f6ger om kartan. K\u00f6r Uppdatera inventeringslager f\u00f6rst (etiketterna tar LEDN_ID).')
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        kartlager = _kartlager()
+        K_MALL = 'Mallar (liggande/st\u00e5ende v\u00e4ljs automatiskt per karta)'
+        K_SYMB = 'Symboler'
+        K_UT = 'Utdata'
+        res = arcpy.Parameter(
+            displayName='ledningsresultat.json (fr\u00e5n ledning_analys.py)', name='resultat', datatype='DEFile',
+            parameterType='Required', direction='Input')
+        _filter(res, ['json'])
+        omr = _lagerparam('Omr\u00e5deslager (polygoner; valda objekt om n\u00e5gra \u00e4r valda)', 'omradeslager',
+                          False, kartlager)
+        namnfalt = arcpy.Parameter(
+            displayName='F\u00e4lt med omr\u00e5dets namn (samma som i Ledningsinventering)', name='namnfalt',
+            datatype='GPString', parameterType='Optional', direction='Input')
+        bara_valda = arcpy.Parameter(
+            displayName='Bara valda polygoner n\u00e4r n\u00e5got \u00e4r valt i omr\u00e5deslagret', name='bara_valda',
+            datatype='GPBoolean', parameterType='Optional', direction='Input')
+        bara_valda.value = True
+        ut_mapp = arcpy.Parameter(
+            displayName='Utdatamapp (PDF:erna hamnar i undermappen kartor)', name='ut_mapp', datatype='DEFolder',
+            parameterType='Required', direction='Input')
+
+        def ruta(disp, namn, varde=True, kat=None):
+            p = arcpy.Parameter(displayName=disp, name=namn, datatype='GPBoolean', parameterType='Optional',
+                                direction='Input', category=kat)
+            p.value = varde
+            return p
+        omraden = ruta('Omr\u00e5deskartor (hela omr\u00e5det p\u00e5 en sida, med informationsruta)', 'omraden')
+        grupper = ruta('En karta per schaktgrupp (gruppens ledningar markerade)', 'schaktgrupper')
+        blad = ruta('Kartblad (omr\u00e5det i blad med ledningarnas id)', 'kartblad')
+        skala = arcpy.Parameter(
+            displayName='Kartbladens skala 1:', name='kartblad_skala', datatype='GPLong', parameterType='Required',
+            direction='Input')
+        skala.value = 1000
+        mall_ligg = arcpy.Parameter(
+            displayName='Mall med liggande layout (.mxd, valfritt)', name='mall_liggande',
+            datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
+        mall_sta = arcpy.Parameter(
+            displayName='Mall med st\u00e5ende layout (.mxd, valfritt)', name='mall_staende',
+            datatype='DEMapDocument', parameterType='Optional', direction='Input', category=K_MALL)
+        kopiera = ruta('Kopiera kartans synliga lager till mallarna (kartan ser ut som p\u00e5 sk\u00e4rmen)',
+                       'kopiera_synliga', True, K_MALL)
+        mark_lyr = arcpy.Parameter(
+            displayName='Markeringssymbol f\u00f6r schaktgruppen (.lyr, t.ex. bred gul linje)', name='markering_lyr',
+            datatype='DEFile', parameterType='Optional', direction='Input', category=K_SYMB)
+        _filter(mark_lyr, ['lyr'])
+        if os.path.isfile(MARKERING_LYR):
+            mark_lyr.value = MARKERING_LYR
+        transparens = arcpy.Parameter(
+            displayName='Genomskinlighet p\u00e5 markeringen (%)', name='markering_transparens', datatype='GPLong',
+            parameterType='Optional', direction='Input', category=K_SYMB)
+        transparens.value = 50
+        blad_lyr = arcpy.Parameter(
+            displayName='Symbol f\u00f6r bladgr\u00e4nserna (.lyr, valfritt)', name='kartblad_lyr', datatype='DEFile',
+            parameterType='Optional', direction='Input', category=K_SYMB)
+        _filter(blad_lyr, ['lyr'])
+        if os.path.isfile(KARTBLAD_LYR):
+            blad_lyr.value = KARTBLAD_LYR
+        dpi = arcpy.Parameter(
+            displayName='Uppl\u00f6sning (dpi)', name='dpi', datatype='GPLong', parameterType='Required',
+            direction='Input', category=K_UT)
+        dpi.value = 200
+        samlad = ruta('Sl\u00e5 ihop sidorna till samlade PDF:er', 'samlad', True, K_UT)
+        skriv_falt = ruta('Skriv kartblad och s\u00f6kv\u00e4gar till ledningarna (KARTBLAD, KARTA, GRUPPKARTA)',
+                          'skriv_falt', True, K_UT)
+        kartmapp = arcpy.Parameter(
+            displayName='Mapp med kartorna som den h\u00e4r datorn ser den (valfritt, Citrix)', name='kartmapp',
+            datatype='DEFolder', parameterType='Optional', direction='Input', category=K_UT)
+        params = _minne_fyll(self, [res, omr, namnfalt, bara_valda, ut_mapp, omraden, grupper, blad, skala,
+                                    mall_ligg, mall_sta, kopiera, mark_lyr, transparens, blad_lyr, dpi, samlad,
+                                    skriv_falt, kartmapp])
+        if not res.valueAsText:
+            res.value = _forslag_resultat()
+        if not ut_mapp.valueAsText and res.valueAsText:
+            ut_mapp.value = os.path.dirname(res.valueAsText)
+        # mallarna och omradet fran de andra verktygen nar inget eget minne finns
+        alla = _minne_las()
+        for p, verktyg, namn in ((mall_ligg, 'ExporteraKartor', 'mall_liggande'),
+                                 (mall_sta, 'ExporteraKartor', 'mall_staende'),
+                                 (omr, 'Ledningsinventering', 'omradeslager'),
+                                 (namnfalt, 'Ledningsinventering', 'omrade_namnfalt')):
+            v = alla.get(verktyg, {}).get(namn)
+            if v and not p.valueAsText:
+                try:
+                    p.value = v
+                except Exception:
+                    pass
+        return params
+
+    def isLicensed(self):
+        return True
+
+    def updateParameters(self, parameters):
+        P = dict((p.name, p) for p in parameters)
+        if P['resultat'].altered and P['resultat'].valueAsText and not P['ut_mapp'].altered:
+            P['ut_mapp'].value = os.path.dirname(P['resultat'].valueAsText)
+        omr = P['omradeslager']
+        if omr.valueAsText:
+            falt = _faltnamn(omr)
+            if falt:
+                _filter(P['namnfalt'], [''] + falt)
+                if not P['namnfalt'].altered and not P['namnfalt'].valueAsText:
+                    P['namnfalt'].value = _forsta_traff(STANDARD_OMRADESNAMN, falt)
+        return
+
+    def updateMessages(self, parameters):
+        P = dict((p.name, p) for p in parameters)
+        _kolla_geometri(P['omradeslager'], ('Polygon',), 'Omr\u00e5deslagret')
+        for namn in ('resultat', 'mall_liggande', 'mall_staende', 'markering_lyr', 'kartblad_lyr'):
+            t = P[namn].valueAsText
+            if t and not os.path.isfile(t):
+                P[namn].setErrorMessage('Filen finns inte')
+        if P['kartblad_skala'].value is not None and not P['kartblad_skala'].value > 0:
+            P['kartblad_skala'].setErrorMessage('St\u00f6rre \u00e4n 0')
+        if P['markering_transparens'].value is not None and not 0 <= P['markering_transparens'].value <= 100:
+            P['markering_transparens'].setErrorMessage('0-100 procent')
+        if not (P['omraden'].value or P['schaktgrupper'].value or P['kartblad'].value):
+            P['omraden'].setErrorMessage('V\u00e4lj minst en sorts karta')
+        if bool(P['mall_liggande'].valueAsText) != bool(P['mall_staende'].valueAsText):
+            P['mall_staende' if P['mall_liggande'].valueAsText else 'mall_liggande'].setWarningMessage(
+                'Bara en mall angiven - den anv\u00e4nds f\u00f6r alla kartor. Ange b\u00e5da f\u00f6r automatiskt val.')
+        if P['schaktgrupper'].value and not P['markering_lyr'].valueAsText:
+            P['markering_lyr'].setWarningMessage(
+                'Utan markeringssymbol visas schaktgruppen i ArcMaps standardsymbol - spara en bred gul linje som '
+                'markering.lyr i arcmap-mappen.')
+        return
+
+    def execute(self, parameters, messages):
+        _minne_spara(self, parameters)
+        _ladda_modul('skapa_ledningslager')
+        _ladda_modul('kartexport')
+        _ladda_modul('omrade_export')
+        _ladda_modul('inventeringslager')
+        m = _ladda_modul('omradeskartor')
+        P = dict((p.name, p) for p in parameters)
+
+        def v(namn):
+            t = (P[namn].valueAsText or '').strip().strip("'")
+            return t or None
+        m.exportera(
+            P['resultat'].valueAsText, v('omradeslager'), os.path.join(P['ut_mapp'].valueAsText, 'kartor'),
+            namnfalt=v('namnfalt'), bara_valda=bool(P['bara_valda'].value),
+            omraden=bool(P['omraden'].value), schaktgrupper=bool(P['schaktgrupper'].value),
+            kartblad=bool(P['kartblad'].value), kartblad_skala=int(P['kartblad_skala'].value),
+            mall_liggande=v('mall_liggande'), mall_staende=v('mall_staende'),
+            kopiera_synliga=P['kopiera_synliga'].value is not False, markering_lyr=v('markering_lyr'),
+            transparens=int(P['markering_transparens'].value) if P['markering_transparens'].value is not None else None,
+            dpi=int(P['dpi'].value), samlad=bool(P['samlad'].value), skriv_falt=bool(P['skriv_falt'].value),
+            kartmapp=v('kartmapp'), kartblad_lyr=v('kartblad_lyr'))
+        try:
+            arcpy.RefreshActiveView()
+        except Exception:
+            pass
         return

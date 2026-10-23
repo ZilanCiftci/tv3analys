@@ -4,7 +4,7 @@ Status: oktober 2026. Steg 1 (Exportera område) är byggt (PR #119), steg 2 (Le
 `ledningsdata.json`, verktyg och modul `arcmap/moduler/inventering.py`) är byggt men oprövat i riktig ArcMap,
 steg 3 (`ledning_analys.py` + `kostnader_inventering.csv` med kalkylverktygets priser)
 är byggt – utan TV-koppling och rekommendation (användaren okt 2026: bara kostnad omläggning mot strumpa;
-vatten infodras inte; ≤ 400 mm kan rörspräckas, tredje metod); verktyget Uppdatera inventeringslager återstår. Besluten F10–F17 står längst ned; F10 (vattenlagrens
+vatten infodras inte; ≤ 400 mm kan rörspräckas, tredje metod). Verktygen **Uppdatera inventeringslager** och **Kartor för området** (översikt per område med informationsruta, karta per schaktgrupp, kartblad) är byggda okt 2026 (oprövade i riktig ArcMap); kvar i steg 4 är profilerna per stråk. Besluten F10–F17 står längst ned; F10 (vattenlagrens
 namn) och prislistan i F13 finns nu (kalkylverktyget, okt 2026, `kostnader_inventering.csv`).
 
 ## Målet, som jag förstår det
@@ -198,9 +198,9 @@ ledning; `ledning_analys.py` räknar bara kostnaderna för de två alternativen 
 | 1 | Exportera område | `.pyt` + `moduler/omrade_export.py` | nytt |
 | 2 | Ledningsinventering | `.pyt` + `moduler/inventering.py` (bygger på gisexport, natverk, Markhojd) | nytt |
 | 3 | `ledning_analys.py` + `kostnader_inventering.csv` | repots rot, Python 3 | nytt |
-| 4 | Uppdatera inventeringslager | `.pyt`, liten | nytt |
+| 4 | Uppdatera inventeringslager | `.pyt` + `moduler/inventeringslager.py` | byggt okt 2026 |
 | 5 | Ledningsprofil | utökning av Projekteringsprofil/`projektering.rita_profil` | utökning |
-| 6 | Planritning per stråk | utökning av Exportera kartor (`kartexport`) | utökning |
+| 6 | ~~Planritning per stråk~~ → Kartor för området (område, schaktgrupp, kartblad) | `.pyt` + `moduler/omradeskartor.py` | byggt okt 2026 |
 
 Alla verktyg för områdesanalys ligger i verktygsgruppen **Områdesanalys** i `tv3_verktyg.pyt` (`TS_OMRADE`), skilt
 från TV-inspektionens verktyg – även de nya kartexporterna (per schaktgrupp/stråk) och profilerna.
