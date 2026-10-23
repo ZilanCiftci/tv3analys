@@ -284,11 +284,18 @@ def geometrityp(lyr):
         return ''
 
 
+def system_kod(text):
+    """'S', 'D', 'K' eller 'V' ur forsta bokstaven i en ledningstyp (SSL, DSL ...), brunnsfunktion (SNBL,
+    DNB ...) eller ett littera; annars None (t.ex. braddbrunnar BDNB och okanda)."""
+    t = _text(text).strip().upper()
+    return t[0] if t and t[0] in 'SDKV' else None
+
+
 def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=None,
               vg_fran=None, vg_till=None, dim_falt=None, mat_falt=None, ledntyp_falt=None,
               ar_falt=None, tolerans=1.0, omradeslager=None, hojdsystem='RH2000',
               duf_lager=None, duf_falt=None, ren_falt=None, botten_falt=None, alla_falt=False,
-              klipp_lager=None, klipp_omrade=None, brunnar_i_omrade=True):
+              klipp_lager=None, klipp_omrade=None, brunnar_i_omrade=True, lager_system=None):
     """Bygger gisdata i minnet: (data, hjalp). data ar JSON-strukturen (brunnar, ledningar ...) dar
     varje ledningspost dessutom har '_pts' (bitens punkter [(x, y, None)]) - exportera() tar bort dem
     fore skrivningen, ledningsinventeringen anvander dem. hjalp = {'graf', 'sr', 'led_lager',
@@ -340,6 +347,11 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
             b['omrade'] = omraden.omrade(b['x'], b['y'])
         logg('  brunnarnas omraden satta (%s)' % tid())
     graf = Graf(dict((b['littera'], (b['x'], b['y'])) for b in brunnar), float(tolerans))
+    lager_system = dict((txt(k), v) for k, v in (lager_system or {}).items())
+    for b in brunnar:
+        kod = lager_system.get(txt(b['lager'])) or system_kod(b['typ']) or system_kod(b['littera'])
+        if kod:
+            graf.brunn_system[b['littera']] = kod
     logg('Laser ledningar (%s)' % tid())
 
     # Ledningarna: originalpunkter och attribut per objekt(del), bitarna i grafen
@@ -424,7 +436,8 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
                     if len(punkter) < 2:
                         continue
                     delar.append(punkter)
-                    n_bitar += graf.lagg_till(punkter, namn, oid)
+                    n_bitar += graf.lagg_till(punkter, namn, oid,
+                                              lager_system.get(namn) or system_kod(attr[(namn, oid)]['ledningstyp']))
                 if delar:
                     original[(namn, oid)] = delar
                     n_led += 1
@@ -434,6 +447,10 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
     if omrade is not None:
         arcpy.Delete_management('lyr_gis_omr')
     logg('  %d ledningar, %d bitar mellan brunnar/andar (%s)' % (n_led, n_bitar, tid()))
+    if graf.n_andbyte or graf.n_annat_system or graf.n_ande_annat_system:
+        logg('  brunnar vid ledningarna: %d andar med flera brunnar inom toleransen (narmaste brunnen valdes), '
+             '%d brunnar av annat system delade inte ledningen, %d andar med bara en brunn av annat system'
+             % (graf.n_andbyte, graf.n_annat_system, graf.n_ande_annat_system))
     if klipp_namn:
         logg('  %d ledningar klippta vid omradesgransen (%.0f m utanfor togs bort), %d helt utanfor'
              % (n_klippt, klippt_m, n_utanfor))

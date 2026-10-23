@@ -298,6 +298,23 @@ def _kategori(lagernamn, typ):
     return 'anordning'
 
 
+def _lager_system(ledningslager, vatten, brunnslager):
+    """{lagernamn: 'V'} for vattenledningarna och brunnslagren i vattengruppen - brunnar och ledningar
+    ur vattnet kopplas inte till avloppet (och tvartom) nar natet byggs."""
+    ut = {}
+    for n in ledningslager:
+        lyr = hitta_lager(n)
+        namn = _lagernamn(lyr)
+        if namn in vatten:
+            ut[namn] = 'V'
+    for n in _lista(brunnslager):
+        lyr = hitta_lager(n)
+        if _lagersystem(lyr) == 'V':
+            ut[_lagernamn(lyr)] = 'V'
+            ut[txt(getattr(lyr, 'name', n))] = 'V'      # brunnarnas 'lager' ar det korta namnet
+    return ut
+
+
 def _lagersystem(lyr):
     """'V' for lager i vattengruppen eller med namn 'V ...', 'A' for avlopp, annars ''."""
     kort = txt(getattr(lyr, 'name', '') or '').strip().lower()
@@ -456,7 +473,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         ar_falt=ar_falt, tolerans=tolerans, omradeslager=omradeslager, hojdsystem=hojdsystem,
         ren_falt=ren_falt, botten_falt=botten_falt, alla_falt=True,
         klipp_lager=sorted(vatten), klipp_omrade=klipp, brunnar_i_omrade=False,
-        duf_lager=omradeslager if (omradeslager and omrade_namnfalt) else None, duf_falt=omrade_namnfalt)
+        duf_lager=omradeslager if (omradeslager and omrade_namnfalt) else None, duf_falt=omrade_namnfalt,
+        lager_system=_lager_system(alla_led, vatten, brunnslager))
     ledningar, brunnar = data['ledningar'], data['brunnar']
     if not ledningar:
         raise RuntimeError(

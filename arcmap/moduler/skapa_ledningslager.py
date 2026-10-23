@@ -305,6 +305,8 @@ class Natverk(object):
         self.andar = {}        # rutnat over fria andar: cell -> [(nyckel, x, y)]
         self.n_andar = 0
         self.koord = dict((('B', bid), (x, y)) for bid, (x, y) in sokta.items())
+        self.brunn_system = {}  # brunn -> 'S'/'D'/'K'/'V' (valfritt): en spillledning delas inte vid dagvattenbrunnar
+        self.n_annat_system = self.n_ande_annat_system = self.n_andbyte = 0
         self.passera = {}      # rutnat over passerbara brunnar: cell -> [(nyckel, x, y)]
         for bid, (x, y) in (passera or {}).items():
             if bid in sokta:
@@ -370,9 +372,11 @@ class Natverk(object):
         self.kanter.setdefault(n1, []).append((n2, pts, lager, oid))
         self.kanter.setdefault(n2, []).append((n1, pts[::-1], lager, oid))
 
-    def lagg_till(self, punkter, lager, oid):
+    def lagg_till(self, punkter, lager, oid, system=None):
         """Lagger in en ledningsdel [(x, y, z)] och delar den vid sokta brunnar.
-        Returnerar antal bitar."""
+        system: ledningens system ('S', 'D', 'K', 'V' eller None) - brunnar av annat system (brunn_system)
+        delar den inte, och vid en ande anvands en sadan brunn bara nar ingen brunn av ratt system finns.
+        Vid varje ande behalls bara den brunn som ligger narmast anden. Returnerar antal bitar."""
         if len(punkter) < 2:
             return 0
         matt = [0.0]
@@ -392,6 +396,8 @@ class Natverk(object):
                     if a[2] is not None and b[2] is not None:
                         z = a[2] + t * (b[2] - a[2])
                     traffar[bid] = (matt[i] + t * seglen, d, (q[0], q[1], z))
+
+        traffar = self._valj_andbrunnar(traffar, punkter, matt[-1], system)
 
         # Tva brunnar som hamnar narmare varandra langs ledningen an halva deras verkliga avstand kan inte
         # bada ligga pa den: den ena ligger bara inom toleransen fran linjen (t.ex. en ledning som gar ut
@@ -425,6 +431,51 @@ class Natverk(object):
             self._kant(n1, n2, pts, lager, oid)
             n_bitar += 1
         return n_bitar
+
+    def _passar(self, bid, system):
+        """Brunnen kan sitta pa en ledning av systemet: okant system, samma system, eller kombinerat
+        (K) mot spill/dag. Spill mot dag och vatten mot avlopp passar inte."""
+        b = self.brunn_system.get(bid)
+        if not system or not b or b == system:
+            return True
+        return 'V' not in (b, system) and 'K' in (b, system)
+
+    def _valj_andbrunnar(self, traffar, punkter, L, system):
+        """Brunnarna vid ledningens andar: inom toleransen fran anden (langs ledningen) behalls bara
+        brunnen narmast andpunkten - av ratt system om en sadan finns. Ovriga brunnar dar (t.ex. en
+        dagvattenbrunn bredvid spillbrunnen, eller en brunn som ledningen bara passerar strax efter
+        anden) delar inte ledningen. Mitt pa ledningen delar bara brunnar av ratt system."""
+        if not traffar:
+            return traffar
+        ut = {}
+        tagna = set()
+        for m_ande, p in ((0.0, punkter[0]), (L, punkter[-1])):
+            kand = []
+            for bid, (m, d, q) in traffar.items():
+                if bid in tagna or abs(m - m_ande) > self.tol + 1e-9:
+                    continue
+                xy = self.koord.get(('B', bid))
+                avst = _avst(xy, p) if xy is not None else d
+                kand.append((0 if self._passar(bid, system) else 1, avst, bid))
+            if not kand:
+                continue
+            kand.sort()
+            bid = kand[0][2]
+            if kand[0][0]:
+                self.n_ande_annat_system += 1    # bara en brunn av annat system vid anden - den far duga
+            if len(kand) > 1:
+                self.n_andbyte += 1              # fler brunnar vid anden - de ovriga delar inte ledningen
+            ut[bid] = traffar[bid]
+            for k in kand:
+                tagna.add(k[2])
+        for bid, v in traffar.items():
+            if bid in tagna:
+                continue
+            if self._passar(bid, system):
+                ut[bid] = v
+            else:
+                self.n_annat_system += 1
+        return ut
 
     def vag(self, a, b, max_hopp, max_delar=MAX_DELAR, poang=None):
         """Vagen med farst bitar fran brunn a till brunn b, eller None. Hogst
