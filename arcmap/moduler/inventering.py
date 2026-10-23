@@ -423,6 +423,14 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         ren_falt=ren_falt, botten_falt=botten_falt, alla_falt=True,
         klipp_lager=sorted(vatten), klipp_omrade=klipp, brunnar_i_omrade=False)
     ledningar, brunnar = data['ledningar'], data['brunnar']
+    if not ledningar:
+        raise RuntimeError(
+            'Inga ledningar lastes - ingen fil skrevs. ' +
+            ('Ingen ledning skar omradeslagret "%s" (se loggen ovan: "0 av N ledningar inom omradet"). '
+             'Kontrollera att ratt omradeslager ar valt och att det inte har en definitionsfraga som '
+             'filtrerar bort polygonerna, eller lamna "Begransa till omrade" tomt for de lokala lagren.'
+             % txt(omradeslager) if omradeslager else
+             'Kontrollera att ledningslagren har objekt och ratt datakalla.'))
     sr = hjalp['sr']
     brunn_index = dict((b['littera'], b) for b in brunnar)
     omrade = None
@@ -751,7 +759,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'kalla': 'inventering.py',
         'genererad': datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
-                       'parallell_min_m': float(parallell_min_m), 'intervall_m': float(intervall),
+                       'parallell_min_m': float(parallell_min_m),
+                       'omradeslager': txt(omradeslager) if omradeslager else None, 'intervall_m': float(intervall),
                        'vatten_djup_m': float(vatten_djup), 'vatten_djup_till': 'botten',
                        'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
