@@ -1694,7 +1694,12 @@ def main(argv=None) -> int:
     print(f"Skrev {xlsx}")
     print(f"Skrev {os.path.join(ut, UTDATA_JSON)}")
     if (a.mall or "").lower() != "nej":
-        import kalkylmall
+        try:
+            import kalkylmall
+        except ImportError as e:
+            print(f"Kalkylerna hoppades över – {e}. Installera med:  python -m pip install --user lxml   "
+                  f"(eller kör med --mall nej)")
+            return 0
         mall = a.mall or kalkylmall.hitta_mall([HAR, os.path.dirname(os.path.abspath(a.ledningsdata))])
         if a.mall and not os.path.isfile(a.mall):
             print(f"Kalkylmallen finns inte: {a.mall}")
