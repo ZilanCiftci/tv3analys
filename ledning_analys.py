@@ -1004,6 +1004,22 @@ def _radformler(rad: list, kol: list[str], K: Kolumner, nr: int, l: dict) -> Non
         satt("Alt. schaktfritt", c("Infodring totalt"))
     elif alt is not None and alt is l.get("_sprack"):
         satt("Alt. schaktfritt", c("Rörspräckning totalt"))
+    # med påslagen i fliken Investeringskalkyl (samma som dess entreprenad): AFC på helschakt och rörspräckning,
+    # trafiktillägg, provisorier och vintertillägg på allt
+    afc = f"({_ik('material')}+{_ik('arbeten')})"
+    tillagg = f"(1+{c('Trafiktillägg')}+{c('Provisorier')}+{_ik('vinter')})"
+    satt("Alt. lägg om inkl. påslag", f"{c('Alt. lägg om')}*(1+{afc})*{tillagg}")
+    satt("Alt. schaktfritt inkl. påslag",
+         f'{c("Alt. schaktfritt")}*(1+IF({c("Metod alt. schaktfritt")}="strumpa",0,{afc}))*{tillagg}')
+
+
+IK_BLAD = "Investeringskalkyl"
+IK_PARAM = ("risk", "oforutsett", "material", "arbeten", "vinter")   # ordningen i fliken Investeringskalkyl
+
+
+def _ik(nyckel: str) -> str:
+    """Cellen med procentsatsen i fliken Investeringskalkyl (raderna under byggherrekostnaderna)."""
+    return f"'{IK_BLAD}'!$B${7 + len(BYGGHERRE_ANDEL) + IK_PARAM.index(nyckel)}"
 
 
 def _jamforbar_krit(K: Kolumner) -> list:
@@ -1045,8 +1061,8 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Djup start (m)", "Djup slut (m)", "Serviser (st)", "Servislängd (m)", "Ventiler (st)",
            "Brandposter (st)", "Servisventiler (st)", "Ledningsändar (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Delad grav (m)", "Grav längs ledningen", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
-           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
-           "Kartblad", "Trafiktillägg (%)", "Provisorier (%)",
+           "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)",
+           "Alt. lägg om inkl. påslag (kr)", "Alt. schaktfritt inkl. påslag (kr)", "Anmärkning", "Kartblad", "Trafiktillägg (%)", "Provisorier (%)",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)", "Schaktsätt efter djup", "Slagen spont efter djup (m²)", "Spont efter djup (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
@@ -1092,7 +1108,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
                          for k in l.get("korsningar") or []) or None,
                _kr(o), SCHAKTSATT_NAMN.get((o or {}).get("schaktsatt")), l.get("_alt_metod"), _kr(l.get("_alt")),
-               _anmarkning(l), (l.get("_kartblad") or {}).get("kartblad") or None, trafikpaslag(l), provisorier(l)] + \
+               _kr(o), _kr(l.get("_alt")), _anmarkning(l), (l.get("_kartblad") or {}).get("kartblad") or None, trafikpaslag(l), provisorier(l)] + \
               [_kr((l.get("_typer") or {}).get(t)) for t in ALLA_SCHAKTTYPER] + \
               [SCHAKTSATT_NAMN.get((dj or {}).get("schaktsatt")), _r((dj or {}).get("spont_m2")) or None,
                _kr(dj, "spont") or None] + \
@@ -1232,7 +1248,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            bredder={"Kommentar": 70}, format={"Belopp": "#,##0.##"})
 
     skriv_sammanfattning(ws_s, data, ledningar, kost, kallor, K, DQ, dq_typer)
-    skriv_investeringskalkyl(wb.create_sheet("Investeringskalkyl", 1), K)
+    skriv_investeringskalkyl(wb.create_sheet(IK_BLAD, 1), K)
     wb.calculation.fullCalcOnLoad = True           # summorna är formler – räkna när filen öppnas
     wb.save(path)
 
@@ -1305,6 +1321,7 @@ def skriv_investeringskalkyl(ws, K: Kolumner) -> None:
         cell(rad, 2, v, PROC, fyll=gul)
         cell(rad, 3, kommentar, kursiv=True, ram=False)
         param[nyckel] = f"$B${rad}"
+        assert _ik(nyckel).endswith(param[nyckel]), (nyckel, param[nyckel])   # Ledningar pekar på cellerna
 
     # --- sammanställning ------------------------------------------------------------------------
     rad += 2
@@ -1512,20 +1529,24 @@ def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kol
     def utan_kostnad(krit, villkor):
         return f(f"{_countifs(ID, krit)}-{_countifs(ID, krit + villkor)}")
 
-    block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om (kr)", "Alt. schaktfritt (kr)",
+    block("Lägga om eller schaktfritt", ["System", "Längd (m)", "Alt. lägg om inkl. påslag (kr)",
+                                     "Alt. schaktfritt inkl. påslag (kr)",
                                      "Strumpas (m)", "Rörspräcks (m)", "Läggs om (m)", "Utan kostnad (st)"],
-          per_system(lambda krit: [f(_sumifs(L, krit)), f(_sumifs(K("Alt. lägg om"), krit + JFR)),
-                                   f(_sumifs(K("Alt. schaktfritt"), krit + JFR))] +
+          per_system(lambda krit: [f(_sumifs(L, krit)), f(_sumifs(K("Alt. lägg om inkl. påslag"), krit + JFR)),
+                                   f(_sumifs(K("Alt. schaktfritt inkl. påslag"), krit + JFR))] +
                      [f(_sumifs(L, krit + [(K("Metod alt. schaktfritt"), _txt(m))]))
                       for m in ("strumpa", "rörspräckning", "omläggning")] +
                      [utan_kostnad(krit, JFR)]),
-          format={"Längd": M, "Alt. lägg om": KR, "Alt. schaktfritt": KR, "Strumpas": M, "Rörspräcks": M,
-                  "Läggs om": M})
+          format={"Längd": M, "Alt. lägg om inkl. påslag": KR, "Alt. schaktfritt inkl. påslag": KR, "Strumpas": M,
+                  "Rörspräcks": M, "Läggs om": M})
     for t in ("Alt. lägg om: alla ledningar läggs om; ledningar i samma grav delar graven.",
               "Alt. schaktfritt: spill/dag infodras (rörspräcks eller läggs om där infodring inte går); vatten rörspräcks, "
               "men läggs om i samma grav när en avloppsledning i graven läggs om.",
               "Summorna omfattar bara ledningar med kostnad i båda alternativen; övriga står under Utan kostnad "
               "(djup eller dimension saknas – se fliken Datakvalitet).",
+              "Beloppen är entreprenaden med påslagen i fliken Investeringskalkyl (material och SVOA-arbeten på helschakt "
+              "och rörspräckning, trafiktillägg, provisorier och vintertillägg) – samma som dess rad Entreprenad "
+              "inklusive material. Utan påslag: kolumnerna Alt. lägg om och Alt. schaktfritt i fliken Ledningar.",
               "Talen är formler mot fliken Ledningar – ändras en kostnad där räknas sammanfattningen om."):
         ws.cell(rad - 1, 1, t).font = Font(italic=True, color="595959")
         rad += 1
