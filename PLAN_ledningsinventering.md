@@ -201,6 +201,9 @@ ledning; `ledning_analys.py` räknar bara kostnaderna för de två alternativen 
 | 4 | Uppdatera inventeringslager | `.pyt`, liten | nytt |
 | 5 | Ledningsprofil | utökning av Projekteringsprofil/`projektering.rita_profil` | utökning |
 | 6 | Planritning per stråk | utökning av Exportera kartor (`kartexport`) | utökning |
+
+Alla verktyg för områdesanalys ligger i verktygsgruppen **Områdesanalys** i `tv3_verktyg.pyt` (`TS_OMRADE`), skilt
+från TV-inspektionens verktyg – även de nya kartexporterna (per schaktgrupp/stråk) och profilerna.
 | 7 | ~~Omläggningskostnad i åtgärdspaketet~~ | `tv3_analys.py` | utgår (steg 5) |
 
 Testas som tidigare med låtsas-arcpy i scratchpad och med en syntetisk `ledningsdata.json`; riktig
