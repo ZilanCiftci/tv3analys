@@ -391,8 +391,13 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
               ar_falt=None, ren_falt=None, lutning_falt=None, id_falt=None, tolerans=1.0,
               parallell_avstand=3.0, parallell_min_m=10.0, intervall=1.0, vatten_djup=1.7,
               sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None,
-              anordningslager=None, anordning_radie=3.0, klipp_vatten=True):
-    """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen."""
+              anordningslager=None, anordning_radie=3.0, klipp_vatten=True, omrade_namnfalt=None,
+              trafik_falt=None, provisorier_falt=None):
+    """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen.
+    omrade_namnfalt: faltet med omradets namn i omradeslagret - varje ledning far 'omrade' (omradet dar
+    ledningens mittpunkt ligger). trafik_falt/provisorier_falt: falt i omradeslagret med procentpaslag
+    for trafiktillagg och provisorier (10 eller 0,10 = 10 %) - ledningarna i omradet far dem som
+    'trafikpaslag'/'provisorier' och omradena listas i toppfaltet 'omraden'."""
     import time
     t0 = time.time()
 
@@ -421,7 +426,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         vg_fran=vg_fran, vg_till=vg_till, dim_falt=dim_falt, mat_falt=mat_falt, ledntyp_falt=ledntyp_falt,
         ar_falt=ar_falt, tolerans=tolerans, omradeslager=omradeslager, hojdsystem=hojdsystem,
         ren_falt=ren_falt, botten_falt=botten_falt, alla_falt=True,
-        klipp_lager=sorted(vatten), klipp_omrade=klipp, brunnar_i_omrade=False)
+        klipp_lager=sorted(vatten), klipp_omrade=klipp, brunnar_i_omrade=False,
+        duf_lager=omradeslager if (omradeslager and omrade_namnfalt) else None, duf_falt=omrade_namnfalt)
     ledningar, brunnar = data['ledningar'], data['brunnar']
     if not ledningar:
         raise RuntimeError(
@@ -432,6 +438,18 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
              % txt(omradeslager) if omradeslager else
              'Kontrollera att ledningslagren har objekt och ratt datakalla.'))
     sr = hjalp['sr']
+    omraden_info = []
+    if omradeslager and omrade_namnfalt:
+        omraden_info = _las_omraden(hitta_lager(omradeslager), omrade_namnfalt,
+                                    {'trafikpaslag': trafik_falt, 'provisorier': provisorier_falt})
+        per_namn = dict((o['namn'], o) for o in omraden_info)
+        for l in ledningar:
+            o = per_namn.get(l.get('omrade'))
+            for k in ('trafikpaslag', 'provisorier'):
+                l[k] = o.get(k) if o else None
+        logg('  %d omraden: %s' % (len(omraden_info), ', '.join(
+            '%s (trafik %s, provisorier %s)' % (o['namn'], _procent_text(o.get('trafikpaslag')),
+                                                _procent_text(o.get('provisorier'))) for o in omraden_info)))
     brunn_index = dict((b['littera'], b) for b in brunnar)
     omrade = None
     if omradeslager:
@@ -761,6 +779,8 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
                        'parallell_min_m': float(parallell_min_m),
                        'omradeslager': txt(omradeslager) if omradeslager else None, 'intervall_m': float(intervall),
+                       'omrade_namnfalt': omrade_namnfalt, 'trafik_falt': trafik_falt,
+                       'provisorier_falt': provisorier_falt,
                        'vatten_djup_m': float(vatten_djup), 'vatten_djup_till': 'botten',
                        'sokradie_m': float(sokradie),
                        'anordning_radie_m': float(anordning_radie),
@@ -772,6 +792,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'parallella': parallella,
         'korsningar': korsningar,
         'datakvalitet': kvalitet,
+        'omraden': omraden_info,
         'sammanfattning': samman,
     })
     data['lager'].update({'vatten': sorted(vatten), 'serviser': [txt(n) for n in servislager],
@@ -784,6 +805,52 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
          '%d korsningar, %d anmarkningar' % (tid(), len(ledningar), len(brunnar), len(serviser), len(anordningar),
                                              n_sam, len(grupper), len(korsningar), len(kvalitet)))
     return samman
+
+
+def _procent(v):
+    """Procentpaslag ur ett falt: 10, '10 %' eller 0,10 -> 0.10; tomt -> None."""
+    if v is None:
+        return None
+    m = re.search(r'-?\d+(?:[.,]\d+)?', txt(v))
+    if not m:
+        return None
+    x = float(m.group(0).replace(',', '.'))
+    return x / 100.0 if x > 1 else x
+
+
+def _procent_text(v):
+    return '-' if v is None else ('%g %%' % round(100 * v, 2)).replace('.', ',')
+
+
+def _las_omraden(lyr, namnfalt, paslag):
+    """[{namn, trafikpaslag, provisorier}] ur omradeslagret (alla polygoner, lagrets definitionsfraga)."""
+    falt = _faltnamn(lyr)
+    f_namn = falt.get(txt(namnfalt).upper())
+    if not f_namn:
+        logg('  OBS omradeslagret saknar namnfaltet %s' % txt(namnfalt))
+        return []
+    las = []
+    for k, onskat in sorted(paslag.items()):
+        if not onskat:
+            continue
+        f = falt.get(txt(onskat).upper())
+        if f:
+            las.append((k, f))
+        else:
+            logg('  OBS omradeslagret saknar faltet %s' % txt(onskat))
+    src, dq = kalla(lyr)
+    ut, sedda = [], set()
+    with arcpy.da.SearchCursor(src, [f_namn] + [f for _, f in las], dq or None) as mark:
+        for rad in mark:
+            namn = txt(rad[0]).strip() if rad[0] is not None else ''
+            if not namn or namn in sedda:
+                continue
+            sedda.add(namn)
+            post = {'namn': namn}
+            for (k, _), v in zip(las, rad[1:]):
+                post[k] = _procent(v)
+            ut.append(post)
+    return ut
 
 
 def _vatten_till_botten(led, vatten_djup):
@@ -907,7 +974,7 @@ def _skriv_csvfiler(json_ut, ledningar, brunnar, serviser, parallella, korsninga
         'renoveringsar', 'vg_fran', 'vg_till', 'lutning_promille', 'lutning_gis', 'djup_medel', 'djup_min',
         'djup_max', 'djupklass', 'djup_kalla', 'djup_start', 'djup_slut', 'tackning_min', 'mark_medel',
         'antal_serviser', 'serviser_m', 'serviser', 'anordningar', 'schaktgrupp', 'schakt_langd_m', 'schakt_system',
-        'schakt_antal', 'grav_delar',
+        'schakt_antal', 'grav_delar', 'trafikpaslag', 'provisorier',
         'schakt_ledningar', 'parallella', 'korsningar', 'flaggor', 'omrade', 'lager', 'oid', 'del', 'antal_delar',
         'klippt_m'], rader)
     _skriv_csv(stam + '_brunnar.csv', ['littera', 'typ', 'system', 'lockniva', 'bottenniva', 'vg_min', 'djup_m',

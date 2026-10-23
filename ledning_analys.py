@@ -104,6 +104,23 @@ DOLDA_LEDNINGAR = [
     "Klippt vid områdesgränsen",
 ]
 
+# Investeringskalkyl (fliken Investeringskalkyl) – SVOA:s mall "Kalkyl inriktningsbeslut LEDN", flikarna Alternativ,
+# Entreprenadkalkyl och Investeringsärende BP2. Procentsatserna skrivs i gula celler och kan ändras i Excel.
+BYGGHERRE_ANDEL = [                # moment: (planerafasen, genomförafasen) i andel av entreprenadkostnaden
+    ("Projekt- och byggledning", 0.01, 0.05),
+    ("Projektering", 0.05, 0.01),
+    ("Geo, mark och miljö", 0.03, 0.02),
+    ("Övriga byggherrekostnader", 0.01, 0.02),
+]
+KANDA_RISKER_ANDEL = 0.20          # kända risker i andel av byggherrekostnader (+ entreprenad i totalbudgeten)
+OFORUTSETT_ANDEL = 0.20            # oförutsett i andel av summan ovanför (mallen: 20 %)
+AFC_MATERIAL_ANDEL = 0.03          # Entreprenadkalkyl: material som SVOA tillhandahåller (AFC.1522) – rörspräckning, helschakt
+AFC_SVOA_ARBETEN_ANDEL = 0.03      # ... arbeten som SVOA utför och som undantas från entreprenören (AFC.114) – samma tabeller
+VINTERTILLAGG = 0.0                # Tabell E: 0,05 om projektet kan utföras vintertid
+TRAFIK_FALT = "TRAFIKPASLAG"       # procentpåslag för trafiktillägg (Tabell E: 10/30/60 %) – fält på områdespolygonerna,
+                                   # som Ledningsinventering lägger på ledningarna i området (eller ett fält på ledningen)
+PROVISORIER_FALT = "PROVISORIER"   # procentpåslag för provisorier – på samma sätt
+
 SYSTEM_NAMN = {"S": "Spillvatten", "D": "Dagvatten", "K": "Kombinerat", "V": "Vatten", "": "Okänt"}
 METODER = (("omläggning", "_omlagg"), ("strumpa", "_strumpa"), ("rörspräckning", "_sprack"))
 METOD_NYCKEL = dict(METODER)
@@ -300,7 +317,7 @@ def _grav(led, kost, per_id, schakttyp, medlagda=None):
         djupen = [led["djup_medel"]]
     steg = (sum(_antal_djuptillagg(d) for d in djupen) / len(djupen)) if djupen else 0.0
     o = {"schakt": 0.0, "spont": 0.0, "spont_m2": 0.0, "djuptillagg": 0.0, "aterstallning": 0.0,
-         "schaktsatt": None, "pris_typ": schakttyp, "gravdjup": None, "delad_m": 0.0}
+         "schaktsatt": None, "pris_typ": schakttyp, "gravdjup": None, "delad_m": 0.0, "poster": []}
     beskr_delar, noter, utan_pris = [], [], defaultdict(float)
     if led.get("dimension") is None:
         return None, "dimension saknas", n_max, ""
@@ -334,6 +351,8 @@ def _grav(led, kost, per_id, schakttyp, medlagda=None):
         if pris_m is None:
             return None, f"inget schaktpris ({beskr}, {SCHAKTTYPER.get(pris_typ, pris_typ)})", n_max, beskr
         o["schakt"] += pris_m / n * lm
+        o["poster"].append({"post": "schakt", "typ": pris_typ, "n": n, "storre": storre, "dmax": dmax,
+                            "pris": pris_m, "m": lm / n})        # ledningens del av gravmetrarna (kalkylmallen)
         if satt == "slagen_spont":
             pris_m2 = kr(kost, "slagen_spont")
             if pris_m2 is None:
@@ -342,6 +361,9 @@ def _grav(led, kost, per_id, schakttyp, medlagda=None):
             o["spont_m2"] += m2
             o["spont"] += m2 * pris_m2
         o["djuptillagg"] += steg * (kr(kost, "djuptillagg", dim=dmax) or 0.0) / n * lm
+        if steg > 0:
+            o["poster"].append({"post": "djuptillagg", "dmax": dmax, "pris": kr(kost, "djuptillagg", dim=dmax) or 0.0,
+                                "m": steg * lm / n})
         o["aterstallning"] += (kr(kost, "aterstallning") or 0.0) / n * lm
         if n > 1:
             o["delad_m"] += lm
@@ -403,7 +425,7 @@ def servisgravar(serviser: list[dict]) -> dict[int, int]:
     return {i: rot(i) for i in range(len(serviser))}
 
 
-def _servis_helschakt(egna, alla, grupp, metod_for, kost, schakttyp, metod="omläggning"):
+def _servis_helschakt(egna, alla, grupp, metod_for, kost, schakttyp, metod="omläggning", poster=None):
     """Serviskostnad i helschakt för en lednings serviser. En servis delar servisgrav med de serviser i
     samma grupp vars huvudledning också läggs om i alternativet; gravens pris delas lika mellan dem.
     grupp = (index -> gruppnummer, gruppnummer -> index)."""
@@ -417,6 +439,9 @@ def _servis_helschakt(egna, alla, grupp, metod_for, kost, schakttyp, metod="oml�
         L = max(_servis_m(alla[j]) for j in med) if med else _servis_m(s)
         pris_m = kr(kost, "servis_helschakt", ledningar=m, system=s.get("system")) or 0.0
         summa += (pris_m + tillagg) * L / max(1, len(med))
+        if poster is not None:
+            poster.append({"pris": pris_m, "system": s.get("system"), "m": L / max(1, len(med)),
+                           "tillagg": tillagg, "tillagg_typ": schakttyp if tillagg else None})
     return summa
 
 
@@ -492,6 +517,37 @@ def antal_ventilgropar(led: dict) -> int:
     return sum(antal.get(k, 0) for k in VENTILGROP_KATEGORIER)
 
 
+def _procent(v) -> float | None:
+    """Procentpåslag: 10, "10 %" eller 0,10 -> 0.10; tomt -> None."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        x = float(v)
+    else:
+        m = re.search(r"-?\d+(?:[.,]\d+)?", str(v))
+        if not m:
+            return None
+        x = float(m.group(0).replace(",", "."))
+    return x / 100.0 if x > 1 else x
+
+
+def _paslag(l: dict, nyckel: str, falt: str) -> float | None:
+    """Ledningens procentpåslag: från områdets fält (Ledningsinventering satte l[nyckel]), annars ett fält med
+    samma namn på ledningen."""
+    if l.get(nyckel) is not None:
+        return _procent(l[nyckel])
+    attr = l.get("attribut") or {}
+    return _procent(next((v for k, v in attr.items() if falt and str(k).upper() == falt.upper()), None))
+
+
+def trafikpaslag(l: dict) -> float | None:
+    return _paslag(l, "trafikpaslag", TRAFIK_FALT)
+
+
+def provisorier(l: dict) -> float | None:
+    return _paslag(l, "provisorier", PROVISORIER_FALT)
+
+
 def _anordningar(l: dict, kategori: str | tuple) -> int | None:
     """Antal anordningar av kategorin på ledningen; None när filen saknar anordningar."""
     if "anordningar_antal" not in l:
@@ -504,7 +560,9 @@ def _omlaggning(led, kost, per_id, schakttyp, medlagda, serv_idx, alla_serv, gru
     o, brist, n, beskr = _grav(led, kost, per_id, schakttyp, medlagda)
     if o is None:
         return None, brist, n, beskr
-    o["serviser"] = _servis_helschakt(serv_idx, alla_serv, grupp, metod_for, kost, o["pris_typ"])
+    o["servis_poster"] = []
+    o["serviser"] = _servis_helschakt(serv_idx, alla_serv, grupp, metod_for, kost, o["pris_typ"],
+                                      poster=o["servis_poster"])
     o["summa"] = o["schakt"] + o["spont"] + o["djuptillagg"] + o["aterstallning"] + o["brunnar"] + o["serviser"]
     return o, brist, n, beskr
 
@@ -979,6 +1037,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            "Brandposter (st)", "Servisventiler (st)", "Ledningsändar (st)", "Övriga anordningar (st)", "Schaktgrupp",
            "Ledningar i graven (st)", "Delad grav (m)", "Grav längs ledningen", "Schaktlängd (m)", "Samschakt med", "Parallella", "Korsningar",
            "Alt. lägg om (kr)", "Schaktsätt alt. lägg om", "Metod alt. schaktfritt", "Alt. schaktfritt (kr)", "Anmärkning",
+           "Trafiktillägg (%)", "Provisorier (%)",
            "Lägg om efter djup (kr)", "Lägg om ledningschakt (kr)", "Lägg om med spontsläde (kr)", "Lägg om bergschakt (kr)",
            "Lägg om KC-förstärkning (kr)", "Schaktsätt efter djup", "Slagen spont efter djup (m²)", "Spont efter djup (kr)",
            "Schakt (kr)", "Gravdjup (m)", "Slagen spont (m²)", "Spont (kr)", "Djuptillägg (kr)", "Återställning (kr)", "Brunnar (kr)", "Serviser helschakt (kr)",
@@ -1024,7 +1083,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
                ", ".join(f"{k['ledning']} vid {k['station_m']:.1f} m".replace(".", ",")
                          for k in l.get("korsningar") or []) or None,
                _kr(o), SCHAKTSATT_NAMN.get((o or {}).get("schaktsatt")), l.get("_alt_metod"), _kr(l.get("_alt")),
-               _anmarkning(l)] + \
+               _anmarkning(l), trafikpaslag(l), provisorier(l)] + \
               [_kr((l.get("_typer") or {}).get(t)) for t in ALLA_SCHAKTTYPER] + \
               [SCHAKTSATT_NAMN.get((dj or {}).get("schaktsatt")), _r((dj or {}).get("spont_m2")) or None,
                _kr(dj, "spont") or None] + \
@@ -1049,6 +1108,7 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
             format_[_dela_rubrik(k)[0]] = KR
     format_["Schaktlängd"] = M
     format_["Delad grav"] = M
+    format_["Trafiktillägg"] = format_["Provisorier"] = "0%"
     format_["Slagen spont efter djup"] = M
     tabell(ws, kol + attrkol, rader, bredder={"Anmärkning": 40, "Flaggor": 24, "ID": 14, "Grav längs ledningen": 40},
            dolda=DOLDA_LEDNINGAR + attrkol, format=format_)
@@ -1161,8 +1221,206 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
            bredder={"Kommentar": 70}, format={"Belopp": "#,##0.##"})
 
     skriv_sammanfattning(ws_s, data, ledningar, kost, kallor, K, DQ, dq_typer)
+    skriv_investeringskalkyl(wb.create_sheet("Investeringskalkyl", 1), K)
     wb.calculation.fullCalcOnLoad = True           # summorna är formler – räkna när filen öppnas
     wb.save(path)
+
+
+def skriv_investeringskalkyl(ws, K: Kolumner) -> None:
+    """Investeringskalkyl enligt SVOA:s mall (Tabell A och B, inriktningsbeslut BP2) för båda alternativen.
+    Entreprenaden = de jämförbara ledningarnas kostnad i fliken Ledningar (som Sammanfattning), med påslagen för
+    material och SVOA-arbeten på rörspräckning och helschakt (inte infodring) och innerstads-/vintertillägg på allt.
+    Byggherrekostnaderna är procent av entreprenaden per fas, kända risker och oförutsett procent av summan ovanför.
+    Alla tal är formler; procentsatserna står i gula celler överst."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    KR, PROC = '#,##0 "kr"', "0%"
+    tunn = Side(style="thin", color="BFBFBF")
+    kant = Border(top=tunn, bottom=tunn, left=tunn, right=tunn)
+    rubrikfarg = PatternFill("solid", fgColor="1F3864")
+    gul = PatternFill("solid", fgColor="FFF2CC")
+    ljus = PatternFill("solid", fgColor="DDEBF7")
+    for kol, b in zip("ABCDEFG", (44, 22, 22, 22, 3, 22, 22)):
+        ws.column_dimensions[kol].width = b
+
+    def cell(rad, kol, v, fmt=None, fet=False, fyll=None, kursiv=False, ram=True):
+        c = ws.cell(rad, kol, v)
+        if fmt:
+            c.number_format = fmt
+        if fet or kursiv:
+            c.font = Font(bold=fet, italic=kursiv, color="595959" if kursiv else None)
+        if fyll:
+            c.fill = fyll
+        if ram:
+            c.border = kant
+        return c
+
+    def rubrik(rad, texter):
+        for i, t in enumerate(texter, 1):
+            if t is None:
+                continue
+            c = cell(rad, i, t)
+            c.font, c.fill = Font(bold=True, color="FFFFFF"), rubrikfarg
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.row_dimensions[rad].height = 45
+
+    ws.cell(1, 1, "Investeringskalkyl – inriktningsbeslut (BP2)").font = Font(bold=True, size=14)
+    ws.cell(2, 1, "Enligt SVOA:s mall Kalkyl inriktningsbeslut LEDN (flikarna Alternativ, Entreprenadkalkyl och "
+                  "Investeringsärende BP2). Procentsatserna i de gula cellerna kan ändras – allt räknas om.").font = \
+        Font(italic=True, color="595959")
+
+    # --- procentsatser --------------------------------------------------------------------------
+    rad = 4
+    rubrik(rad, ["Påslag i % av entreprenadkostnaden", "Planerafasen", "Genomförafasen"])
+    andel = {}
+    for namn, a_pl, a_ge in BYGGHERRE_ANDEL:
+        rad += 1
+        cell(rad, 1, namn)
+        cell(rad, 2, a_pl, PROC, fyll=gul)
+        cell(rad, 3, a_ge, PROC, fyll=gul)
+        andel[namn] = (f"$B${rad}", f"$C${rad}")
+    rad += 2
+    rubrik(rad, ["Övriga påslag", "Andel", None])
+    param = {}
+    for nyckel, namn, v, kommentar in (
+            ("risk", "Kända risker", KANDA_RISKER_ANDEL, "av byggherrekostnaderna (och entreprenaden i totalbudgeten)"),
+            ("oforutsett", "Oförutsett", OFORUTSETT_ANDEL, "av summan ovanför i tabellen"),
+            ("material", "Material som SVOA tillhandahåller (AFC.1522)", AFC_MATERIAL_ANDEL,
+             "på rörspräckning och helschakt (inte infodring)"),
+            ("arbeten", "Arbeten som SVOA utför (AFC.114)", AFC_SVOA_ARBETEN_ANDEL,
+             "på rörspräckning och helschakt (inte infodring)"),
+            ("vinter", "Vintertillägg", VINTERTILLAGG, "på hela entreprenaden: 5 % om arbetet kan ske vintertid")):
+        rad += 1
+        cell(rad, 1, namn)
+        cell(rad, 2, v, PROC, fyll=gul)
+        cell(rad, 3, kommentar, kursiv=True, ram=False)
+        param[nyckel] = f"$B${rad}"
+
+    # --- sammanställning ------------------------------------------------------------------------
+    rad += 2
+    rubrik(rad, ["Total projektbudget utan prisindexrisk", "Alt. lägg om", "Alt. schaktfritt"])
+    sammanst = rad + 1
+    cell(sammanst, 1, "Avrundat till närmaste 100 000-tal", fet=True)
+    cell(sammanst + 1, 1, "Varav entreprenad inklusive material")
+    rad = sammanst + 3
+    ws.cell(rad, 1, "Bara ledningar med kostnad i båda alternativen ingår (som i Sammanfattning) – övriga står under "
+                    "Utan kostnad där.").font = Font(italic=True, color="595959")
+
+    JFR = _jamforbar_krit(K)
+    METOD = K("Metod alt. schaktfritt")
+    TRAFIK, PROV = K("Trafiktillägg"), K("Provisorier")
+    for kol_samman, titel, kostnad, delar in (
+            (2, "Alt. lägg om", K("Alt. lägg om"), [("Helschakt (omläggning)", None, True)]),
+            (3, "Alt. schaktfritt", K("Alt. schaktfritt"), [("Infodring", "strumpa", False),
+                                                            ("Rörspräckning", "rörspräckning", True),
+                                                            ("Helschakt (omläggning)", "omläggning", True)])):
+        rad += 3
+        ws.cell(rad, 1, titel).font = Font(bold=True, size=13)
+        # Entreprenadkalkyl
+        rad += 1
+        rubrik(rad, ["Entreprenadkalkyl", "Entreprenadkostnad", None])
+        rad_delar = []
+        for namn, metod, med_afc in delar:
+            rad += 1
+            krit = JFR + ([(METOD, _txt(metod))] if metod else [])
+            cell(rad, 1, namn)
+            cell(rad, 2, "=" + _sumifs(kostnad, krit), KR)
+            rad_delar.append((rad, med_afc))
+        afc = [f"B{r}" for r, m in rad_delar if m]
+        rad += 1
+        cell(rad, 1, "Material och SVOA-arbeten (AFC.1522, AFC.114)")
+        cell(rad, 2, f"=({'+'.join(afc)})*({param['material']}+{param['arbeten']})" if afc else 0, KR)
+        r_afc = rad
+        # trafiktillägg och provisorier per ledning (procent i kolumnerna i Ledningar, från områdets fält),
+        # på ledningens kostnad inklusive AFC-påslagen
+        for kol_pct, namn_rad in ((TRAFIK, "Trafiktillägg (per område)"), (PROV, "Provisorier (per område)")):
+            termer = []
+            for namn, metod, med_afc in delar:
+                villkor = [f'--({K("Alt. lägg om")}<>"")', f'--({K("Alt. schaktfritt")}<>"")'] + \
+                    ([_lika(METOD, metod)] if metod else [])
+                faktor = f"*(1+{param['material']}+{param['arbeten']})" if med_afc else ""
+                termer.append(f"SUMPRODUCT({','.join(villkor + [kostnad, kol_pct])}){faktor}")
+            rad += 1
+            cell(rad, 1, namn_rad)
+            cell(rad, 2, "=" + "+".join(termer), KR)
+        rad += 1
+        bas = "+".join([f"B{r}" for r, _ in rad_delar] + [f"B{r_afc}"])
+        cell(rad, 1, "Vintertillägg")
+        cell(rad, 2, f"=({bas})*{param['vinter']}", KR)
+        rad += 1
+        cell(rad, 1, "Entreprenad inklusive material", fet=True)
+        cell(rad, 2, f"=SUM(B{rad_delar[0][0]}:B{rad - 1})", KR, fet=True, fyll=ljus)
+        E = f"$B${rad}"
+
+        # Tabell A – planeringsbudget
+        rad += 2
+        ws.cell(rad, 1, "TABELL A – INRIKTNINGSBESLUT (BP2)").font = Font(bold=True)
+        rad += 1
+        rubrik(rad, ["Moment", "Beräknad planeringsbudget",
+                     "Beräknad planeringsbudget avrundad till närmsta 100 000-tal", "Kommentar"])
+        a0 = rad + 1
+        for namn, _, _ in BYGGHERRE_ANDEL:
+            rad += 1
+            cell(rad, 1, namn)
+            cell(rad, 2, f"={E}*{andel[namn][0]}", KR)
+            cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+            cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Kända risker")
+        cell(rad, 2, f"=SUM(B{a0}:B{rad - 1})*{param['risk']}", KR)
+        cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+        cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Oförutsett")
+        cell(rad, 2, f"=SUM(B{a0}:B{rad - 1})*{param['oforutsett']}", KR)
+        cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+        cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Summa", fet=True)
+        cell(rad, 2, f"=SUM(B{a0}:B{rad - 1})", KR, fet=True)
+        cell(rad, 3, f"=SUM(C{a0}:C{rad - 1})", KR, fet=True)
+
+        # Tabell B – indikativ totalbudget
+        rad += 2
+        rubrik(rad, ["Moment", "Indikativ totalbudget inklusive planeringsbudget",
+                     "Indikativ totalbudget inklusive planeringsbudget avrundad till närmsta 100 000-tal", "Kommentar"])
+        b0 = rad + 1
+        for namn, _, _ in BYGGHERRE_ANDEL:
+            rad += 1
+            cell(rad, 1, namn)
+            cell(rad, 2, f"={E}*({andel[namn][0]}+{andel[namn][1]})", KR)
+            cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+            cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Entreprenad inklusive material")
+        cell(rad, 2, f"={E}", KR)
+        cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+        cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Kända risker")
+        cell(rad, 2, f"=SUM(B{b0}:B{rad - 1})*{param['risk']}", KR)
+        cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+        cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Oförutsett")
+        cell(rad, 2, f"=SUM(B{b0}:B{rad - 1})*{param['oforutsett']}", KR)
+        cell(rad, 3, f"=ROUND(B{rad},-5)", KR)
+        cell(rad, 4, None, fyll=gul)
+        rad += 1
+        cell(rad, 1, "Oförutsett – avrundning av totalbelopp (vid behov)")
+        cell(rad, 2, None)
+        cell(rad, 3, None, KR, fyll=gul)
+        cell(rad, 4, "Summeras till oförutsett.", kursiv=True)
+        rad += 1
+        cell(rad, 1, "Summa", fet=True)
+        cell(rad, 2, f"=SUM(B{b0}:B{rad - 1})", KR, fet=True)
+        cell(rad, 3, f"=SUM(C{b0}:C{rad - 1})", KR, fet=True)
+        r_summa = rad
+        rad += 2
+        cell(rad, 1, "Total projektbudget utan prisindexrisk", fet=True)
+        cell(rad, 3, f"=C{r_summa}", KR, fet=True, fyll=ljus)
+        cell(sammanst, kol_samman, f"=C{rad}", KR, fet=True, fyll=ljus)
+        cell(sammanst + 1, kol_samman, f"={E}", KR)
+    ws.sheet_view.showGridLines = False
 
 
 def skriv_sammanfattning(ws, data, ledningar, kost, kallor, K: Kolumner, DQ: Kolumner, dq_typer: list) -> None:
@@ -1366,6 +1624,7 @@ def skriv_resultat(ledningar: list[dict], path: str, kalla: str) -> None:
             "alt_lagg_om_per_schakttyp": {t: _kr(v) for t, v in (l.get("_typer") or {}).items()},
             "alt_schaktfritt_metod": l.get("_alt_metod"),
             "alt_schaktfritt_kr": _kr(l.get("_alt")), "anmarkning": _anmarkning(l),
+            "omrade": l.get("omrade") or None, "trafikpaslag": trafikpaslag(l), "provisorier": provisorier(l),
         })
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"version": 2, "kalla": "ledning_analys.py", "ledningsdata": kalla,
