@@ -211,6 +211,7 @@ class Markhojd(object):
         self.sr = sr                             # ledningarnas koordinatsystem (x, y i hojd())
         self.sr_kalla = None                     # satts nar kallan har ett annat koordinatsystem
         self.affin = None                        # linjar transformation ledningar -> kalla over straket
+        self.cell = None                         # rastrets cellstorlek (m), None for punktlager
         src = _rasterlager_i_kartan(lager)       # rasterlager i kartan hittas fore featurelager
         dq = None
         if src is None:
@@ -230,7 +231,12 @@ class Markhojd(object):
                 self.ext = (float(e.XMin), float(e.YMin), float(e.XMax), float(e.YMax))
             except Exception:
                 self.ext = None
-            logg('  markhojd ur raster %s' % txt(getattr(d, 'name', src)))
+            try:
+                self.cell = min(float(d.meanCellWidth), float(d.meanCellHeight))
+            except Exception:
+                self.cell = None
+            logg('  markhojd ur raster %s%s' % (txt(getattr(d, 'name', src)),
+                                                ' (cellstorlek %.2f m)' % self.cell if self.cell else ''))
             self._satt_sr(d)
             if bbox is not None:
                 self._anpassa_affin(bbox)
@@ -423,6 +429,8 @@ class FleraMarkhojder(object):
 
     def __init__(self, kallor):
         self.kallor = kallor
+        celler = [k.cell for k in kallor if getattr(k, 'cell', None)]
+        self.cell = min(celler) if celler else None
 
     def hojd(self, x, y):
         for k in self.kallor:

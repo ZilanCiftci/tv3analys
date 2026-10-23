@@ -51,6 +51,7 @@ from gisexport import _tal, _heltal, _text, _faltnamn, _ovriga_falt, _json_varde
 VERSION = 1
 
 FLACK_PROMILLE = 2.0          # lutning under detta (i belopp) flaggas "flack"
+MARK_INTERVALL_MIN_M = 0.1    # tatare markprofil an sa gors inte (stora filer, ingen ny information)
 ORIMLIG_PROMILLE = 200.0      # lutning over detta flaggas "vg orimlig" (troligen fel niva i GIS)
 SCHAKT_BREDD_FAKTOR = 2.0       # schaktlangd: ledningar i samma schaktgrupp inom faktor x parallell_avstand
                                 # (c-c) fran varandra raknas till samma schakt
@@ -229,6 +230,27 @@ def _las_serviser(servislager, omrade, dim_falt, mat_falt, ledntyp_falt, id_falt
     return ut
 
 
+def _mark_intervall(mark_intervall, mark, intervall):
+    """Avstandet mellan markhojderna i profilen: angivet varde, annars rastrets cellstorlek (sa att
+    profilen far rastrets detaljeringsgrad), annars intervall. Aldrig under MARK_INTERVALL_MIN_M."""
+    try:
+        mi = float(mark_intervall) if mark_intervall not in (None, '') else 0.0
+    except (TypeError, ValueError):
+        mi = 0.0
+    if mi > 0:
+        kalla_ = 'angivet'
+    elif mark is not None and getattr(mark, 'cell', None):
+        mi, kalla_ = float(mark.cell), 'rastrets cellstorlek'
+    else:
+        mi, kalla_ = intervall, 'samma som provtatheten'
+    if mi < MARK_INTERVALL_MIN_M:
+        logg('  markprofilen: %.2f m ar for tatt - %.2f m anvands' % (mi, MARK_INTERVALL_MIN_M))
+        mi = MARK_INTERVALL_MIN_M
+    if mark is not None:
+        logg('  markprofil var %.2f m (%s)' % (mi, kalla_))
+    return round(mi, 3)
+
+
 def _koppla_serviser(serviser, ledningar, rutnat, tolerans, intervall):
     """Kopplar varje servis till huvudledningen narmast nagon av dess andar (inom toleransen)."""
     n_ok = 0
@@ -397,12 +419,14 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
               parallell_avstand=3.0, parallell_min_m=10.0, intervall=1.0, vatten_djup=1.7,
               sokradie=5.0, hojdsystem='RH2000', skriv_csv=True, omradeslager=None,
               anordningslager=None, anordning_radie=3.0, klipp_vatten=True, omrade_namnfalt=None,
-              trafik_falt=None, provisorier_falt=None):
+              trafik_falt=None, provisorier_falt=None, mark_intervall=None):
     """Inventerar ledningsnatet och skriver ledningsdata.json (+ CSV). Returnerar sammanfattningen.
     omrade_namnfalt: faltet med omradets namn i omradeslagret - varje ledning far 'omrade' (omradet dar
     ledningens mittpunkt ligger). trafik_falt/provisorier_falt: falt i omradeslagret med procentpaslag
     for trafiktillagg och provisorier (10 eller 0,10 = 10 %) - ledningarna i omradet far dem som
-    'trafikpaslag'/'provisorier' och omradena listas i toppfaltet 'omraden'."""
+    'trafikpaslag'/'provisorier' och omradena listas i toppfaltet 'omraden'.
+    mark_intervall: avstand mellan markhojderna i profilen (m); None/0 = markhojdsrastrets cellstorlek
+    (punktlager: intervall). intervall galler parallella ledningar, serviser och samma grav."""
     import time
     t0 = time.time()
 
@@ -511,6 +535,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         bbox = (min(xs), min(ys), max(xs), max(ys)) if xs else None
         import projektering
         mark = projektering.markhojd(_lista(markhojd), z_falt, sokradie, omrade, bbox, sr)
+    mi = _mark_intervall(mark_intervall, mark, float(intervall))
     n_mark = n_lock = n_schablon = n_utan = 0
     for p in ledningar:
         vatten_vg = _vatten_till_botten(p, vatten_djup)
@@ -519,7 +544,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         b_fran, b_till = brunn_index.get(p['fran']), brunn_index.get(p['till'])
         lock_f = b_fran['lockniva'] if b_fran else None
         lock_t = b_till['lockniva'] if b_till else None
-        prov = _langs([(q[0], q[1]) for q in pts], float(intervall))
+        prov = _langs([(q[0], q[1]) for q in pts], mi)
         profil, djup, markh = [], [], []
         kalla_ = ''
         for m, x, y in prov:
@@ -783,7 +808,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         'genererad': datetime.datetime.now().strftime('%Y-%m-%d %H:%M'),
         'parametrar': {'tolerans_m': float(tolerans), 'parallell_avstand_m': float(parallell_avstand),
                        'parallell_min_m': float(parallell_min_m),
-                       'omradeslager': txt(omradeslager) if omradeslager else None, 'intervall_m': float(intervall),
+                       'omradeslager': txt(omradeslager) if omradeslager else None, 'intervall_m': float(intervall), 'mark_intervall_m': mi,
                        'omrade_namnfalt': omrade_namnfalt, 'trafik_falt': trafik_falt,
                        'provisorier_falt': provisorier_falt,
                        'vatten_djup_m': float(vatten_djup), 'vatten_djup_till': 'botten',

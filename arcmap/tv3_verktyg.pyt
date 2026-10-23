@@ -1756,6 +1756,9 @@ class Ledningsinventering(object):
             displayName='Punktlager: s\u00f6kradie (m)', name='sokradie', datatype='GPDouble',
             parameterType='Required', direction='Input', category=K_MARK)
         sokradie.value = 5.0
+        mark_int = arcpy.Parameter(
+            displayName='Markprofil: avst\u00e5nd mellan markh\u00f6jderna (m, tomt = rastrets cellstorlek)',
+            name='mark_intervall', datatype='GPDouble', parameterType='Optional', direction='Input', category=K_MARK)
 
         def tal(disp, namn, varde, typ='GPDouble'):
             p = arcpy.Parameter(displayName=disp, name=namn, datatype=typ, parameterType='Required',
@@ -1793,7 +1796,7 @@ class Ledningsinventering(object):
 
         params = _minne_fyll(self, [ledning, vatten, brunn, servis, brunn_id, json_ut, anordning,
                                     lock, botten, btyp, vg_fran, vg_till, dim, mat, ltyp, ar, ren, lut, lid,
-                                    mark, z_falt, sokradie,
+                                    mark, z_falt, sokradie, mark_int,
                                     tolerans, par_avst, par_andel, intervall, v_djup, a_radie, omrade,
                                     omr_namn, omr_trafik, omr_prov, klipp, hojdsystem])
         # forval: de lokala lagren fran Exportera omrade, annars kartans vanliga lager
@@ -1883,6 +1886,8 @@ class Ledningsinventering(object):
         for namn in ('tolerans', 'parallell_avstand', 'intervall', 'sokradie', 'anordning_radie'):
             if P[namn].value is not None and not P[namn].value > 0:
                 P[namn].setErrorMessage('St\u00f6rre \u00e4n 0')
+        if P['mark_intervall'].value is not None and not P['mark_intervall'].value > 0:
+            P['mark_intervall'].setErrorMessage('St\u00f6rre \u00e4n 0 (eller tomt = rastrets cellstorlek)')
         if P['parallell_min_m'].value is not None and P['parallell_min_m'].value < 0:
             P['parallell_min_m'].setErrorMessage('Minsta str\u00e4cka i meter, 0 eller mer')
         if P['vatten_djup'].value is not None and P['vatten_djup'].value < 0:
@@ -1926,7 +1931,8 @@ class Ledningsinventering(object):
             hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'),
             anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value),
             klipp_vatten=bool(P['klipp_vatten'].value), omrade_namnfalt=v('omrade_namnfalt'),
-            trafik_falt=v('trafik_falt'), provisorier_falt=v('provisorier_falt'))
+            trafik_falt=v('trafik_falt'), provisorier_falt=v('provisorier_falt'),
+            mark_intervall=float(P['mark_intervall'].value) if P['mark_intervall'].value else None)
         arcpy.AddMessage('Klart: %(ledningar)d ledningar, %(brunnar)d brunnar, %(serviser_kopplade)d av %(serviser)d '
                          'serviser kopplade, %(anordningar_kopplade)d av %(anordningar)d anordningar kopplade, '
                          '%(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
