@@ -103,6 +103,8 @@ STANDARD_RENOVERINGSAR = ['RestorationYear', 'RENOVERINGSAR', 'REN_AR', 'RELINAD
 STANDARD_SERVIS = ['A Servis']
 # Exportera omrade: grupper i kartan vars featurelager forvaljs, och gissningar pa namnfaltet i omradeslagret
 STANDARD_VA_GRUPPER = ['Avlopp', 'Vatten']
+STANDARD_TRAFIK = ['TRAFIKPASLAG', 'TRAFIKTILLAGG', 'TRAFIK']      # procentpaslag pa omradena (Ledningsinventering)
+STANDARD_PROVISORIER = ['PROVISORIER', 'PROVISORIUM', 'PROV']
 STANDARD_OMRADESNAMN = ['NAMN', 'NAME', 'OMRADE', 'OMR\u00c5DE', 'BETECKNING', 'BENAMNING', 'DRIFTOMR', 'DUF', 'ID']
 LAGERNAMN_BEDOMDA = 'Bedomda ledningar'      # lagernamnet som Skapa ledningslager ger
 STANDARD_DUF = ['DUF-omr\u00e5den', 'DUF-omrade', 'DUF omr\u00e5den', 'Driftomr\u00e5den', 'Driftomrade']
@@ -1769,6 +1771,16 @@ class Ledningsinventering(object):
         omrade = _lagerparam('Begr\u00e4nsa till omr\u00e5de (polygonlager, valfritt)', 'omradeslager',
                              False, kartlager, 'Optional')
         omrade.category = K_INST
+        omr_namn = arcpy.Parameter(
+            displayName='Omr\u00e5deslagret: f\u00e4lt med omr\u00e5dets namn (ledningarna f\u00e5r omr\u00e5det)',
+            name='omrade_namnfalt', datatype='GPString', parameterType='Optional', direction='Input', category=K_INST)
+        omr_trafik = arcpy.Parameter(
+            displayName='Omr\u00e5deslagret: f\u00e4lt med trafikp\u00e5slag i % (Tabell E i kalkylmallen)',
+            name='trafik_falt', datatype='GPString', parameterType='Optional', direction='Input', category=K_INST)
+        omr_prov = arcpy.Parameter(
+            displayName='Omr\u00e5deslagret: f\u00e4lt med p\u00e5slag f\u00f6r provisorier i %',
+            name='provisorier_falt', datatype='GPString', parameterType='Optional', direction='Input',
+            category=K_INST)
         klipp = arcpy.Parameter(
             displayName='Klipp vattenledningarna vid omr\u00e5desgr\u00e4nsen (avloppsledningarna beh\u00e5lls hela, brunn till brunn)',
             name='klipp_vatten', datatype='GPBoolean', parameterType='Optional', direction='Input', category=K_INST)
@@ -1782,7 +1794,7 @@ class Ledningsinventering(object):
                                     lock, botten, btyp, vg_fran, vg_till, dim, mat, ltyp, ar, ren, lut, lid,
                                     mark, z_falt, sokradie,
                                     tolerans, par_avst, par_andel, intervall, v_djup, a_radie, omrade,
-                                    klipp, hojdsystem])
+                                    omr_namn, omr_trafik, omr_prov, klipp, hojdsystem])
         # forval: de lokala lagren fran Exportera omrade, annars kartans vanliga lager
         if not ledning.valueAsText:
             _satt_varden(ledning, _lokala_av_slag(kartlager, 'avlopp') or _langa_namn(STANDARD_LEDNING, kartlager))
@@ -1848,6 +1860,15 @@ class Ledningsinventering(object):
         if mark.altered and mark.valueAsText:
             falt = _faltnamn(mark)
             _filter(P['z_falt'], [''] + falt)
+        omr = P['omradeslager']
+        if omr.valueAsText:
+            falt = _faltnamn(omr)
+            if falt:
+                for namn, kand in (('omrade_namnfalt', STANDARD_OMRADESNAMN), ('trafik_falt', STANDARD_TRAFIK),
+                                   ('provisorier_falt', STANDARD_PROVISORIER)):
+                    _filter(P[namn], [''] + falt)
+                    if not P[namn].altered and not P[namn].valueAsText:
+                        P[namn].value = _forsta_traff(kand, falt)
         return
 
     def updateMessages(self, parameters):
@@ -1903,7 +1924,8 @@ class Ledningsinventering(object):
             vatten_djup=float(P['vatten_djup'].value), sokradie=float(P['sokradie'].value),
             hojdsystem=P['hojdsystem'].valueAsText or 'RH2000', omradeslager=v('omradeslager'),
             anordningslager=_lagerlista(P['anordningslager']), anordning_radie=float(P['anordning_radie'].value),
-            klipp_vatten=bool(P['klipp_vatten'].value))
+            klipp_vatten=bool(P['klipp_vatten'].value), omrade_namnfalt=v('omrade_namnfalt'),
+            trafik_falt=v('trafik_falt'), provisorier_falt=v('provisorier_falt'))
         arcpy.AddMessage('Klart: %(ledningar)d ledningar, %(brunnar)d brunnar, %(serviser_kopplade)d av %(serviser)d '
                          'serviser kopplade, %(anordningar_kopplade)d av %(anordningar)d anordningar kopplade, '
                          '%(samschakt_par)d samschakt-par i %(schaktgrupper)d grupper, '
