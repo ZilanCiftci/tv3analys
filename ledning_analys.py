@@ -1014,6 +1014,11 @@ def _radformler(rad: list, kol: list[str], K: Kolumner, nr: int, l: dict) -> Non
 
 
 IK_BLAD = "Investeringskalkyl"
+REINV_ANDEL = 0.10                   # fliken Reinvestering: andel av ledningslängden som åtgärdas
+REINV_RANTA = 0.03                   # kalkylränta
+REINV_LIVSLANGD = 100                # teknisk livslängd (år)
+REINV_SCHAKTFRITT_PLANERAD = 0.70    # andel schaktfritt när livslängden är uppnådd (förval per rad)
+REINV_SCHAKTFRITT_NU = 0.0           # andel schaktfritt vid reinvestering nu (förval per rad)
 IK_PARAM = ("risk", "oforutsett", "material", "arbeten", "vinter")   # ordningen i fliken Investeringskalkyl
 
 
@@ -1249,8 +1254,145 @@ def skriv_excel(data: dict, ledningar: list[dict], path: str, kost: list[dict], 
 
     skriv_sammanfattning(ws_s, data, ledningar, kost, kallor, K, DQ, dq_typer)
     skriv_investeringskalkyl(wb.create_sheet(IK_BLAD, 1), K)
+    skriv_reinvestering(wb.create_sheet("Reinvestering", 2), K, ledningar)
     wb.calculation.fullCalcOnLoad = True           # summorna är formler – räkna när filen öppnas
     wb.save(path)
+
+
+def _decennium(l: dict) -> int | None:
+    ar = l.get("anlaggningsar")
+    try:
+        return int(ar) // 10 * 10 if ar else None
+    except (TypeError, ValueError):
+        return None
+
+
+def skriv_reinvestering(ws, K: Kolumner, ledningar: list[dict]) -> None:
+    """Reinvestering nu mot planerad reinvestering när den tekniska livslängden är uppnådd, per system och
+    anläggningsdecennium, som nuvärde. Kostnad per meter = snittet för ledningarna i raden (Alt. schaktfritt
+    respektive Alt. lägg om inkl. påslag i fliken Ledningar), annars systemets snitt. Gula celler kan ändras."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    KR, PROC, M = '#,##0', "0%", "#,##0"
+    tunn = Side(style="thin", color="BFBFBF")
+    kant = Border(top=tunn, bottom=tunn, left=tunn, right=tunn)
+    mork = PatternFill("solid", fgColor="1F3864")
+    gul = PatternFill("solid", fgColor="FFF2CC")
+    gron = PatternFill("solid", fgColor="E2EFDA")
+    rosa = PatternFill("solid", fgColor="FCE4D6")
+    ljus = PatternFill("solid", fgColor="DDEBF7")
+
+    def cell(r, c, v, fmt=None, fyll=None, fet=False, ram=True):
+        x = ws.cell(r, c, v)
+        if fmt:
+            x.number_format = fmt
+        if fyll:
+            x.fill = fyll
+        if fet:
+            x.font = Font(bold=True)
+        if ram:
+            x.border = kant
+        return x
+
+    ws.cell(1, 1, "Reinvestering nu eller när livslängden är uppnådd").font = Font(bold=True, size=14)
+    ws.cell(2, 1, "Nuvärde = kostnad / (1 + kalkylränta)^(år kvar). Reinvestering nu räknas utan diskontering. "
+                  "Gula celler kan ändras – allt räknas om.").font = Font(italic=True, color="595959")
+    param = {}
+    r = 4
+    for nyckel, namn, v, fmt, kommentar in (
+            ("andel", "Andel av ledningslängden som åtgärdas", REINV_ANDEL, PROC, "i båda alternativen"),
+            ("ranta", "Kalkylränta", REINV_RANTA, "0.0%", "real ränta per år"),
+            ("livslangd", "Teknisk livslängd", REINV_LIVSLANGD, "0", "år – ger Livslängd kvar per decennium"),
+            ("basar", "Basår", datetime.now().year, "0", "år då reinvestering nu sker"),
+            ("sf_planerad", "Andel schaktfritt – planerad reinvestering", REINV_SCHAKTFRITT_PLANERAD, PROC,
+             "förval per rad"),
+            ("sf_nu", "Andel schaktfritt – reinvestering nu", REINV_SCHAKTFRITT_NU, PROC, "förval per rad")):
+        cell(r, 1, namn)
+        cell(r, 2, v, fmt, fyll=gul)
+        ws.cell(r, 3, kommentar).font = Font(italic=True, color="595959")
+        param[nyckel] = f"$B${r}"
+        r += 1
+
+    r += 1
+    grupp = r
+    for c1, c2, text, fyll in ((8, 13, "Planerad reinvestering när livslängden är uppnådd", gron),
+                               (14, 18, "Reinvestering nu", rosa)):
+        ws.merge_cells(start_row=grupp, start_column=c1, end_row=grupp, end_column=c2)
+        x = ws.cell(grupp, c1, text)
+        x.fill, x.font, x.alignment = fyll, Font(bold=True), Alignment(horizontal="center")
+    rubriker = [("System", ""), ("Decennium", ""), ("Längd", "m"), ("Åtgärdas", "m"),
+                ("Alt. schaktfritt", "kr/m"), ("Alt. lägg om (schakt)", "kr/m"), ("Livslängd kvar", "år"),
+                ("Andel schaktfritt", "%"), ("Kostnad schaktfritt", "kr"), ("Andel schakt", "%"),
+                ("Kostnad schakt", "kr"), ("Kostnad", "kr"), ("Nuvärde", "kr"),
+                ("Andel schaktfritt", "%"), ("Kostnad schaktfritt", "kr"), ("Andel schakt", "%"),
+                ("Kostnad schakt", "kr"), ("Kostnad = nuvärde", "kr"), ("Merkostnad nu", "kr")]
+    r = grupp + 1
+    for c, (namn, enhet) in enumerate(rubriker, 1):
+        x = cell(r, c, namn)
+        x.font, x.fill = Font(bold=True, color="FFFFFF"), mork
+        x.alignment = Alignment(wrap_text=True, vertical="top")
+        y = cell(r + 1, c, enhet)
+        y.font, y.fill = Font(italic=True, color="595959", size=9), PatternFill("solid", fgColor="EDEDED")
+        y.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[r].height = 45
+    forsta = r + 2
+
+    SYS, L, AR = K("System"), K("Längd"), K("Anläggningsår")
+    SF, LO = K("Alt. schaktfritt inkl. påslag"), K("Alt. lägg om inkl. påslag")
+    jfr = [f'--({K("Alt. lägg om")}<>"")', f'--({K("Alt. schaktfritt")}<>"")']
+
+    def per_meter(kostnad, villkor):
+        rad_ = ",".join(villkor + jfr)
+        sys_ = ",".join(villkor[:1] + jfr)
+        return (f"IFERROR(SUMPRODUCT({rad_},{kostnad})/SUMPRODUCT({rad_},{L}),"
+                f"IFERROR(SUMPRODUCT({sys_},{kostnad})/SUMPRODUCT({sys_},{L}),0))")
+
+    nycklar = sorted({(l.get("system") or "", _decennium(l)) for l in ledningar},
+                     key=lambda x: ("SDKV".find(x[0]) % 9, x[1] is None, x[1] or 0))
+    r = forsta
+    for s_, d in nycklar:
+        villkor = [_lika(SYS, s_)] + ([f'--({AR}="")'] if d is None
+                                       else [f'--({AR}<>"")', f"--({AR}>={d})", f"--({AR}<{d + 10})"])
+        cell(r, 1, SYSTEM_NAMN.get(s_, s_))
+        cell(r, 2, f"{d}-tal" if d is not None else "(saknas)")
+        cell(r, 3, "=SUMPRODUCT(" + ",".join(villkor + [L]) + ")", M)
+        cell(r, 4, f"=C{r}*{param['andel']}", M)
+        cell(r, 5, "=" + per_meter(SF, villkor), KR)
+        cell(r, 6, "=" + per_meter(LO, villkor), KR)
+        kvar = (f"=MAX(0,{d}+5+{param['livslangd']}-{param['basar']})" if d is not None
+                else f"=ROUND({param['livslangd']}/2,0)")
+        cell(r, 7, kvar, "0", fyll=gul)
+        cell(r, 8, f"={param['sf_planerad']}", PROC, fyll=gul)
+        cell(r, 9, f"=D{r}*H{r}*E{r}", KR)
+        cell(r, 10, f"=1-H{r}", PROC)
+        cell(r, 11, f"=D{r}*J{r}*F{r}", KR)
+        cell(r, 12, f"=I{r}+K{r}", KR)
+        cell(r, 13, f"=L{r}/(1+{param['ranta']})^G{r}", KR, fyll=ljus)
+        cell(r, 14, f"={param['sf_nu']}", PROC, fyll=gul)
+        cell(r, 15, f"=D{r}*N{r}*E{r}", KR)
+        cell(r, 16, f"=1-N{r}", PROC)
+        cell(r, 17, f"=D{r}*P{r}*F{r}", KR)
+        cell(r, 18, f"=O{r}+Q{r}", KR, fyll=ljus)
+        cell(r, 19, f"=R{r}-M{r}", KR)
+        r += 1
+    sista = r - 1
+    cell(r, 1, "Summa", fet=True)
+    for c in (3, 4, 9, 11, 12, 13, 15, 17, 18, 19):
+        bokstav = ws.cell(1, c).column_letter
+        cell(r, c, f"=SUM({bokstav}{forsta}:{bokstav}{sista})", M if c in (3, 4) else KR, fet=True)
+    r += 2
+    for t in ("Kostnad per meter = snittet för ledningarna i raden som har kostnad i båda alternativen (fliken Ledningar, "
+              "inkl. påslagen i Investeringskalkyl); saknas sådana i raden används systemets snitt.",
+              "Alt. schaktfritt (kr/m) är alternativets metod per ledning – infodring, rörspräckning eller omläggning där "
+              "det inte går schaktfritt; vatten infodras inte. Alt. lägg om är helschakt.",
+              "Livslängd kvar = decenniets mitt + teknisk livslängd − basår (minst 0); utan anläggningsår halva livslängden.",
+              "Merkostnad nu = nuvärdet av att reinvestera nu minus nuvärdet av att vänta tills livslängden är uppnådd.",
+              "Jämförelsen räknar en reinvesteringscykel; nästa förnyelse efter ytterligare en livslängd ingår inte."):
+        ws.cell(r, 1, t).font = Font(italic=True, color="595959")
+        r += 1
+    for c, b in enumerate((12, 11, 10, 10, 11, 11, 9, 10, 13, 9, 13, 13, 14, 10, 13, 9, 13, 14, 14), 1):
+        ws.column_dimensions[ws.cell(1, c).column_letter].width = b
+    ws.column_dimensions["A"].width = 40
+    ws.freeze_panes = ws.cell(forsta, 3)
 
 
 def skriv_investeringskalkyl(ws, K: Kolumner) -> None:
