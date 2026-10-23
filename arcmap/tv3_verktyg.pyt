@@ -400,6 +400,13 @@ def _kolla_geometri(param, tillatna, vad):
         param.setWarningMessage('%s bor vara %s: %s' % (vad, '/'.join(tillatna), ', '.join(fel)))
 
 
+# Verktygsgrupper (toolsets) i verktygsladan - visas som undermappar i ArcToolbox/Catalog
+TS_TV = 'TV-inspektion'
+TS_OMRADE = 'Omr\u00e5desanalys'
+TS_PROJ = 'Projektering'
+TS_ALLMANT = 'Hj\u00e4lpverktyg'
+
+
 class Toolbox(object):
     def __init__(self):
         self.label = 'tv3_analys'
@@ -412,6 +419,7 @@ class Toolbox(object):
 class SkapaLedningslager(object):
     def __init__(self):
         self.label = 'Skapa ledningslager'
+        self.category = TS_TV
         self.description = (
             'Skapar ett ledningslager av kartunderlag.json fr\u00e5n tv3_analys. '
             'Varje brunnspar i filen letas upp i brunnslagren och ledningen mellan '
@@ -616,6 +624,7 @@ class SkapaLedningslager(object):
 class UppdateraBedomning(object):
     def __init__(self):
         self.label = 'Uppdatera bed\u00f6mning'
+        self.category = TS_TV
         self.description = (
             'R\u00e4knar om G\u00e4llande bed\u00f6mning, Bed\u00f6mningstyp och STIL efter att du fyllt i '
             'Manuell bed\u00f6mning. Geometrin r\u00f6rs inte.')
@@ -656,6 +665,7 @@ class UppdateraBedomning(object):
 class Etapplager(object):
     def __init__(self):
         self.label = 'Etapplager (\u00e5tg\u00e4rdspaket)'
+        self.category = TS_TV
         self.description = (
             'Sl\u00e5r ihop str\u00e4ckorna i det bed\u00f6mda ledningslagret per etapp till ett '
             'linjelager med en linje per etapp: etappnummer, metod, l\u00e4ngd, kostnad, brunnar att '
@@ -725,6 +735,7 @@ class Etapplager(object):
 class Markprofil(object):
     def __init__(self):
         self.label = 'Markprofil'
+        self.category = TS_TV
         self.description = (
             'Tar ut markh\u00f6jden l\u00e4ngs varje str\u00e4cka i ledningslagret fr\u00e5n "Skapa '
             'ledningslager" ur ett punktlager med markh\u00f6jder, och vatteng\u00e5ngsniv\u00e5erna i '
@@ -851,6 +862,7 @@ class Markprofil(object):
 class Uppstroms(object):
     def __init__(self):
         self.label = 'Uppstr\u00f6ms'
+        self.category = TS_TV
         self.description = (
             'Allt som ligger uppstr\u00f6ms om en brunn eller en markerad ledning: ledningar, '
             'brunnar, serviser, total l\u00e4ngd och l\u00e4ngsta gren. Fl\u00f6desriktningen tas ur '
@@ -1038,6 +1050,7 @@ class Uppstroms(object):
 class ExporteraGisdata(object):
     def __init__(self):
         self.label = 'Exportera GIS-data (brunnar och ledningar)'
+        self.category = TS_TV
         self.description = (
             'Exporterar brunnarna (littera, typ, lockniv\u00e5) och ledningsstr\u00e4ckorna mellan '
             'brunnar (l\u00e4ngd, vatteng\u00e5ng i b\u00e5da \u00e4ndarna, dimension, material, '
@@ -1181,6 +1194,7 @@ class ExporteraGisdata(object):
 class ExporteraKartor(object):
     def __init__(self):
         self.label = 'Exportera kartor (PDF per str\u00e4cka)'
+        self.category = TS_TV
         self.description = (
             'Skriver en PDF-karta per \u00e5tg\u00e4rdsstr\u00e4cka (eller per etapp) ur layouten: dataramen '
             'centreras p\u00e5 str\u00e4ckan och skalan s\u00e4tts till den minsta i serien (1:200, 1:300, '
@@ -1327,6 +1341,7 @@ class ExporteraKartor(object):
 class ListaFalt(object):
     def __init__(self):
         self.label = 'Lista f\u00e4lt'
+        self.category = TS_ALLMANT
         self.description = (
             'Skriver en textfil med alla lager i kartan, deras f\u00e4lt (namn, alias, typ) och '
             'exempelv\u00e4rden. Anv\u00e4nd den f\u00f6r att se vilka f\u00e4lt som ska v\u00e4ljas i '
@@ -1362,6 +1377,7 @@ class ListaFalt(object):
 class ExporteraKartbild(object):
     def __init__(self):
         self.label = 'Exportera kartbild'
+        self.category = TS_ALLMANT
         self.description = (
             'Sparar kartans aktuella vy som PNG i utdatamappen fr\u00e5n tv3_analys (kartbild.png), '
             's\u00e5 att tv3_pptx.py kan l\u00e4gga in kartan i presentationen. Zooma och t\u00e4nd de '
@@ -1419,6 +1435,7 @@ class ExporteraKartbild(object):
 class SkapaProjekteringslager(object):
     def __init__(self):
         self.label = 'Skapa projekteringslager'
+        self.category = TS_PROJ
         self.description = (
             'Skapar tomma ritlager f\u00f6r ett nytt VA-str\u00e5k i en filgeodatabas: <prefix>_Ledning '
             '(linje, med vatteng\u00e5ng uppstr\u00f6ms/nedstr\u00f6ms, typ, dimension, material) och '
@@ -1463,6 +1480,7 @@ class SkapaProjekteringslager(object):
 class Projekteringsprofil(object):
     def __init__(self):
         self.label = 'Projekteringsprofil'
+        self.category = TS_PROJ
         self.description = (
             'Ritar profilen l\u00e4ngs ett ritat VA-str\u00e5k: markyta, vatteng\u00e5ng och hj\u00e4ssa per '
             'ledning, brunnar fr\u00e5n botten till lock, fall i promille och sektioner. Alla '
@@ -1576,6 +1594,7 @@ class Projekteringsprofil(object):
 class ExporteraOmrade(object):
     def __init__(self):
         self.label = 'Exportera omr\u00e5de (lokala lager)'
+        self.category = TS_OMRADE
         self.description = (
             'Kopierar alla VA-objekt som ber\u00f6r ett eller flera omr\u00e5den (polygoner i ett lager, '
             'valda objekt om n\u00e5gra \u00e4r valda) till en lokal filgeodatabas - ett lager per '
@@ -1668,6 +1687,7 @@ class ExporteraOmrade(object):
 class Ledningsinventering(object):
     def __init__(self):
         self.label = 'Ledningsinventering (ledningsdata.json)'
+        self.category = TS_OMRADE
         self.description = (
             'Inventerar ledningsn\u00e4tet (helst de lokala lagren fr\u00e5n Exportera omr\u00e5de): en post per '
             'ledningsstr\u00e4cka brunn-brunn med alla f\u00e4lt, lutning ur vatteng\u00e5ngarna, djup ur markh\u00f6jd '
