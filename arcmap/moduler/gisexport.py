@@ -372,8 +372,15 @@ def bygg_data(ledningslager, brunnslager, brunn_id, lock_falt=None, typ_falt=Non
         src, dq = kalla(lyr)
         arcpy.MakeFeatureLayer_management(src, 'lyr_gis_led', dq)
         if omrade is not None:
+            n_alla = int(arcpy.GetCount_management('lyr_gis_led').getOutput(0))
             arcpy.SelectLayerByLocation_management('lyr_gis_led', 'INTERSECT', omrade, '', 'NEW_SELECTION')
-        logg('  %s: %s ledningar' % (namn, arcpy.GetCount_management('lyr_gis_led').getOutput(0)))
+            n_inom = int(arcpy.GetCount_management('lyr_gis_led').getOutput(0))
+            logg('  %s: %d av %d ledningar inom omradet' % (namn, n_inom, n_alla))
+            if n_alla and not n_inom:
+                logg('  OBS inga ledningar i "%s" skar omradeslagret "%s" - fel omradeslager, eller ligger '
+                     'omradet/lagret i fel koordinatsystem?' % (namn, txt(omradeslager)))
+        else:
+            logg('  %s: %s ledningar' % (namn, arcpy.GetCount_management('lyr_gis_led').getOutput(0)))
         with arcpy.da.SearchCursor('lyr_gis_led', lasfalt) as mark:
             for rad in mark:
                 oid, geom = rad[0], rad[1]
