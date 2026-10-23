@@ -23,10 +23,14 @@ Skriver
                                          Parallella, Korsningar, Brunnar, Datakvalitet, Kostnadsposter
   * <utdata>/ledningsresultat.json    – djup, serviser, schaktgrupp och kostnader per ledning,
                                          för att fylla fält i kartan
+  * <utdata>/kalkyler/Kalkyl_<område>_<schakt|schaktfritt>.xlsx – SVOA:s kalkylmall (Mall Kalkyl
+                                         inriktningsbeslut LEDN) ifylld per område och alternativ, när mallen
+                                         ligger i skriptets mapp (eller --mall FIL); se kalkylmall.py
 
 Användning:
     python ledning_analys.py ledningsdata.json
     python ledning_analys.py ledningsdata.json -o utdata --schakttyp bergschakt --kostnader kostnader_inventering.csv
+    python ledning_analys.py ledningsdata.json --mall "2. Mall Kalkyl inriktningsbeslut LEDN.xlsx"   (--mall nej = ingen)
 
 Alla belopp står i kostnadsfilen (kostnader_inventering.csv), inga i koden. Inga rekommendationer – bara
 beräkningar (användarens beslut okt 2026).
@@ -117,6 +121,7 @@ OFORUTSETT_ANDEL = 0.20            # oförutsett i andel av summan ovanför (mal
 AFC_MATERIAL_ANDEL = 0.03          # Entreprenadkalkyl: material som SVOA tillhandahåller (AFC.1522) – rörspräckning, helschakt
 AFC_SVOA_ARBETEN_ANDEL = 0.03      # ... arbeten som SVOA utför och som undantas från entreprenören (AFC.114) – samma tabeller
 VINTERTILLAGG = 0.0                # Tabell E: 0,05 om projektet kan utföras vintertid
+KALKYLMAPP = "kalkyler"           # undermapp i utdata för de ifyllda kalkylmallarna (en per område och alternativ)
 TRAFIK_FALT = "TRAFIKPASLAG"       # procentpåslag för trafiktillägg (Tabell E: 10/30/60 %) – fält på områdespolygonerna,
                                    # som Ledningsinventering lägger på ledningarna i området (eller ett fält på ledningen)
 PROVISORIER_FALT = "PROVISORIER"   # procentpåslag för provisorier – på samma sätt
@@ -1644,6 +1649,9 @@ def main(argv=None) -> int:
     ap.add_argument("--kostnader", default=KOSTNADSFIL, help="kostnadsfil (kostnader_inventering.csv)")
     ap.add_argument("--schakttyp", default=SCHAKTTYP, choices=sorted(ALLA_SCHAKTTYPER),
                     help="schakttyp i alternativen (alla redovisas i Sammanfattning)")
+    ap.add_argument("--mall", help="SVOA:s kalkylmall (Mall Kalkyl inriktningsbeslut LEDN .xlsx) att fylla i per område "
+                                   "och alternativ; standard: mallen i skriptets mapp eller ledningsdatans mapp; "
+                                   "'nej' = ingen")
     a = ap.parse_args(argv)
 
     with open(a.ledningsdata, encoding="utf-8") as f:
@@ -1682,6 +1690,20 @@ def main(argv=None) -> int:
         print(f"  ({len(ledningar) - len(jfr)} ledningar saknar kostnad i något alternativ och ingår inte – se Datakvalitet)")
     print(f"Skrev {xlsx}")
     print(f"Skrev {os.path.join(ut, UTDATA_JSON)}")
+    if (a.mall or "").lower() != "nej":
+        import kalkylmall
+        mall = a.mall or kalkylmall.hitta_mall([HAR, os.path.dirname(os.path.abspath(a.ledningsdata))])
+        if a.mall and not os.path.isfile(a.mall):
+            print(f"Kalkylmallen finns inte: {a.mall}")
+            return 2
+        if mall:
+            mapp = os.path.join(ut, KALKYLMAPP)
+            try:
+                filer = kalkylmall.skriv(data, ledningar, kost, mall, mapp, sys.modules[__name__])
+            except PermissionError as e:
+                print(f"Kan inte skriva kalkylerna – är någon av dem öppen i Excel? ({e})")
+                return 1
+            print(f"Fyllde i {os.path.basename(mall)}: {len(filer)} kalkyler (område × alternativ) i {mapp}")
     return 0
 
 
