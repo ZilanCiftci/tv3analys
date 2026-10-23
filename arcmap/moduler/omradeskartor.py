@@ -421,8 +421,9 @@ def _exportera_pdf(sida, fil, dpi, oppen):
             pass
     if os.path.exists(fil):
         os.remove(fil)
+    # convert_markers: punktsymboler ur teckensnitt blir polygoner (annars %-tecken i PDF:en)
     arcpy.mapping.ExportToPDF(sida.mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi), image_quality='BEST',
-                              georef_info=True)
+                              georef_info=True, convert_markers=True, embed_fonts=True)
 
 
 def _samla(filer, ut):

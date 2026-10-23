@@ -672,8 +672,11 @@ def exportera(bedomda, ut_mapp, urval='atgard', skalor=SKALOR, marginal=MARGINAL
                     k += 1
                 fil = '%s_%d%s' % (stam, k, andelse)
                 logg('  filnamnet fanns redan - skriver %s' % os.path.basename(fil))
+            # convert_markers: punktsymboler ur teckensnitt (ESRI-fonter) blir polygoner - annars visas de
+            # som %-tecken pa datorer utan teckensnittet; embed_fonts baddar in texternas teckensnitt
             arcpy.mapping.ExportToPDF(lo.mxd, fil, 'PAGE_LAYOUT', resolution=int(dpi),
-                                      image_quality='BEST', georef_info=True)
+                                      image_quality='BEST', georef_info=True, convert_markers=True,
+                                      embed_fonts=True)
             filer.append(fil)
             ut.append((fil, skala, ryms, lo.namn))
             for p in grupp:

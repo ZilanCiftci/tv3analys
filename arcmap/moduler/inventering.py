@@ -55,6 +55,11 @@ ORIMLIG_PROMILLE = 200.0      # lutning over detta flaggas "vg orimlig" (trolige
 SCHAKT_BREDD_FAKTOR = 2.0       # schaktlangd: ledningar i samma schaktgrupp inom faktor x parallell_avstand
                                 # (c-c) fran varandra raknas till samma schakt
 DJUPKLASSER = (2.0, 3.0, 4.0)  # granser for djupklasserna 0-2, 2-3, 3-4, > 4 m (F13)
+SAMSCHAKT_KORT_ANDEL = 0.8    # kortare ledning an parallell_min_m: samschakt om den ligger intill pa minst denna
+SAMSCHAKT_KORT_MIN_M = 2.0    # andel av sin matbara langd (vattenledning delad vid ventiler, korta delar mellan
+                              # brunnar) - men inte stumpar kortare an detta (anslutningar vid brunnar)
+SCHAKT_KEDJA = 3              # samma grav: grannar i kedja (A intill B intill C) racknas med upp till detta antal
+                              # x parallell_avstand fran ledningen, aven om A och C ligger langre isar
 PARALLELL_MIN_ANDEL = 0.2     # par som varken ar samschakt eller har minst denna andel inom avstandet listas inte
                               # (korsningar och anslutningar snett intill ger nagra procent)
 SERVIS_SYSTEM = {'S': 'S', 'D': 'D', 'K': 'K', 'V': 'V'}
@@ -628,7 +633,7 @@ def inventera(ledningslager, brunnslager, brunn_id, json_ut, servislager=None, v
         andel_a = rec['n'][i] / float(max(n_prov[i], 1))
         andel_b = rec['n'][j] / float(max(n_prov[j], 1))
         gemensam_m = min(max(rec['n'][i], rec['n'][j]) * float(intervall), min(a['langd_m'], b['langd_m']))
-        samschakt = gemensam_m >= float(parallell_min_m) - 1e-9
+        samschakt = _samschakt(gemensam_m, a, b, float(parallell_min_m), float(parallell_avstand), float(tolerans))
         if not samschakt and max(andel_a, andel_b) < PARALLELL_MIN_ANDEL:
             continue                                # korsning eller strax forbi - inte parallell
         post = {'ledning_a': a['id'], 'ledning_b': b['id'], 'system_a': a['system'], 'system_b': b['system'],
@@ -859,6 +864,32 @@ def _vatten_till_botten(led, vatten_djup):
     return float(vatten_djup) + (led.get('dimension') or 0) / 2000.0
 
 
+def _gemensamma_andar(p, q, tolerans):
+    """Antal ändar på p som ligger vid en ände på q (gemensam brunn eller skarv)."""
+    a = [(r[0], r[1]) for r in (p['_pts'][0], p['_pts'][-1])]
+    b = [(r[0], r[1]) for r in (q['_pts'][0], q['_pts'][-1])]
+    return sum(1 for e in a if any(_avst(e, g) <= tolerans for g in b))
+
+
+def _matbar_langd(p, q, avstand, tolerans):
+    """Den del av den kortare ledningen som kan räknas som parallell: provpunkter inom avståndet från en
+    gemensam ände räknas inte, så de bitarna dras av."""
+    kort, lang = (p, q) if (p.get('langd_m') or 0) <= (q.get('langd_m') or 0) else (q, p)
+    L = kort.get('langd_m') or 0.0
+    return L, max(0.0, L - _gemensamma_andar(kort, lang, tolerans) * avstand)
+
+
+def _samschakt(gemensam_m, p, q, min_m, avstand, tolerans):
+    """Samschakt: parallellt minst min_m – eller, för en ledning kortare än så (vattenledning delad vid
+    ventiler, kort del mellan brunnar), parallellt längs nästan hela sin mätbara längd."""
+    if gemensam_m >= min_m - 1e-9:
+        return True
+    L, matbar = _matbar_langd(p, q, avstand, tolerans)
+    if L < SAMSCHAKT_KORT_MIN_M or L >= min_m:
+        return False
+    return gemensam_m >= SAMSCHAKT_KORT_ANDEL * max(matbar, 1.0) - 1e-9
+
+
 def _grav_delar(ledningar, rutnat, gruppnr, intervall, avstand, tolerans, min_m):
     """Delar varje ledning langs sin langd efter vilka andra ledningar som ligger i samma grav
     (grav_delar: [{fran_m, till_m, langd_m, ledningar: [id]}]). Provpunkter var intervall m; i varje
@@ -883,15 +914,26 @@ def _grav_delar(ledningar, rutnat, gruppnr, intervall, avstand, tolerans, min_m)
         for k, (m, x, y) in enumerate(prov):
             fran = (m + ms[k - 1]) / 2.0 if k > 0 else 0.0
             till = (m + ms[k + 1]) / 2.0 if k + 1 < len(ms) else L
-            med = set()
-            for j in rutnat.inom(x, y, radie):
+            kand = {}
+            for j, (d, q) in rutnat.inom(x, y, max(radie, SCHAKT_KEDJA * avstand)).items():
                 if j == i or gruppnr.get(j) != g:
                     continue
                 o = [(r[0], r[1]) for r in (ledningar[j]['_pts'][0], ledningar[j]['_pts'][-1])]
                 gemensam = [e for e in andar if any(_avst(e, h) <= tolerans for h in o)]
                 if any(_avst((x, y), h) <= avstand for h in gemensam):
                     continue
-                med.add(j)
+                kand[j] = (d, q)
+            # inom radien direkt, eller i kedja: intill (avståndet) en granne som redan räknas
+            med = set(j for j, (d, q) in kand.items() if d <= radie)
+            nara = [kand[j][1] for j in med] + [(x, y)]
+            andrat = True
+            while andrat:
+                andrat = False
+                for j, (d, q) in kand.items():
+                    if j not in med and any(_avst(q, h) <= avstand + 1e-9 for h in nara):
+                        med.add(j)
+                        nara.append(q)
+                        andrat = True
             punkter.append((fran, till, med))
         # korta stycken intill en partner raknas inte
         for j in set().union(*[q[2] for q in punkter]) if punkter else ():
@@ -903,7 +945,11 @@ def _grav_delar(ledningar, rutnat, gruppnr, intervall, avstand, tolerans, min_m)
                 e = k
                 while e + 1 < len(punkter) and j in punkter[e + 1][2]:
                     e += 1
-                if punkter[e][1] - punkter[k][0] < min_m - 1e-9:
+                stracka = punkter[e][1] - punkter[k][0]
+                kort = min(L, ledningar[j].get('langd_m') or 0.0)
+                if stracka < min_m - 1e-9 and not (SAMSCHAKT_KORT_MIN_M <= kort < min_m and
+                                                    stracka >= SAMSCHAKT_KORT_ANDEL * _matbar_langd(
+                                                        p, ledningar[j], avstand, tolerans)[1] - 1e-9):
                     for q in range(k, e + 1):
                         punkter[q][2].discard(j)
                 k = e + 1
